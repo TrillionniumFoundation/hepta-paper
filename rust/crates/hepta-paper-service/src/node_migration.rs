@@ -2,8 +2,9 @@
 //!
 //! This is deliberately a local, fail-closed operation.  It reuses the
 //! embedded migration SQL consumed by the compatibility inspector, requires a
-//! canonical private database with no SQLite sidecars, takes an IMMEDIATE
-//! transaction for each migration, and never grants production authority.
+//! canonical private database with no SQLite sidecars, and takes one EXCLUSIVE
+//! transaction for the requested range. History and leases are checked under
+//! that lock. No production authority is granted.
 
 use hepta_readonly_control::node_schema::NODE_MIGRATIONS_V1;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
@@ -16,6 +17,8 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
+
+mod source;
 
 const MAX_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(100);
@@ -34,6 +37,8 @@ pub enum NodeMigrationError {
     History,
     #[error("node migration has active leases")]
     ActiveLease,
+    #[error("node migration outcome requires reconciliation with persisted history")]
+    OutcomeUnknown,
     #[error("node migration database operation failed")]
     Database(#[from] rusqlite::Error),
     #[error("node migration filesystem operation failed")]
@@ -84,17 +89,14 @@ fn canonical_private_database(path: &Path) -> Result<(PathBuf, fs::Metadata), No
 }
 
 fn reject_sidecars(path: &Path) -> Result<(), NodeMigrationError> {
-    for suffix in ["-wal", "-shm"] {
-        if path
-            .with_extension(format!(
-                "{}{}",
-                path.extension().and_then(|x| x.to_str()).unwrap_or(""),
-                suffix
-            ))
-            .exists()
-            || PathBuf::from(format!("{}{}", path.display(), suffix)).exists()
-        {
-            return Err(NodeMigrationError::Sidecar);
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        match fs::symlink_metadata(PathBuf::from(name)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            // Presence includes dangling links and empty journals. This
+            // command never recovers or removes a source sidecar.
+            _ => return Err(NodeMigrationError::Sidecar),
         }
     }
     Ok(())
@@ -229,11 +231,6 @@ fn validate_history(rows: &[(u32, String, String)]) -> Result<u32, NodeMigration
     Ok(expected_version.saturating_sub(1))
 }
 
-fn database_sha256(path: &Path) -> Result<String, NodeMigrationError> {
-    let bytes = fs::read(path)?;
-    Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
-}
-
 /// Apply embedded Node migrations through the Rust offline maintenance boundary.
 ///
 /// This operation is intentionally limited to local private stores.  It does
@@ -243,29 +240,62 @@ pub fn migrate_node_store_v1(
     path: &Path,
     target_version: Option<u32>,
 ) -> Result<NodeMigrationReceiptV1, NodeMigrationError> {
-    let (canonical, before_identity) = canonical_private_database(path)?;
+    migrate(
+        path,
+        target_version,
+        #[cfg(test)]
+        &mut |_| {},
+    )
+}
+
+fn migrate(
+    path: &Path,
+    target_version: Option<u32>,
+    #[cfg(test)] checkpoint: &mut dyn FnMut(&'static str),
+) -> Result<NodeMigrationReceiptV1, NodeMigrationError> {
+    let (canonical, _) = canonical_private_database(path)?;
     reject_sidecars(&canonical)?;
     let target = target_version.unwrap_or(NODE_MIGRATIONS_V1.len() as u32);
     if target == 0 || target > NODE_MIGRATIONS_V1.len() as u32 {
         return Err(NodeMigrationError::Target);
     }
+    // Declare the descriptor before SQLite: error paths close SQLite first.
+    // Hashing never opens/closes another descriptor for this database inode.
+    let source = source::MigrationSource::open(&canonical)?;
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW;
     let mut connection = Connection::open_with_flags(&canonical, flags)?;
     connection.busy_timeout(BUSY_TIMEOUT)?;
-    connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;")?;
-    let before = validate_history(&read_history(&connection)?)?;
+    connection.execute_batch(
+        "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL;",
+    )?;
+    let locking: String =
+        connection.query_row("PRAGMA locking_mode=EXCLUSIVE", [], |row| row.get(0))?;
+    if locking != "exclusive" {
+        return Err(NodeMigrationError::History);
+    }
+    #[cfg(test)]
+    checkpoint("before_transaction");
+    source.assert_current()?;
+    reject_sidecars(&canonical)?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+    source.assert_current()?;
+    reject_sidecars(&canonical)?;
+    // Admission comes from the locked state, not an earlier ready observation.
+    let before = validate_history(&read_history(&transaction)?)?;
     if before > target {
         return Err(NodeMigrationError::Target);
     }
-    if before > 0 && active_leases(&connection)? {
+    if active_leases(&transaction)? {
         return Err(NodeMigrationError::ActiveLease);
     }
+    #[cfg(test)]
+    checkpoint("after_admission");
     let mut applied_versions = Vec::new();
     for descriptor in NODE_MIGRATIONS_V1
         .iter()
         .filter(|migration| migration.version > before && migration.version <= target)
     {
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        source.assert_current()?;
         transaction.execute_batch(descriptor.sql)?;
         transaction.execute(
             "INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(?1,?2,?3)",
@@ -275,19 +305,40 @@ pub fn migrate_node_store_v1(
                 migration_hash(descriptor.sql),
             ),
         )?;
-        transaction.commit()?;
         applied_versions.push(descriptor.version);
+        #[cfg(test)]
+        checkpoint("after_migration");
     }
+    if validate_history(&read_history(&transaction)?)? != target {
+        return Err(NodeMigrationError::History);
+    }
+    let integrity: String = transaction.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+    let foreign_keys = transaction
+        .prepare("PRAGMA foreign_key_check")?
+        .exists([])?;
+    if integrity != "ok" || foreign_keys {
+        return Err(NodeMigrationError::History);
+    }
+    #[cfg(test)]
+    checkpoint("before_commit");
+    source.assert_current()?;
+    transaction
+        .commit()
+        .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
+    #[cfg(test)]
+    checkpoint("after_commit");
+    // EXCLUSIVE locking mode retains the database lock through receipt hashing.
+    // Observation failure after COMMIT must not claim rollback or no effect.
+    let database_sha256 = source
+        .hash()
+        .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
+    #[cfg(test)]
+    checkpoint("after_hash");
+    source
+        .assert_current()
+        .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
     drop(connection);
-    reject_sidecars(&canonical)?;
-    let after_identity = fs::symlink_metadata(&canonical).map_err(|_| NodeMigrationError::Path)?;
-    if after_identity.uid() != before_identity.uid()
-        || after_identity.ino() != before_identity.ino()
-        || after_identity.dev() != before_identity.dev()
-        || after_identity.nlink() != before_identity.nlink()
-    {
-        return Err(NodeMigrationError::Identity);
-    }
+    drop(source);
     Ok(NodeMigrationReceiptV1 {
         version: 1,
         kind: "HeptaRustNodeStoreMigrationReceiptV1",
@@ -295,8 +346,11 @@ pub fn migrate_node_store_v1(
         before_version: before,
         target_version: target,
         applied_versions,
-        database_sha256: database_sha256(path)?,
+        database_sha256,
         production_activation: false,
         node_retirement_verified: false,
     })
 }
+
+#[cfg(test)]
+mod tests;

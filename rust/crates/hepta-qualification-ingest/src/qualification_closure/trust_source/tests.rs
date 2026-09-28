@@ -200,7 +200,8 @@ fn rebound_trust_name_never_opens_or_releases_live_sqlite_writer_locks() {
     }
 }
 
-#[cfg(target_os = "linux")]
+// Always discover this regression: Linux tests traversal-only success, while
+// other Unix hosts must retain their explicit unsupported/read-permission refusal.
 #[test]
 fn authority_ancestor_needs_search_permission_not_directory_read_permission() {
     let f = Fixture::new();
@@ -221,5 +222,12 @@ fn authority_ancestor_needs_search_permission_not_directory_read_permission() {
     })
     .and_then(|source| source.observe_current(1_000, || Ok(1_100)));
     fs::set_permissions(&f.root, fs::Permissions::from_mode(0o700)).unwrap();
-    assert_eq!(result.unwrap(), 1_100);
+    if cfg!(target_os = "linux") {
+        assert_eq!(result.unwrap(), 1_100);
+    } else {
+        assert!(
+            result.is_err(),
+            "non-Linux ancestor pins must fail closed without directory read access"
+        );
+    }
 }

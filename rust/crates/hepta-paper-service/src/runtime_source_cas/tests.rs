@@ -1,5 +1,6 @@
 //! Owned source fixtures and real publication syscalls; no installed runtime.
 use super::*;
+use std::process::Command;
 
 struct Fixture {
     root: PathBuf,
@@ -302,4 +303,56 @@ fn published_bytes_are_retained_even_if_the_directory_moves_back_to_staging() {
         "publication phase cannot be inferred from the current name"
     );
     assert_eq!(snapshot(&retained), published.unwrap());
+}
+
+#[test]
+fn cancellation_observes_publication_boundary_without_erasing_committed_bytes() {
+    use std::sync::atomic::Ordering;
+    for boundary in [
+        PublicationBoundary::BeforePublish,
+        PublicationBoundary::AfterRename,
+        PublicationBoundary::AfterDirectorySync,
+    ] {
+        let f = Fixture::new();
+        let cancelled = AtomicBool::new(false);
+        let mut published = None;
+        let result = acquire_with_controls(&f.root, &f.seed, &cancelled, &mut |stage, _| {
+            if stage == boundary {
+                if stage != PublicationBoundary::BeforePublish {
+                    published = Some(snapshot(&f.destination()));
+                }
+                cancelled.store(true, Ordering::Release);
+            }
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), "r_runtime_source_cas_cancelled");
+        assert_eq!(fs::read(f.context.join("renv.lock")).unwrap(), f.lock);
+        if let Some(published) = published {
+            assert_eq!(snapshot(&f.destination()), published);
+            fs::remove_dir_all(&f.seed).unwrap();
+            let replay = acquire_runtime_source_cas_from_seed_v1(&f.root, &f.seed).unwrap();
+            assert_eq!(replay["acquired"], false);
+            assert_eq!(snapshot(&f.destination()), published);
+        } else {
+            assert!(!f.destination().exists());
+            let retry = acquire_runtime_source_cas_from_seed_v1(&f.root, &f.seed).unwrap();
+            assert_eq!(retry["acquired"], true);
+        }
+    }
+}
+
+#[test]
+fn precancelled_acquisition_has_no_stage_or_publication() {
+    let f = Fixture::new();
+    let before = snapshot(&f.root);
+    assert_eq!(
+        acquire_runtime_source_cas_from_seed_with_cancellation_v1(
+            &f.root,
+            &f.seed,
+            &AtomicBool::new(true)
+        )
+        .unwrap_err(),
+        "r_runtime_source_cas_cancelled"
+    );
+    assert_eq!(snapshot(&f.root), before);
 }

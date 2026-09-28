@@ -66,7 +66,10 @@ The native journal has user_version `1`, seven STRICT tables and the exact
 Startup accepts a new empty version-0 file or an exact native version-1 schema;
 an existing Node version-0 journal requires explicit migration. A version-1 file
 with missing tables is corruption, not a fresh genesis. WAL, synchronous FULL and
-foreign keys are enabled; SQLite busy timeout is five seconds.
+foreign keys are enabled. Open/schema activation retains the five-second SQLite
+busy timeout. After open, the existing runtime handles its own bounded BEGIN
+IMMEDIATE retries with a five-second total lock budget rather than an opaque
+SQLite wait; direct handle/inspect and the serving adapter use the same owner.
 
 Every complete request runs inside one IMMEDIATE transaction. Before dispatch,
 the current metadata must match the complete actual configuration, authority,
@@ -143,7 +146,31 @@ not overwritten. Stale-socket recovery requires an actual refused connection
 and fresh identity/owner/namespace checks before unlinking.
 
 The daemon handles SIGINT/SIGTERM by stopping admission, dropping incomplete peers,
-closing the listener/runtime and removing its own socket name. Abrupt process
+closing the listener/runtime and removing its own socket name. The original stop
+flag and absolute peer deadline now follow a complete request into the existing
+runtime: they are observed between nonblocking I/O quanta, before each BEGIN
+attempt, after lock acquisition and immediately before COMMIT. A queued request
+cannot outlive a stop observation and then reserve authority merely because an
+unrelated writer releases its SQLite lock. Stop or deadline expiry observed before
+COMMIT rolls back that transaction; no completed receipt is sent. Once COMMIT has
+happened, losing the reply preserves the original signed receipt for normal
+idempotent resolution and never authorizes a second reservation.
+
+`RequestControl` is a borrowed in-process check, not serialized authority, another
+writer or another recovery journal. Direct runtime callers retain their existing
+five-second contention allowance. Startup I/O, individual filesystem calls,
+SQLite statement execution/checkpoint/sync, OS scheduling, and a signal racing the
+last check with COMMIT are not made preemptible or atomically ordered by polling.
+The tests do not establish a universal subsecond shutdown guarantee or explain
+the previously observed idle-peer shutdown/join latency failure.
+
+The actual Unix server regressions use a separate process holding a real SQLite
+write transaction. They cover cancelled lock wait with zero late reservation,
+precommit rollback and exact retry, postcommit lost-reply recovery, request
+expiry and successful released-contention replay. Private test checkpoints pause
+the same owner at transaction boundaries; no handler or commit is substituted.
+The unchanged daemon SIGTERM/SIGKILL, Node client, socket identity and idle-peer
+regressions remain required. Abrupt process
 death leaves SQLite recovery and a possibly stale socket; successful socket
 reclamation does not establish independent production recovery qualification.
 Daemon errors emit one code line, whereas the Node executable includes a stack.

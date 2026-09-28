@@ -61,8 +61,9 @@ review, independent principal evidence, release permission or submission consent
 Resources are conservatively summed across the entire immutable definition;
 checked arithmetic and the initial capacity/budget bound prevent composition of
 individually valid steps into an over-budget workflow. Memory sums are deliberately
-conservative, not measured peaks. Worker accounting remains the existing admitted
-upper-bound accounting, not OS resource metering or a provider invoice. Native,
+conservative, not measured peaks. Native/process accounting uses admitted bounds,
+not OS metering. Broker charges use the single signed settlement contract below;
+an admitted reservation is never substituted for an actual provider charge. Native,
 process and prepared-only backends require zero provider calls; the explicitly
 selected broker execution backend requires exactly one. External actions and
 central-writer requests remain forbidden in this local surface.
@@ -150,14 +151,12 @@ external effects are not claimed equivalent. No per-command parity row is promot
 The original 57 command routes and all argument-dependent modes remain the audit
 inventory, not seven local-kernel jobs.
 
-Next implementation work is the dynamic trusted role-request producer and
-ordinary independent author/reviewer/revision composition, measured provider
-settlement and commit-bound signed acknowledgement, qualification of scientific/runtime and
-manuscript compilation adapters, full operator/maintenance mapping and accepted
-capability replay. Remote
-credentials, target-host isolation, private historical corpus, storage soak,
-release/submission receipts, production shadow/canary, writer transfer and Node
-retirement remain independently controlled requirements.
+The signed request producer, ordinary author/reviewer/revision chain, measured
+settlement and commit-bound ACK contracts are defined below, not separate future
+implementations. Their local IPC tests are not independent live role qualification.
+The canonical [57-route ledger](../migration/NODE_RUST_GAP_CLOSURE.md) owns the
+remaining argument/effect gaps. Installed key custody, real runtime/scientific
+qualification, writer transfer, rollback and Node retirement remain open.
 
 
 ## Explicit amendments and structural revision rounds
@@ -343,10 +342,16 @@ state creation. Omitting `--workflow-file` preserves the previous diagnostic.
 The report's `ready` means only that this bounded local operation succeeded;
 `readinessScope=local_workflow_operation_only` and `fullResearchReady=false`.
 Scientific acceptance, production activation and Node retirement remain false.
-Process workers are trusted local programs, not a physical sandbox. Their
-provider/external/network outcomes are null (unobserved), never replaced with
-an asserted false based on worker JSON or a network declaration. An execution
-error reports reconciliation required and retains the original recovery inputs.
+For an advancing definition containing Process, BrokerExecute or BrokerPrepared
+workers, provider/external/network outcomes are conservatively null (unobserved)
+and `externalActionMayHaveStarted=true`. A missing ACK, signal or broker response
+cannot prove that no effect occurred. Prepared-only queries can recover an ACK;
+this bound does not claim they dispatched a provider. Likewise, an IPC-free
+committed replay is not reported as a newly observed execution. These fields
+never authorize retry, refund or retirement: the original durable owner decides
+query-only recovery, exact ACK delivery and non-reexecution. Read-only status and
+pre-dispatch admission refusal do not imply that historical work was effect-free.
+An execution error retains the original recovery inputs and requires inspection.
 No private request content or raw worker diagnostics is printed by this wrapper.
 
 Run from the repository root:
@@ -370,8 +375,8 @@ independent command acceptance, installed host qualification or Node cutover.
 
 The existing `production-composition-source` bundle in
 `docs/system/evidence/rust-functional-source-closure-v1.json` now binds the
-autonomous CLI adapter, its local entry, the existing workflow owner and all six
-`autonomous_entrypoint::` regression selectors. The existing exact-head and
+autonomous CLI adapter, its local entry, the existing workflow owner and the
+registered `autonomous_entrypoint::` and broker recovery selectors. The existing exact-head and
 prospective-merge jobs execute those tests, including the real Rust child worker
 and crash/no-relaunch case. A zero exit code, discovery-only run, ignored test or
 zero matching tests is not accepted as executed evidence. The verifier requires

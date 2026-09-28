@@ -18,6 +18,19 @@ A missing database or empty resident table reports the incumbent missing-instanc
 
 ## CLI contract and open work
 
+Both `hepta-autonomous-supervisor-health` and
+`hepta-paper-rust autonomous-supervisor --action health` call
+`supervisor_health::cli::inspect_supervisor_health_command_v1`. This is the
+single CLI owner for parsing, bounded environment capture, root selection, mode
+precedence and existing read-only inspectors. The unified route now accepts
+current, strict and full modes as well as base/startup/machine modes; its action
+selector still refuses resident execution before any source observation.
+`--external-qualification-config` is passed to the actual full observer, not
+silently ignored in full mode. Help precedes environment and filesystem reads.
+The ordinary full route and standalone route run against the same original Node
+oracle and byte/metadata-preservation checks; no dispatch, recovery or authority
+RPC is introduced by this CLI composition.
+
 Help JSON, strict option errors, default runtime-root resolution, report status and exit classes match the incumbent for the three base modes. `--require-current-machine-intake` additionally observes the actual builtin V1 intake configuration/static files and private intake database, then compares the current configuration and dataset identity with the resident. Its [detailed implementation contract](../../rust/crates/hepta-paper-service/src/machine_intake/HANDOFF.md) specifies resource closure, hashes, ownership, size bounds, supported inputs and compatibility limits. V2/plugin/local-golden scoped intake evidence remains explicitly blocked; `--require-strict-machine-intake-reconciliation` now composes actual intake with the [native strict receipt reader](../../rust/crates/hepta-paper-service/src/strict_machine_intake_reconciliation/HANDOFF.md). It preserves the original strict exit criterion, including its distinction from resident readiness, but explicitly rejects the incumbent falsy-JSON false-ready cases. `--require-fully-autonomous` now composes actual base status, one current intake, resident prerequisites and passive state safety, with optional strict observation sharing that intake. See the [full composition contract](../../rust/crates/hepta-paper-service/src/SUPERVISOR_FULL_HEALTH_HANDOFF.md) for input/environment bounds, exact exit precedence, error handling, owner lifetimes and compiled source-tree relocation limits. It remains a completed diagnostic and does not execute resident work or grant dispatch authority.
 
 The differential test uses a real Node-created SQLite row with a fixed lease token and covers startup/machine transitions, stopped and empty states, safe and malformed WAL sidecars, unsafe permissions, invalid timing, and CLI parse errors. Host-level process probes and independent production qualification remain outside this module.

@@ -331,14 +331,22 @@ pub(super) fn run(
         report["campaignPersisted"] = json!(true);
         if matches!(action, WorkflowActionV1::Advance { .. }) {
             execution_invoked = true;
-            if definition
-                .template
-                .workers
-                .values()
-                .any(|binding| matches!(binding, WorkerBindingV1::Process { .. }))
-            {
-                // Declared network policy and a worker's JSON are not physical
-                // isolation or independent observation of arbitrary local code.
+            if definition.template.workers.values().any(|binding| {
+                matches!(
+                    binding,
+                    WorkerBindingV1::Process { .. }
+                        | WorkerBindingV1::BrokerExecute { .. }
+                        | WorkerBindingV1::BrokerPrepared { .. }
+                )
+            }) {
+                // Process/provider effects and broker ACK delivery are not
+                // independently observed by this adapter. Even a read-only
+                // prepared query can recover a commit-bound ACK. A missing or
+                // interrupted response cannot prove that no effect occurred.
+                // This is a conservative invocation bound, not an execution
+                // receipt: committed replay may be completely IPC-free. The
+                // existing durable owner alone decides query/ACK-only recovery;
+                // these fields never authorize redispatch, refund or retirement.
                 report["providerExecutionPerformed"] = Value::Null;
                 report["externalActionPerformed"] = Value::Null;
                 report["networkActionPerformed"] = Value::Null;

@@ -208,6 +208,9 @@ pub struct ResumeSchemaNormalizationOptionsV1<'a> {
     pub state_database_manifest: &'a Value,
     pub writer_manifest: &'a Value,
     pub expected_transition_id: &'a str,
+    /// Independently retained original plan hash, never read from the mutable
+    /// journal being recovered. The signed reservation excludes plannedAt.
+    pub expected_plan_hash: &'a str,
     pub machine_genesis: Option<&'a PinnedMachineGenesisDocumentsV1>,
 }
 /// Recovery accepts stored data only after actual re-verification. Expired leases
@@ -218,6 +221,12 @@ pub fn resume_schema_normalization_v1<T: MutationAuthorityTransportV1>(
     clock: &mut dyn MutationClockV1,
     checkpoint: &mut dyn SchemaNormalizationCheckpointV1,
 ) -> Result<NormalizedSchemaMaintenanceV1> {
+    // A missing/malformed independent subject cannot trigger source observation,
+    // root lock enrollment, trust I/O, clock sampling or journal publication.
+    ensure(
+        crate::sqlite_mutation_coordinator::sha(&json!(options.expected_plan_hash)),
+        "autonomous_research_online_schema_transition_normalization_plan_pin_invalid",
+    )?;
     let inventory =
         inspect_state_database_inventory_v1(options.runtime_root, options.state_database_manifest)?;
     let row = inventory["instances"]
@@ -241,6 +250,13 @@ pub fn resume_schema_normalization_v1<T: MutationAuthorityTransportV1>(
             && journal["runtimeRootIdentity"] == *lock.identity()
             && journal["authorityConfigurationHash"] == authority.configuration_hash(),
         "autonomous_research_online_schema_transition_normalization_journal_invalid",
+    )?;
+    // transitionId and a re-computed planHash are not an independent choice of
+    // the original plan. In particular, plannedAt is outside the reservation
+    // signature and can otherwise be replaced while all signatures still pass.
+    ensure(
+        journal["plan"]["planHash"] == options.expected_plan_hash,
+        "autonomous_research_online_schema_transition_normalization_plan_pin_mismatch",
     )?;
     let now = clock.now_millis()?;
     let checked = int(&journal, "checkedAtMillis")?;

@@ -343,6 +343,7 @@ fn installation_crash_child() {
             state_database_manifest: &setup["stateDatabaseManifest"],
             writer_manifest: &setup["writerManifest"],
             expected_transition_id: id,
+            expected_plan_hash: input["planHash"].as_str().unwrap(),
             machine_genesis: None,
         },
         &authority,

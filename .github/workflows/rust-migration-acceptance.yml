@@ -283,6 +283,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # This low-level library target runs in its own test process. Match
+          # the existing scientific worker's private child-file policy: Lean
+          # atomically replaces .olean outputs instead of truncating the seeded
+          # 0600 file. Never weaken output checks or change a library-global mask.
+          umask 077
           log="$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/scientific-runtime.log"
           # Run the whole target, including installed-tool cases. No separate
           # handwritten test-name list or success from an empty filter.

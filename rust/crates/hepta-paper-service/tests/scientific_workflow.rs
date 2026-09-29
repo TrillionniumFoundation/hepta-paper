@@ -187,6 +187,11 @@ fn definition(temp: &Temp, fail: bool) -> LocalWorkflowV1 {
         .get_mut("main.py")
         .unwrap()
         .replace_range(.."import os\nos.umask(0o077)\n".len(), "");
+    // Exercise a tool that replaces the seeded output inode, as Lean does.
+    // Preserve the actual computed bytes; only the existing worker owns umask.
+    job.files.get_mut("main.py").unwrap().push_str(
+        "import os\nPath('replacement.json').write_bytes(Path('result.json').read_bytes())\nos.replace('replacement.json', 'result.json')\n",
+    );
     if fail {
         job.files.insert(
             "main.py".into(),
@@ -614,5 +619,34 @@ fn actual_r_autonomous_cli_reopens_the_same_workflow_without_reexecution() {
         .unwrap();
         fs::write(directory.join("result.json"), result).unwrap();
         fs::write(directory.join("manuscript.md"), manuscript).unwrap();
+    }
+}
+
+#[test]
+fn ordinary_worker_atomic_output_is_private_under_permissive_parent_masks() {
+    // Set umask only in a disposable child, never in this concurrent test host.
+    // Reuse the actual worker/service/CAS/SQLite and exact replay regression.
+    let selected = "real_experiment_named_result_reaches_manuscript_bundle_and_sqlite_exactly_once";
+    for mask in ["0022", "0000"] {
+        let output = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "umask \"$1\"; shift; exec \"$@\"",
+                "scientific-policy",
+                mask,
+            ])
+            .arg(std::env::current_exe().unwrap())
+            .args(["--exact", selected, "--nocapture"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "mask {mask}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(&format!("test {selected} ... ok"))
+        );
     }
 }

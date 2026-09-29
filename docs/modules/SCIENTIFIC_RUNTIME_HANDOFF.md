@@ -275,3 +275,22 @@ The test uses a fresh host-clock lease and the existing service/CAS/SQLite owner
 Its command, replay, result and manuscript artifacts are retained under
 `r-autonomous-workflow`; the existing 57-route map links this case directly to
 `operator/autonomous-research`. It does not supply model authorship or review.
+
+## Atomic output tools and the launch environment
+
+The ordinary `hepta-scientific-worker` sets umask `0077` in its isolated process
+before it launches Python, R, Lean or LaTeX. The shared library must not change a
+multithreaded caller's process-global mask. Pre-creating an output with mode `0600`
+is sufficient for in-place truncation, but does not control a tool's subsequent
+atomic replacement. Lean 4.30.0 replaces `proof.olean`; a permissive caller mask
+therefore correctly causes the private-output validator to refuse its new inode.
+
+The installed-tool CI target calls that library in a disposable test process and
+explicitly uses the same private mask. This is environment setup, not acceptance
+of world-readable outputs or post-execution chmod. The normal workflow regression
+also atomically replaces its actually computed result, then verifies private
+mode, CAS contents, manuscript/bundle bindings, SQLite commit and exact replay.
+Its parent-mask regression reruns this ordinary owner chain from isolated child
+processes with masks `0022` and `0000`; it neither changes the concurrent host's
+mask nor relies on a scientific script to set one. Library direct-call safety
+refusals, malformed output, link and process-failure tests remain unchanged.

@@ -537,3 +537,107 @@ fn ordinary_migration_signals_stop_without_receipt_or_source_mutation() {
         );
     }
 }
+
+#[test]
+fn ordinary_cli_refuses_drifted_schema_before_upgrade_or_replay() {
+    for mutation in [
+        "DROP INDEX idx_papers_status;",
+        "CREATE TRIGGER unregistered_migration_effect AFTER INSERT ON schema_migrations BEGIN UPDATE papers SET title='unexpected mutation'; END;",
+        "UPDATE store_metadata SET value='99' WHERE key='schema_version';",
+        "ALTER TABLE papers ADD COLUMN unexpected_column TEXT;",
+    ] {
+        for target in [2, 3] {
+            let temp = Temp::new();
+            let path = temp.database();
+            migrate_node_store_v1(&path, Some(2)).unwrap();
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch("INSERT INTO papers(slug,title,canonical_dir) VALUES ('retained','original result','/local/result');").unwrap();
+            db.execute_batch(mutation).unwrap();
+            drop(db);
+            let before = fs::read(&path).unwrap();
+            for _ in 0..2 {
+                let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+                    .arg("store-migrate")
+                    .arg(&path)
+                    .arg(target.to_string())
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    output.status.code(),
+                    Some(1),
+                    "drift={mutation}, target={target}; stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    output.stdout.is_empty(),
+                    "no migration success receipt for drifted state"
+                );
+                assert!(String::from_utf8_lossy(&output.stderr).contains("history is invalid"));
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    before,
+                    "refusal must retain source bytes"
+                );
+                for suffix in ["-wal", "-shm", "-journal"] {
+                    assert!(fs::symlink_metadata(format!("{}{suffix}", path.display())).is_err());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn unexpected_unversioned_schema_never_commits_a_migration_receipt() {
+    let temp = Temp::new();
+    let path = temp.database();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE unrelated_results(value TEXT); INSERT INTO unrelated_results VALUES('retain me');").unwrap();
+    drop(db);
+    let before = fs::read(&path).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("store-migrate")
+        .arg(&path)
+        .arg("3")
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "all DDL must roll back, not adopt a foreign store"
+    );
+}
+
+#[test]
+fn all_migration_prefixes_share_the_readonly_schema_owner_and_preserve_headers() {
+    use hepta_readonly_control::node_schema::validate_node_migration_structure_v1;
+    let temp = Temp::new();
+    let path = temp.database();
+    for version in 1..=25 {
+        let result = migrate_node_store_v1(&path, Some(version)).unwrap();
+        assert_eq!(result.target_version, version);
+        let before = fs::read(&path).unwrap();
+        let db =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        validate_node_migration_structure_v1(&db, version).unwrap();
+        let header: i64 = db
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            header, 1,
+            "structural verification must preserve caller header metadata"
+        );
+        drop(db);
+        let replay = migrate_node_store_v1(&path, Some(version)).unwrap();
+        assert!(replay.applied_versions.is_empty());
+        assert_eq!(replay.database_sha256, result.database_sha256);
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}

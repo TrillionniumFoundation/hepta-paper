@@ -16,9 +16,10 @@ fn pre_cancelled_and_expired_invocations_do_not_enter_source_or_transaction() {
             .unwrap();
     std::thread::sleep(Duration::from_millis(1));
     for (control, cancel) in [(cancelled, true), (expired, false)] {
-        let error =
-            migrate_controlled(&path, Some(25), &control, &mut |_| panic!("must not enter"))
-                .unwrap_err();
+        let error = migrate_controlled(&path, Some(25), &control, &mut |_, _| {
+            panic!("must not enter")
+        })
+        .unwrap_err();
         assert!(
             matches!(error, NodeMigrationError::Cancelled) == cancel,
             "{error:?}"
@@ -62,7 +63,7 @@ fn cancellation_preserves_atomic_range_and_postcommit_unknown_outcome() {
         let control =
             MigrationControl::bounded(Arc::clone(&stopped), Duration::from_secs(30)).unwrap();
         let mut reached = false;
-        let error = migrate_controlled(&path, Some(25), &control, &mut |point| {
+        let error = migrate_controlled(&path, Some(25), &control, &mut |point, _connection| {
             if point == phase {
                 reached = true;
                 stopped.store(true, Ordering::Release);
@@ -105,7 +106,7 @@ fn monotonic_deadline_at_commit_boundary_does_not_invent_rollback() {
             MigrationControl::bounded(Arc::new(AtomicBool::new(false)), Duration::from_secs(2))
                 .unwrap();
         let mut reached = false;
-        let error = migrate_controlled(&path, Some(25), &control, &mut |point| {
+        let error = migrate_controlled(&path, Some(25), &control, &mut |point, _connection| {
             if point == phase {
                 reached = true;
                 while control.check().is_ok() {
@@ -204,21 +205,7 @@ fn retained_hash_checks_control_between_bounded_reads_without_mutation() {
 fn migration_sql_vm_deadline_rolls_back_the_real_owner_and_retries_once() {
     let (_temp, path) = ready_database();
     let db = Connection::open(&path).unwrap();
-    // Inject expensive SQL at the original migration-history write. The
-    // production owner, not a test-built transaction, executes migration 3.
-    db.execute_batch(
-        "CREATE TABLE migration_stop_probe(value INTEGER);
-         CREATE TRIGGER slow_migration_history AFTER INSERT ON schema_migrations
-         BEGIN
-           INSERT INTO migration_stop_probe VALUES(1);
-           SELECT sum(x) FROM (
-             WITH RECURSIVE n(x) AS (
-               VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<1000000000
-             ) SELECT x FROM n
-           );
-         END;",
-    )
-    .unwrap();
+    db.execute_batch("INSERT INTO papers(slug,title,canonical_dir) VALUES('vm-stop','retained title','/local/result');").unwrap();
     drop(db);
     let before = fs::read(&path).unwrap();
     let control =
@@ -227,8 +214,23 @@ fn migration_sql_vm_deadline_rolls_back_the_real_owner_and_retries_once() {
     let mut admitted = false;
     let mut migration_completed = false;
     let began = Instant::now();
-    let error = migrate_controlled(&path, Some(3), &control, &mut |point| {
-        admitted |= point == "after_admission";
+    let error = migrate_controlled(&path, Some(3), &control, &mut |point, connection| {
+        if point == "after_admission" {
+            admitted = true;
+            // Fault injection is TEMP and uses the original owner's connection.
+            // The real source schema stays valid; production has no such hook.
+            connection.execute_batch(
+                "CREATE TEMP TRIGGER slow_migration_history AFTER INSERT ON main.schema_migrations
+                 BEGIN
+                   UPDATE papers SET title='must roll back' WHERE slug='vm-stop';
+                   SELECT sum(x) FROM (
+                     WITH RECURSIVE n(x) AS (
+                       VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<1000000000
+                     ) SELECT x FROM n
+                   );
+                 END;",
+            ).unwrap();
+        }
         migration_completed |= point == "after_migration";
     })
     .unwrap_err();
@@ -239,16 +241,18 @@ fn migration_sql_vm_deadline_rolls_back_the_real_owner_and_retries_once() {
     reject_sidecars(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     assert_eq!(validate_history(&read_history(&db).unwrap()).unwrap(), 2);
-    let rows: i64 = db
-        .query_row("SELECT count(*) FROM migration_stop_probe", [], |row| {
+    let title: String = db
+        .query_row("SELECT title FROM papers WHERE slug='vm-stop'", [], |row| {
             row.get(0)
         })
         .unwrap();
-    assert_eq!(rows, 0, "trigger writes must roll back with the migration");
-    // Remove only the owned fault injection, then use the original public owner.
-    db.execute_batch("DROP TRIGGER slow_migration_history;")
-        .unwrap();
+    assert_eq!(
+        title, "retained title",
+        "trigger writes must roll back with migration"
+    );
     drop(db);
+    // TEMP fault injection vanishes with the original connection: retry needs
+    // no source repair, schema bypass, replacement transaction or new owner.
     let retry = migrate_node_store_with_control_v1(
         &path,
         Some(3),

@@ -42,7 +42,7 @@ fn lease_committed_at_lock_handoff_is_rechecked_before_any_schema_write() {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     migrate_node_store_v1(&path, Some(2)).unwrap();
     let mut observed = false;
-    let result = migrate(&path, Some(3), &mut |point| {
+    let result = migrate(&path, Some(3), &mut |point, _connection| {
         if point == "before_transaction" {
             observed = true;
             // A separate real SQLite process commits a lease at the handoff.
@@ -86,7 +86,7 @@ fn ready_database() -> (temp::Temp, PathBuf) {
 fn writer_remains_excluded_through_admission_commit_and_receipt_hash() {
     let (_temp, path) = ready_database();
     let mut phases = Vec::new();
-    let receipt = migrate(&path, Some(3), &mut |point| {
+    let receipt = migrate(&path, Some(3), &mut |point, _connection| {
         if point == "before_transaction" {
             return;
         }
@@ -149,7 +149,7 @@ fn precommit_identity_failure_rolls_back_but_postcommit_failure_preserves_applie
     for phase in ["before_commit", "after_commit", "after_hash"] {
         let (_temp, path) = ready_database();
         let before = fs::read(&path).unwrap();
-        let result = migrate(&path, Some(3), &mut |point| {
+        let result = migrate(&path, Some(3), &mut |point, _connection| {
             if point == phase {
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
             }
@@ -184,7 +184,7 @@ fn precommit_identity_failure_rolls_back_but_postcommit_failure_preserves_applie
 fn migration_crash_child() {
     let path = PathBuf::from(std::env::var_os("HEPTA_MIGRATION_TEST_DATABASE").unwrap());
     let phase = std::env::var("HEPTA_MIGRATION_TEST_PHASE").unwrap();
-    migrate(&path, Some(25), &mut |point| {
+    migrate(&path, Some(25), &mut |point, _connection| {
         if point == phase {
             nix::sys::signal::kill(nix::unistd::getpid(), nix::sys::signal::Signal::SIGKILL)
                 .unwrap();

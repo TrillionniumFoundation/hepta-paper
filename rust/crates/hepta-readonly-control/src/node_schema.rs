@@ -190,6 +190,73 @@ fn metadata_version(connection: &Connection) -> Result<Option<String>, ReadOnlyS
         .optional()?)
 }
 
+// One trusted SQL replay owner for read-only recognition and offline migration.
+fn replay_node_schema(
+    connection: &Connection,
+    expected: &Connection,
+) -> Result<u32, ReadOnlyStoreError> {
+    let present: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='schema_migrations')", [], |row| row.get(0),
+    )?;
+    if !present {
+        return Err(ReadOnlyStoreError::SchemaVersion);
+    }
+    let mut statement = connection.prepare(
+        "SELECT version,name,migration_sha256 FROM schema_migrations ORDER BY version LIMIT 26",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if rows.is_empty() || rows.len() > NODE_MIGRATIONS_V1.len() {
+        return Err(ReadOnlyStoreError::SchemaVersion);
+    }
+    for (row, migration) in rows.iter().zip(NODE_MIGRATIONS_V1) {
+        let hash = format!(
+            "sha256:{}",
+            hex::encode(Sha256::digest(migration.sql.as_bytes()))
+        );
+        if row.0 != i64::from(migration.version) || row.1 != migration.name || row.2 != hash {
+            return Err(ReadOnlyStoreError::MigrationHistoryMismatch);
+        }
+        // Node applies each migration in a transaction before recording the descriptor.
+        expected.execute_batch("BEGIN IMMEDIATE;")?;
+        expected.execute_batch(migration.sql)?;
+        expected.execute(
+            "INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(?1,?2,?3)",
+            rusqlite::params![migration.version, migration.name, hash],
+        )?;
+        expected.execute_batch("COMMIT;")?;
+    }
+    if metadata_version(connection)? != metadata_version(expected)? {
+        return Err(ReadOnlyStoreError::MigrationHistoryMismatch);
+    }
+    u32::try_from(rows.len()).map_err(|_| ReadOnlyStoreError::NumericOverflow)
+}
+
+/// Verify actual SQL objects, contiguous descriptors and schema metadata against
+/// the shared migration owner at a selected nonzero version. Only a private
+/// in-memory expectation is written; the source connection is never reopened.
+/// Header identity, integrity, leases and authority remain caller checks.
+/// Structural matching alone grants neither format acceptance nor a writer.
+pub fn validate_node_migration_structure_v1(
+    connection: &Connection,
+    expected_version: u32,
+) -> Result<(), ReadOnlyStoreError> {
+    let expected = Connection::open_in_memory()?;
+    if replay_node_schema(connection, &expected)? != expected_version
+        || schema_objects(connection)? != schema_objects(&expected)?
+    {
+        return Err(ReadOnlyStoreError::SchemaDrift);
+    }
+    Ok(())
+}
+
 /// Validates names, SQL hashes, contiguous history, schema objects and header metadata.
 /// Replays trusted SQL only into a private in-memory database; never migrates the input.
 pub fn validate_database_schema_v1(
@@ -221,50 +288,9 @@ pub fn validate_database_schema_v1(
         }
         (DatabaseFormatV1::RustCampaignWriter, 1)
     } else if application_id == 0 && user_version == 0 {
-        let present: bool = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='schema_migrations')", [], |row| row.get(0),
-        )?;
-        if !present {
-            return Err(ReadOnlyStoreError::SchemaVersion);
-        }
-        let mut statement = connection.prepare(
-            "SELECT version,name,migration_sha256 FROM schema_migrations ORDER BY version LIMIT 26",
-        )?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        if rows.is_empty() || rows.len() > NODE_MIGRATIONS_V1.len() {
-            return Err(ReadOnlyStoreError::SchemaVersion);
-        }
-        for (row, migration) in rows.iter().zip(NODE_MIGRATIONS_V1) {
-            let hash = format!(
-                "sha256:{}",
-                hex::encode(Sha256::digest(migration.sql.as_bytes()))
-            );
-            if row.0 != i64::from(migration.version) || row.1 != migration.name || row.2 != hash {
-                return Err(ReadOnlyStoreError::MigrationHistoryMismatch);
-            }
-            // Node applies each migration in a transaction before recording the descriptor.
-            expected.execute_batch("BEGIN IMMEDIATE;")?;
-            expected.execute_batch(migration.sql)?;
-            expected.execute(
-                "INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(?1,?2,?3)",
-                rusqlite::params![migration.version, migration.name, hash],
-            )?;
-            expected.execute_batch("COMMIT;")?;
-        }
-        if metadata_version(connection)? != metadata_version(&expected)? {
-            return Err(ReadOnlyStoreError::MigrationHistoryMismatch);
-        }
         (
             DatabaseFormatV1::NodeMigrationLedger,
-            u32::try_from(rows.len()).map_err(|_| ReadOnlyStoreError::NumericOverflow)?,
+            replay_node_schema(connection, &expected)?,
         )
     } else {
         return Err(ReadOnlyStoreError::SchemaVersion);

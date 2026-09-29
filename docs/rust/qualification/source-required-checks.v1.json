@@ -22,7 +22,13 @@
     "pull-request-impacted-tests (1)",
     "pull-request-impacted-tests (2)",
     "pull-request-impacted-tests (3)",
-    "legacy-differential-policy"
+    "legacy-differential-policy",
+    "source-evidence-exact-head",
+    "source-evidence-prospective-merge",
+    "rust-functional-source-exact-head",
+    "rust-functional-source-prospective-merge",
+    "product-targets (exact-head)",
+    "product-targets (prospective-merge)"
   ],
   "acceptedStatus": "completed",
   "acceptedConclusion": "success",

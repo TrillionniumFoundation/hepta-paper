@@ -78,3 +78,34 @@ Document executable setup, inputs, failure categories and recovery steps where
 they change. Common policy belongs in the canonical policy, not repeated across
 32 runbooks. A documentation-only improvement may travel in the ordinary PR;
 it does not require its own independent approval project.
+
+## Canonical prospective source identity
+
+`docs/tools/prepare-prospective-merge.mjs` is the single prospective-merge recipe
+for repository-source, functional-source and product-target validation. It
+consumes exact base and target commit IDs, requires HEAD at the target, uses the
+actual merge tree, fixes both parents and normalizes identity/time from the
+target commit. It writes only local Git objects: no ref, index or working-file
+mutation, no signing-key access and no merge approval. Conflicts or absent
+commits fail without a subject. Same-head push events have only one subject;
+they do not fabricate a second merge parent. Branch delivery still requires
+valid signed commits; an unsigned synthetic test object is never pushed as a
+release or integration change.
+
+All three PR lanes therefore validate the same prospective commit/tree, while
+each retains its independent commands and receipts. Exact-head remains a separate
+subject. Reusable build caches do not transfer execution evidence between heads.
+Run the real Git fixture and caller checks with:
+
+```sh
+node --test paper-core/tests/prospective-merge-subject.test.mjs
+node docs/tools/prepare-prospective-merge.mjs --base BASE_COMMIT --target HEAD_COMMIT
+```
+
+The canonical required-check manifest includes all six exact/prospective
+repository-source, functional-source and product-target checks. Producer records
+bind actual workflow IDs, paths and source digests; the metadata-only revalidator
+observes all three workflows. Protected-branch settings must preserve the existing
+checks and add these app-bound contexts, not accept skipped or older-head results.
+The current number of checks is derived from the manifest and its exact producer
+coverage rather than duplicated as a magic count in program-truth validation.

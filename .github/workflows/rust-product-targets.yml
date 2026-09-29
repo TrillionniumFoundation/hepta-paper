@@ -37,25 +37,18 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Install qualified Node runtime for source identity
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
       - name: Select exact source subject
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           if [ "$SUBJECT" = prospective-merge ]; then
-            tree="$(git merge-tree --write-tree "$EXPECTED_BASE" "$EXPECTED_HEAD")"
-            printf '%s' "$tree" | grep -Eq '^[0-9a-f]{40}$'
-            commit_date="$(git show -s --format=%cI "$EXPECTED_HEAD")"
-            merge="$(
-              printf 'Product target validation\n\nbase %s\nhead %s\n' "$EXPECTED_BASE" "$EXPECTED_HEAD" |
-                GIT_AUTHOR_NAME=hepta-product-validation \
-                GIT_AUTHOR_EMAIL=product-validation@invalid.example \
-                GIT_AUTHOR_DATE="$commit_date" \
-                GIT_COMMITTER_NAME=hepta-product-validation \
-                GIT_COMMITTER_EMAIL=product-validation@invalid.example \
-                GIT_COMMITTER_DATE="$commit_date" \
-                git commit-tree "$tree" -p "$EXPECTED_BASE" -p "$EXPECTED_HEAD"
-            )"
+            merge="$(node docs/tools/prepare-prospective-merge.mjs --base "$EXPECTED_BASE" --target "$EXPECTED_HEAD")"
+            tree="$(git rev-parse "$merge^{tree}")"
             git checkout --detach "$merge"
             test "$(git rev-parse HEAD^{tree})" = "$tree"
           fi

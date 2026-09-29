@@ -393,8 +393,10 @@ def main() -> int:
 
     checks = load(CHECKS)
     contexts = arr(checks.get("contexts"), "required contexts")
-    if len(contexts) != 20 or len(contexts) != len(set(contexts)) or any(not isinstance(x, str) or not x for x in contexts):
-        fail("required contexts must contain 20 unique names")
+    # The canonical manifest owns the set; its producer coverage is checked
+    # below. Do not maintain a second magic count that hides new safety lanes.
+    if not 1 <= len(contexts) <= 128 or any(not isinstance(x, str) or not x for x in contexts) or len(contexts) != len(set(contexts)):
+        fail("required contexts must contain bounded unique nonempty names")
     if checks.get("acceptedStatus") != "completed" or checks.get("acceptedConclusion") != "success" or checks.get("requiredAppId") != 15368:
         fail("required-check acceptance/app drift")
     forbidden = set(arr(checks.get("forbiddenConclusions"), "forbidden conclusions"))

@@ -146,6 +146,48 @@
       "workflowPath": ".github/workflows/ci.yml",
       "workflowGitBlobSha": "be7325272ad77b0bee4bcab7bc1b343907f44db5",
       "workflowSha256": "sha256:8e854f2f9c639c168857717d89b99e0bdb333c44719ee8db442cc26ac54cd034"
+    },
+    {
+      "context": "source-evidence-exact-head",
+      "workflowId": 354877177,
+      "workflowPath": ".github/workflows/repository-source-evidence.yml",
+      "workflowGitBlobSha": "db809f757dc1d774c25f5dabdb4de79951ae67a4",
+      "workflowSha256": "sha256:504d2ddd635a6eb0448b51e51ef6c58213209402660fc302314b8548a6394357"
+    },
+    {
+      "context": "source-evidence-prospective-merge",
+      "workflowId": 354877177,
+      "workflowPath": ".github/workflows/repository-source-evidence.yml",
+      "workflowGitBlobSha": "db809f757dc1d774c25f5dabdb4de79951ae67a4",
+      "workflowSha256": "sha256:504d2ddd635a6eb0448b51e51ef6c58213209402660fc302314b8548a6394357"
+    },
+    {
+      "context": "rust-functional-source-exact-head",
+      "workflowId": 355736976,
+      "workflowPath": ".github/workflows/rust-functional-source-closure.yml",
+      "workflowGitBlobSha": "4351aec7f51d5f827e06369240572967fc61eae3",
+      "workflowSha256": "sha256:e2224a769d36c41ae0eac0d84672752b2af8cdcc5af6972ba4e189d80bd28d90"
+    },
+    {
+      "context": "rust-functional-source-prospective-merge",
+      "workflowId": 355736976,
+      "workflowPath": ".github/workflows/rust-functional-source-closure.yml",
+      "workflowGitBlobSha": "4351aec7f51d5f827e06369240572967fc61eae3",
+      "workflowSha256": "sha256:e2224a769d36c41ae0eac0d84672752b2af8cdcc5af6972ba4e189d80bd28d90"
+    },
+    {
+      "context": "product-targets (exact-head)",
+      "workflowId": 366480389,
+      "workflowPath": ".github/workflows/rust-product-targets.yml",
+      "workflowGitBlobSha": "96e004d691767196bcfbb7c0d8336cd822b0b844",
+      "workflowSha256": "sha256:e850c6c728fe7a808d66f9ff5f62bdb29395c90cfda3b4ca26366e5999a1f560"
+    },
+    {
+      "context": "product-targets (prospective-merge)",
+      "workflowId": 366480389,
+      "workflowPath": ".github/workflows/rust-product-targets.yml",
+      "workflowGitBlobSha": "96e004d691767196bcfbb7c0d8336cd822b0b844",
+      "workflowSha256": "sha256:e850c6c728fe7a808d66f9ff5f62bdb29395c90cfda3b4ca26366e5999a1f560"
     }
   ],
   "authority": {

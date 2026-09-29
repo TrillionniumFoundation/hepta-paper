@@ -180,26 +180,8 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           target="${{ github.event.pull_request.head.sha }}"
           test "$(git rev-parse HEAD)" = "$target"
-          git cat-file -e "$base^{commit}"
-          git cat-file -e "$target^{commit}"
-
-          merge_tree="$(git merge-tree --write-tree "$base" "$target")"
-          test "$(printf '%s' "$merge_tree" | wc -c)" -eq 40
-          printf '%s' "$merge_tree" | grep -Eq '^[0-9a-f]{40}$'
-
-          commit_date="$(git show -s --format=%cI "$target")"
-          merge="$(
-            printf 'Repository source evidence prospective merge\n\nbase %s\ntarget %s\n' "$base" "$target" |
-              GIT_AUTHOR_NAME='hepta-source-evidence' \
-              GIT_AUTHOR_EMAIL='source-evidence@invalid.example' \
-              GIT_AUTHOR_DATE="$commit_date" \
-              GIT_COMMITTER_NAME='hepta-source-evidence' \
-              GIT_COMMITTER_EMAIL='source-evidence@invalid.example' \
-              GIT_COMMITTER_DATE="$commit_date" \
-              git commit-tree "$merge_tree" -p "$base" -p "$target"
-          )"
-          test "$(printf '%s' "$merge" | wc -c)" -eq 40
-          printf '%s' "$merge" | grep -Eq '^[0-9a-f]{40}$'
+          merge="$(node docs/tools/prepare-prospective-merge.mjs --base "$base" --target "$target")"
+          merge_tree="$(git rev-parse "$merge^{tree}")"
           git checkout --detach "$merge"
 
           tree="$(git rev-parse HEAD^{tree})"

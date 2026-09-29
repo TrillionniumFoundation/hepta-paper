@@ -7,7 +7,7 @@ This directory is the canonical development entry point for registered modules.
 - [`MODULE_REGISTRY.md`](MODULE_REGISTRY.md) defines static and deployment registry authority.
 - [`MODULE_LIFECYCLE.md`](MODULE_LIFECYCLE.md) defines registration through retirement.
 - [`MODULE_CONFORMANCE.md`](MODULE_CONFORMANCE.md) defines source, host, security, compatibility, and performance suites.
-- [`MODULE_TEMPLATE.md`](MODULE_TEMPLATE.md) is the mandatory specification structure.
+- [`MODULE_TEMPLATE.md`](MODULE_TEMPLATE.md) is the recommended specification structure; machine-referenced sections remain checked.
 - [`MODULE_DOCUMENTATION_MATRIX.md`](MODULE_DOCUMENTATION_MATRIX.md) links every registered module to its specification and manifest.
 - [`module-documentation.v1.json`](module-documentation.v1.json) is the machine-readable one-to-one coverage index.
 - `specs/` contains one normative specification per registered module.
@@ -23,7 +23,11 @@ node docs/tools/validate-module-documentation.mjs
 node --test --test-concurrency=1 paper-core/tests/module-documentation-integrity.test.mjs
 ```
 
-The validator rejects registry/spec/manifest drift, missing sections, placeholders, missing implementation roots, duplicate or orphan files, inconsistent authority/ownership/capability/work mappings, and missing authority-specific safety contracts.
+The validator rejects registry/spec/manifest drift, missing implementation roots,
+duplicate or orphan files, inconsistent authority/ownership/capability/work
+mappings, and missing authority-specific safety contracts. Explanatory headings,
+empty explanatory sections and placeholder-only prose produce advisory output,
+not a successful-implementation claim and not a build failure.
 
 ## Structural coverage and implementation scope
 
@@ -31,8 +35,14 @@ The validator executes the committed registry, work-item, index and manifest
 schemas against captured JSON bytes. It rejects duplicate keys, numeric values
 masquerading as booleans, non-finite numbers, unknown properties, missing safety
 limits, owner-role order changes, side effects beyond the authority ceiling,
-and static activation inconsistent with the module registry. Required headings
-must occur exactly once outside code fences and contain a body. Canonical input
+and static activation inconsistent with the module registry. `Identity` and
+`Open blockers` remain unique current-machine projections; `Operational runbook`
+remains the manifest-bound navigation target. These three sections must occur
+once outside code fences and contain a body. The V1 index's `requiredSections`
+field lists the full recommended template for compatibility; its other twelve
+headings are advisory. The JSON report exposes `advisories` separately from
+`failures`, and advice never changes effective qualification or gate status.
+Canonical input
 paths cannot traverse symbolic links; individual documents are limited to 1 MiB.
 
 For a deterministic, non-authorizing implementation-scope projection, run:

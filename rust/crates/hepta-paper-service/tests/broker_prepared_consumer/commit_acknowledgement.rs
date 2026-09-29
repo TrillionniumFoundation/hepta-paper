@@ -431,3 +431,250 @@ fn actual_cli_death_after_ack_send_recovers_original_ack_without_provider_or_deb
     assert!(ack_cli(&f).status.success());
     assert_eq!(durable_entry(&f).0, 94);
 }
+
+// A bounded optional protocol peer lets negative tests prove that not a single
+// ACK frame escaped admission. It does not supply execution or commit evidence.
+fn optional_ack_peer(
+    listener: std::os::unix::net::UnixListener,
+    acknowledgement: CommitBoundPreparedResultAcknowledgementV2,
+    finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<bool> {
+    std::thread::spawn(move || {
+        use std::{
+            io::Read,
+            sync::atomic::Ordering,
+            time::{Duration, Instant},
+        };
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if finished.load(Ordering::Acquire) {
+                        return false;
+                    }
+                    assert!(Instant::now() < deadline, "bounded ACK observer");
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => panic!("ACK observer: {error}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut expected = Vec::new();
+        hepta_codex_broker::write_commit_bound_acknowledgement_frame(
+            &mut expected,
+            &acknowledgement,
+            Default::default(),
+        )
+        .unwrap();
+        let mut first = [0; 1];
+        if stream.read(&mut first).unwrap() == 0 {
+            return false;
+        }
+        let mut actual = vec![0; expected.len()];
+        actual[0] = first[0];
+        stream.read_exact(&mut actual[1..]).unwrap();
+        assert_eq!(actual, expected, "only the selected signed ACK may be sent");
+        hepta_codex_broker::write_response_frame(
+            &mut stream,
+            &hepta_codex_broker::BrokerResponseV1::acknowledged(
+                acknowledgement.operation_id.clone(),
+                acknowledgement.request_hash.clone(),
+                acknowledgement.prepared_receipt_hash.clone(),
+                hepta_codex_broker::commit_bound_acknowledgement_hash_v2(&acknowledgement).unwrap(),
+            ),
+            Default::default(),
+        )
+        .unwrap();
+        true
+    })
+}
+
+#[test]
+fn ack_handoff_rechecks_current_clock_after_durable_intent() {
+    use hepta_control_plane::ControlPlaneError;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    for fault in [
+        "expired",
+        "clock_error",
+        "regressed",
+        "after_connection",
+        "ack_replaced",
+    ] {
+        let f = Fixture::new_acknowledged_execution();
+        commit_without_ack(&f);
+        let acknowledgement = f.publish_commit_acknowledgement(OUTPUT);
+        let (_, result) = durable_entry(&f);
+        let result_hash = result.result_hash().unwrap();
+        let records = f.config.state_directory.join("commit-acknowledgements-v2");
+        let digest = result_hash.as_str().trim_start_matches("sha256:");
+        let intent = records.join(format!("{digest}.intent.json"));
+        let confirmation = records.join(format!("{digest}.json"));
+        let started_at = acknowledgement.acknowledged_at_unix_ms + 1;
+        let completed = Arc::new(AtomicBool::new(false));
+        let peer = optional_ack_peer(
+            f.listener(),
+            acknowledgement.clone(),
+            Arc::clone(&completed),
+        );
+        let mut checked_after_intent = 0;
+        let mut clock = || {
+            if intent.exists() {
+                checked_after_intent += 1;
+                match fault {
+                    "expired" => return Ok(started_at + 1_000_000),
+                    "clock_error" => return Err(ControlPlaneError::PersistenceInvalid),
+                    "regressed" => return Ok(started_at - 1),
+                    "after_connection" if checked_after_intent == 1 => {}
+                    "after_connection" => return Err(ControlPlaneError::PersistenceInvalid),
+                    "ack_replaced" => {
+                        let path = f.commit_acknowledgement_path();
+                        let replacement = f.root.join("replacement-ack.json");
+                        fs::write(&replacement, fs::read(&path).unwrap()).unwrap();
+                        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o400))
+                            .unwrap();
+                        fs::rename(replacement, path).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Ok(started_at)
+        };
+        let observed = hepta_paper_service::run_service_with_clock_v1(f.config.clone(), &mut clock);
+        completed.store(true, Ordering::Release);
+        let frame_sent = peer.join().unwrap();
+        assert!(
+            !frame_sent,
+            "{fault}: stale admission sent a signed ACK frame"
+        );
+        assert!(
+            checked_after_intent > 0,
+            "{fault}: authority clock was not revisited"
+        );
+        assert!(
+            matches!(observed, Err(ServiceError::PostCommitAcknowledgement)),
+            "{fault}"
+        );
+        assert!(intent.is_file(), "retain the selected original ACK intent");
+        assert!(
+            !confirmation.exists(),
+            "refusal is not a successful broker reply"
+        );
+        assert_eq!(durable_entry(&f).0, 94, "committed cost must not change");
+        let selected_bytes = fs::read(&intent).unwrap();
+        fs::remove_file(&f.socket_path).unwrap();
+        let peer = f.serve_commit_acknowledgement(f.listener(), acknowledgement, false);
+        let recovered = run_service_v1(f.config.clone()).unwrap();
+        peer.join().unwrap();
+        assert!(!recovered.commit_receipts[0].newly_committed);
+        assert_eq!(fs::read(intent).unwrap(), selected_bytes);
+        assert_eq!(durable_entry(&f).0, 94);
+        assert!(confirmation.is_file());
+    }
+}
+
+#[test]
+fn workflow_ack_recovery_rechecks_cancellation_without_reexecuting_or_replacing_intent() {
+    use hepta_paper_service::workflow::{
+        WorkflowActionV1, WorkflowError, initialize_local_workflow_v1, operate_local_workflow_v1,
+        operate_local_workflow_with_clock_and_cancellation_v1,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let mut f = Fixture::new_acknowledged_execution();
+    let state = f.root.join("cancelled-ack-workflow");
+    let definition_hash =
+        initialize_local_workflow_v1(broker_workflow_definition(&f, &state)).unwrap();
+    f.config.state_directory = state.clone();
+    f.publish_cost_settlement(OUTPUT, 6);
+    let execution = f.serve_execution(f.listener(), OUTPUT, 0);
+    let initial = operate_local_workflow_v1(
+        &state,
+        &definition_hash,
+        WorkflowActionV1::Advance { through_steps: 1 },
+        current_unix_ms(),
+    );
+    execution.join().unwrap();
+    assert!(matches!(
+        initial,
+        Err(WorkflowError::Service(
+            ServiceError::PostCommitAcknowledgement
+        ))
+    ));
+    fs::remove_file(&f.socket_path).unwrap();
+    let acknowledgement = f.publish_commit_acknowledgement(OUTPUT);
+    let result_hash = durable_entry(&f).1.result_hash().unwrap();
+    let digest = result_hash.as_str().trim_start_matches("sha256:");
+    let directory = state.join("commit-acknowledgements-v2");
+    let intent = directory.join(format!("{digest}.intent.json"));
+    let confirmation = directory.join(format!("{digest}.json"));
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    let peer = optional_ack_peer(f.listener(), acknowledgement.clone(), Arc::clone(&finished));
+    let mut clock = || {
+        if intent.exists() {
+            cancelled.store(true, Ordering::Release);
+        }
+        Ok(current_unix_ms())
+    };
+    let interrupted = operate_local_workflow_with_clock_and_cancellation_v1(
+        &state,
+        &definition_hash,
+        WorkflowActionV1::Advance { through_steps: 1 },
+        &mut clock,
+        Arc::clone(&cancelled),
+    );
+    finished.store(true, Ordering::Release);
+    assert!(
+        !peer.join().unwrap(),
+        "cancelled recovery must send no ACK frame"
+    );
+    assert!(cancelled.load(Ordering::Acquire));
+    assert!(matches!(
+        interrupted,
+        Err(WorkflowError::Service(
+            ServiceError::PostCommitAcknowledgement
+        ))
+    ));
+    assert!(intent.exists());
+    assert!(!confirmation.exists());
+    let intent_bytes = fs::read(&intent).unwrap();
+    let before =
+        operate_local_workflow_v1(&state, &definition_hash, WorkflowActionV1::Status, 0).unwrap();
+    assert_eq!(before.committed_steps, 1);
+    assert_eq!(before.budget_remaining_microusd, 94);
+    fs::remove_file(&f.socket_path).unwrap();
+    let peer = f.serve_commit_acknowledgement(f.listener(), acknowledgement, false);
+    let recovered = operate_local_workflow_v1(
+        &state,
+        &definition_hash,
+        WorkflowActionV1::Advance { through_steps: 1 },
+        current_unix_ms(),
+    )
+    .unwrap();
+    peer.join().unwrap();
+    assert_eq!(recovered.committed_steps, 1);
+    assert_eq!(recovered.budget_remaining_microusd, 94);
+    assert_eq!(recovered.artifacts_by_step, before.artifacts_by_step);
+    assert_eq!(fs::read(&intent).unwrap(), intent_bytes);
+    fs::remove_file(&f.socket_path).unwrap();
+    fs::remove_file(f.commit_acknowledgement_path()).unwrap();
+    let replay = operate_local_workflow_v1(
+        &state,
+        &definition_hash,
+        WorkflowActionV1::Advance { through_steps: 1 },
+        current_unix_ms(),
+    )
+    .unwrap();
+    assert_eq!(replay.campaign_revision, recovered.campaign_revision);
+    assert_eq!(replay.artifacts_by_step, recovered.artifacts_by_step);
+    assert_eq!(replay.budget_remaining_microusd, 94);
+}

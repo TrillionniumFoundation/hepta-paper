@@ -688,9 +688,8 @@ fn recover_committed_broker_acknowledgements(
         else {
             continue;
         };
-        let now = clock().map_err(|_| ServiceError::PostCommitAcknowledgement)?;
         crate::broker_prepared::acknowledge_committed_result(
-            root, &target, receipt, now, cancelled,
+            root, &target, receipt, clock, cancelled,
         )
         .map_err(|_| ServiceError::PostCommitAcknowledgement)?;
     }

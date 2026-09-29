@@ -574,3 +574,50 @@ fn ordinary_cli_seed_scan_aggregate_limit_counts_nested_and_irrelevant_entries()
 
 #[path = "runtime_r_source_cas_seed/snapshot.rs"]
 mod snapshot;
+
+#[test]
+fn ordinary_cli_rejects_staged_archive_replacement_before_publication() {
+    use std::os::unix::fs::PermissionsExt;
+    for replace_inode in [false, true] {
+        let (root, seed) = fixture("archive-observation-drift", "demo", "1.0.0");
+        let original = fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap();
+        let tools = root.join("tools");
+        fs::create_dir(&tools).unwrap();
+        let change = if replace_inode {
+            "/bin/cp -- \"$2\" \"$2.replacement\" && /bin/mv -- \"$2.replacement\" \"$2\""
+        } else {
+            "/bin/chmod u+w -- \"$2\" && printf changed >> \"$2\""
+        };
+        let tool = tools.join("tar");
+        fs::write(&tool, format!(
+            "#!/bin/sh\n/usr/bin/tar \"$@\" || exit $?\nif [ \"$1\" = -xOzf ]; then {change}; fi\n"
+        )).unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+            .arg("runtime-r-source-cas")
+            .arg(&root)
+            .args(["--action", "acquire", "--seed"])
+            .arg(&seed)
+            .output()
+            .unwrap();
+        let context = root.join("runtime-images/r-scientific");
+        assert!(
+            !context.join("source-cas").exists(),
+            "changed staged input crossed publication: inode={replace_inode}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("r_runtime_source_cas_input_changed")
+        );
+        assert_eq!(fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap(), original);
+        assert_eq!(
+            fs::read_dir(&context).unwrap().count(),
+            1,
+            "only the original lock remains after safely cleaning uncommitted staging"
+        );
+        remove(&root);
+    }
+}

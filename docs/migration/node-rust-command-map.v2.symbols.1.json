@@ -1,4 +1,5 @@
 [
+[329,"run_research_service_with_cancellation_v1"],
 [329,"validate_research_service_policy_v1"],
 [330,"research_authority_loss_after_preparation_keeps_cache_and_prevents_commit"],
 [330,"research_uses_post_authority_io_time_for_writer_lease_admission"],

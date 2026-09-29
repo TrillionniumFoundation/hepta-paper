@@ -455,6 +455,7 @@
 [230,"pre_cancelled_and_expired_invocations_do_not_enter_source_or_transaction"],
 [230,"retained_hash_checks_control_between_bounded_reads_without_mutation"],
 [230,"sqlite_progress_deadline_interrupts_work_without_interrupting_rollback"],
+[230,"sqlite_wait_rounding_preserves_fractional_deadline_without_extending_admission"],
 [231,"acquire"],
 [232,"node_package_guard_cleans_only_safe_temporary_inodes_and_releases_on_unwind"],
 [232,"node_package_guard_matches_prepared_deleting_deleted_aborted"],
@@ -572,6 +573,5 @@
 [329,"qualification_currentness_is_rechecked_across_service_boundaries"],
 [329,"qualified_research_run_commits_and_replays_without_release_authority"],
 [329,"qualified_workflow_uses_existing_owner_and_cannot_fall_back_to_standard_runner"],
-[329,"run_research_service_v1"],
-[329,"run_research_service_with_cancellation_v1"]
+[329,"run_research_service_v1"]
 ]

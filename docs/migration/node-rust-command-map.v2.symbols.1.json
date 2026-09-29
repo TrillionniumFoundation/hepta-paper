@@ -1,4 +1,5 @@
 [
+[329,"run_research_service_v1"],
 [329,"run_research_service_with_cancellation_v1"],
 [329,"validate_research_service_policy_v1"],
 [330,"research_authority_loss_after_preparation_keeps_cache_and_prevents_commit"],
@@ -381,10 +382,12 @@
 [511,"complete_signed_current_pod_chain_matches_node_and_is_read_only"],
 [511,"declared_gpu_profile_and_device_proof_match_node"],
 [511,"real_invalid_signatures_revocations_and_independence_fail_with_node_parity"],
+[512,"all_migration_prefixes_share_the_readonly_schema_owner_and_preserve_headers"],
 [512,"applies_embedded_node_migrations_with_idempotent_receipt"],
 [512,"applies_the_complete_embedded_migration_catalog"],
 [512,"late_schema_error_rolls_back_the_whole_requested_range"],
 [512,"ordinary_cli_refuses_actual_hot_journal_without_recovering_source_bytes"],
+[512,"ordinary_cli_refuses_drifted_schema_before_upgrade_or_replay"],
 [512,"ordinary_migration_cli_accepts_bounded_timeout_without_changing_node_results"],
 [512,"ordinary_migration_cli_refuses_invalid_control_before_mutation"],
 [512,"ordinary_migration_deadline_preserves_database_held_by_another_writer"],
@@ -395,6 +398,7 @@
 [512,"rejects_migration_when_a_response_consumer_lease_is_present"],
 [512,"rejects_sidecars_before_mutating_the_database"],
 [512,"rejects_target_behind_applied_history"],
+[512,"unexpected_unversioned_schema_never_commits_a_migration_receipt"],
 [512,"wal_header_without_sidecars_is_refused_without_creating_them"],
 [513,"actual_ten_database_heads_match_original_node_and_retain_current_proof_without_rpc_or_source_writes"],
 [515,"native_passive_and_active_inspection_verify_real_signed_evidence_and_match_node"],
@@ -674,6 +678,8 @@
 [585,"rebound_trust_name_never_opens_or_releases_live_sqlite_writer_locks"],
 [585,"replaced_removed_aliased_or_changed_trust_invalidates_every_request_clone"],
 [585,"retained_trust_reads_original_descriptors_and_returns_post_io_time"],
-[586,"node_logical_integrity_report"],
-[587,"all_twenty_five_actual_node_stores_match_production_integrity_hashes_and_remain_immutable"]
+[586,"replay_node_schema"],
+[586,"validate_node_migration_structure_v1"],
+[587,"node_logical_integrity_report"],
+[588,"all_twenty_five_actual_node_stores_match_production_integrity_hashes_and_remain_immutable"]
 ]

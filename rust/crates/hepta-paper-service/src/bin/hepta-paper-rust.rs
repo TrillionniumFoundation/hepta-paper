@@ -1228,6 +1228,14 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Some(CommandV1::AutonomousOnlineSchemaTransition) => {
+            let report =
+                hepta_paper_service::online_schema_execution::cli::schema_transition_plan_cli_v1(
+                    &args[1..],
+                    &mut hepta_paper_service::sqlite_mutation_coordinator::clock::SystemMutationClockV1,
+                )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Some(CommandV1::AutonomousStateProvision) => {
             if args
                 .get(1)

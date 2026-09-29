@@ -4,7 +4,8 @@ This slice implements actual migration-source observation, private SQLite journa
 normalization/target-schema projection, complete registered-scope v1/v2 local
 planning, signed maintenance reservation, ten-database installation with
 durable progress/recovery, and finalization post-state/publication primitives.
-It is not the complete operator CLI, a target-host restart/activation proof, an
+The ordinary native CLI now exposes the fresh read-only planner. It is not the
+complete execute/recovery CLI, a target-host restart/activation proof, an
 externally durable final receipt, or independent production qualification.
 
 The native module is exposed as `online_schema_execution`; its actual source observer is crate-private `state_database_inventory::schema_source`. The public types retain real source and signature evidence rather than accepting a serialized readiness claim.
@@ -15,7 +16,7 @@ Original behavior comes from `paper-adapters/automation/autonomous-research-onli
 
 `online_schema_execution::observe_schema_transition_source_v1(runtime_root, relative_path, role, applied_at)` returns `ObservedSchemaTransitionSourceV1` only after actual filesystem and SQLite operations. All fields are private; `.value()` exposes diagnostic/hash data and `.assert_current()` rechecks the captured physical sources. There is no Deserialize, claim constructor, ready flag, public arbitrary callback, or public live database connection.
 
-The single-source role and relative path select the fixed migration template. This helper does not independently prove manifest registration, exactly ten database roles, business-schema provisioning, a common database scope, writer quiescence, trusted deployment configuration or authority freshness. The eventual complete plan factory must bind these observations to the actual full inventory, checked manifest and pinned authority, then obtain and repeatedly validate the signed all-scope reservation before any live source write.
+The single-source role and relative path select the fixed migration template. This helper does not independently prove manifest registration, exactly ten database roles, business-schema provisioning, a common database scope, writer quiescence, trusted deployment configuration or authority freshness. The whole-scope factory described below binds these observations to the actual full inventory, checked manifest and pinned authority. Live writes separately require the signed all-scope reservation and its retained checks; a local plan never supplies that capability.
 
 ## Actual physical observation
 
@@ -57,7 +58,7 @@ The runtime root's observed path/device/inode/mode/UID/GID is privately retained
 
 `tests/schema_source_projection_parity.rs` is the integration target for this source-plan/maintenance stage. The Node oracle invokes the real original source. A test-only loader appends exports for the two private projection helpers and private journal normalizer; it does not replace any function body, cryptographic validator or dependency. Every fixture is an isolated temporary SQLite database, with effective WAL frames created by a real Node writer and copied while that writer is open. No deployed runtime, user key, or production database is accessed.
 
-The source/projection five-group slice passed in 6.93 seconds. The expanded seven-group suite adds whole-scope planning and signed maintenance; its final validation is recorded below:
+The executable source/projection and signed-maintenance cases below remain registered in the existing source-evidence producer. Runtime results belong to their exact-head and prospective-merge receipts, not this contract:
 
 - `actual_file_identity_schema_and_journal_projection_match_original_without_source_writes`: DELETE, effective WAL, missing SHM, checkpointed WAL/stale SHM, and actual handoff-v1 migration. Complete objects are compared except the explicitly asserted engine-dependent raw hash; source bytes and identities remain unchanged.
 - `wal_normalization_hashes_bind_actual_writer_engine_bytes`: runs real original Node and native normalization against separate copies of the same WAL source, compares all bytes, proves the exact writer-version-header difference and verifies the native returned hash against actual native file bytes.
@@ -67,7 +68,74 @@ The source/projection five-group slice passed in 6.93 seconds. The expanded seve
 - `actual_ten_database_initial_and_pristine_rebind_plans_match_node`: original actual ten-database fixtures, complete v1 and v2 plan/identity/hash equality, real v2 pristine pin rejection, current-source invalidation, and actual signed v2 old-head/new-genesis reservation verification.
 - `signed_maintenance_requires_exact_scope_fencing_fresh_final_clock_and_source_pins`: genuine temporary authority signatures and original verifier acceptance/rejection, bad signature, signed false fencing, signed instance splice, late final sample, exact remaining-window boundary, expiry/rollback refusal, actual source changes during the RPC and zero RPCs for pre-existing source drift/clock rollback.
 
-The final isolated seven-group suite passed (121.01 seconds). After the final guard rejecting clocks before `plannedAt`, the affected signed-maintenance group passed again (116.30 seconds). Strict production Clippy passed with warnings, unwrap, expect, panic and unsafe-code denied; test Clippy and oracle ESLint passed. These are isolated-workspace results, separate from the production checkpoint. No live-write or installation completion is claimed by these tests.
+The source tests do not qualify installed authority or claim that the production checkpoint has advanced. Strict Clippy, real execution results and failure reproductions are recorded by the existing source-owner evidence and PR/run logs; those observations are not duplicated here.
+
+## Ordinary read-only planning entry
+
+```sh
+hepta-paper-rust autonomous-online-schema-transition --action plan \
+  --runtime-root /absolute/native-runtime \
+  --authority-process-config /absolute/authority-process.json \
+  --authority-process-config-sha256 sha256:<exact-file-digest>
+```
+
+`online_schema_execution::cli::schema_transition_plan_cli_v1` calls the existing
+`build_schema_transition_plan_v1`; it does not assemble a replacement inventory,
+writer, migration engine or recovery journal. It uses the compiled canonical
+state-database manifest and the existing `state_backup_writer_manifest_v1`
+source. The public process configuration, referenced verifier configuration,
+public key document and executable are retained by the original pinned authority
+loader. Planning invokes no process or authority RPC and reads no private key.
+The actual ordinary-CLI fixtures select a pinned executable that returns failure
+if called; both initial v1 and pristine-rebind v2 plans still succeed.
+
+The command supports `--requested-lease-ms` (default 120000),
+`--required-execution-window-ms` (default 30000), and the separately selected
+`--expected-pre-rebind-pristine-runtime-state-hash`. Each plan is based on the
+real registered ten-database source observations and private SQLite projections.
+The whole inventory, source descriptors, public authority inputs and command
+are revalidated after the final clock observation; a negative/regressing clock,
+changed public trust, changed executable or concurrent database change rejects
+without overwriting the concurrent bytes. This is an observation, not an atomic
+cross-database transaction or hostile-same-UID filesystem guarantee.
+
+The response retains the original plan-report fields and adds explicit native
+scope and false execution/release/submission/production/retirement authority
+fields. `ready=true` means a fresh source plan was produced, never that a writer
+can activate. The actual plan hash is recomputed by the tests before independent
+observation times and their dependent hash are normalized for Node comparison.
+Fresh retries produce the same transition identity without database writes.
+
+This profile requires explicit canonical absolute runtime/configuration paths
+and an externally selected raw configuration-file SHA-256. It does not auto-pin
+an arbitrary current filename or inherit production layout/credentials from the
+environment. Numeric CLI options are ASCII unsigned decimal and bounded by
+the native authority contract (at most 900000 milliseconds); broader Node
+Number/path/environment coercions are not claimed equivalent. The existing v2
+planner remains fail-closed for unsupported genesis inputs.
+
+Any existing `autonomous-research/online-schema-transition` entry, including an
+empty directory, is refused as requiring the existing recovery owner. The CLI
+never reads an `ACTIVE.json` as new authority, adopts old transition progress,
+erases an interrupted plan or changes a final receipt. This deliberately narrower
+fresh-plan surface is not the incumbent existing-state/resume report mode.
+The control path is checked both before and after the complete source observation.
+Actual process-death tests kill the ordinary binary after private-copy creation,
+then retry through the same entry: source bytes remain unchanged and surviving
+private-copy residue is neither adopted nor erased.
+
+`--action execute` still requires the original two confirmation fields before
+reporting `native_execute_requires_installed_owner`, and fails before reading
+runtime or authority inputs. It cannot invoke the existing live executor from
+this entry. Installing the real writable composition, retaining the signed
+reservation through restart, current checkpoint/final-receipt recovery and
+accepting target-host canary/rollback/old-Node-writer fencing remain separate work.
+
+The CLI cases in `tests/schema_source_projection_parity/cli.rs` exercise actual
+Node/Rust entrypoints, complete v1/v2 reports, invalid modes, pinned-input
+substitution, old control-state refusal, late observation drift and process death.
+They reuse the original ten-database fixtures; no local test supplies installed
+credentials or claims independent live authority.
 
 ## Next execution work
 

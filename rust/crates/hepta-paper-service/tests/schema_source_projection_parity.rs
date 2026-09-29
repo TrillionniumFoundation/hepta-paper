@@ -590,3 +590,22 @@ fn signed_maintenance_requires_exact_scope_fencing_fresh_final_clock_and_source_
         "drift before reservation must invoke zero RPCs"
     );
 }
+
+#[test]
+fn ordinary_schema_plan_help_is_available_without_runtime_access() {
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .args(["autonomous-online-schema-transition", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["mutation"], "none");
+}
+
+#[path = "schema_source_projection_parity/cli.rs"]
+mod cli;

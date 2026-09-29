@@ -49,6 +49,7 @@ commands! {
     GenericDomainCapabilityEvidence => "generic-domain-capability-evidence",
     ResearchCapabilityMatrix => "research-capability-matrix",
     LocalGoldenDatasetProvision => "local-golden-dataset-provision",
+    AutonomousOnlineSchemaTransition => "autonomous-online-schema-transition",
     AutonomousStateProvision => "autonomous-state-provision",
     AutonomousStatePartialRootMaintenance => "autonomous-state-partial-root-maintenance",
     PersonalGpuOperationalGate => "personal-gpu-operational-gate",

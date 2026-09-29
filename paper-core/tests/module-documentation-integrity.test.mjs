@@ -56,7 +56,7 @@ test('live repository has complete one-to-one module documentation', () => {
   assert.equal(result.report.manifests, 32);
 });
 
-test('missing required section fails closed', () => {
+test('renaming an explanatory section is advisory, not a correctness failure', () => {
   const root = createFixture();
   try {
     const index = JSON.parse(fs.readFileSync(path.join(root, 'docs/modules/module-documentation.v1.json'), 'utf8'));
@@ -64,8 +64,9 @@ test('missing required section fails closed', () => {
     const spec = fs.readFileSync(path.join(root, entry.specPath), 'utf8').replace('## Failure, recovery, and idempotency', '## Removed failure section');
     fs.writeFileSync(path.join(root, entry.specPath), spec);
     const result = validateModuleDocumentation({ root });
-    assert.equal(result.ok, false);
-    assert.match(result.failures.join('\n'), /missing heading/);
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    assert.match(result.advisories.join('\n'), /missing heading/);
+    assert.equal(result.report.implementationProjection.modules['module.submission-port'].productionActivationVerified, false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -157,15 +158,6 @@ const hostileCases = [
     const file = path.join(root, WRITER_SPEC);
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('staticActivation: disabled', 'staticActivation: authoritative'));
   }, /specification staticActivation mismatch/],
-  ['empty mandatory section', (root) => {
-    const file = path.join(root, WRITER_SPEC);
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## Inputs and outputs[\s\S]*?(?=## State and authority)/, '## Inputs and outputs\n\n'));
-  }, /empty section/],
-  ['heading hidden inside a code fence', (root) => {
-    const file = path.join(root, WRITER_SPEC);
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Inputs and outputs', '```text\n## Inputs and outputs\n```'));
-  }, /missing heading/],
-  ['duplicate mandatory heading', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), '\n## Inputs and outputs\nDuplicated.\n'), /duplicate heading/],
   ['oversized specification', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), 'x'.repeat(1024 * 1024)), /byte limit/],
   ['duplicate raw JSON key', (root) => {
     const file = path.join(root, WRITER_MANIFEST);
@@ -176,6 +168,33 @@ const hostileCases = [
   }, /duplicate JSON property/],
   ['unindexed symbolic document', (root) => fs.symlinkSync(path.join(root, WRITER_SPEC), path.join(root, 'docs/modules/specs/unindexed.md')), /symbolic module document/],
 ];
+
+const proseShapeCases = [
+  ['empty mandatory section', (root) => {
+    const file = path.join(root, WRITER_SPEC);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## Inputs and outputs[\s\S]*?(?=## State and authority)/, '## Inputs and outputs\n\n'));
+  }, /empty section/],
+  ['heading hidden inside a code fence', (root) => {
+    const file = path.join(root, WRITER_SPEC);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Inputs and outputs', '```text\n## Inputs and outputs\n```'));
+  }, /missing heading/],
+  ['duplicate mandatory heading', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), '\n## Inputs and outputs\nDuplicated.\n'), /duplicate heading/],
+];
+for (const [name, mutate, expected] of proseShapeCases) {
+  test(`module documentation advises on ${name} without weakening typed authority`, () => {
+    const root = createFixture();
+    try {
+      mutate(root);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, true, result.failures.join('\n'));
+      assert.match(result.advisories.join('\n'), expected);
+      changeJson(root, WRITER_MANIFEST, (value) => { value.sideEffectClasses.push('submission'); });
+      const invalid = validateModuleDocumentation({ root });
+      assert.equal(invalid.ok, false);
+      assert.match(invalid.failures.join('\n'), /authority ceiling/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 for (const [name, mutate, expected] of hostileCases) {
   test(`module documentation rejects ${name}`, () => {
@@ -270,7 +289,7 @@ test('documented unfinished work is allowed without granting authority', () => {
 });
 
 for (const marker of ['TODO', 'TBD', 'PLACEHOLDER', 'FIXME']) {
-  test(`a bare ${marker} marker cannot replace a required section`, () => {
+  test(`a bare ${marker} explanatory section produces advice, not authority`, () => {
     const root = createFixture();
     try {
       const file = path.join(root, WRITER_SPEC);
@@ -280,10 +299,24 @@ for (const marker of ['TODO', 'TBD', 'PLACEHOLDER', 'FIXME']) {
       );
       fs.writeFileSync(file, source);
       const result = validateModuleDocumentation({ root });
-      assert.equal(result.ok, false);
-      assert.match(result.failures.join('\n'), /placeholder-only section/);
+      assert.equal(result.ok, true, result.failures.join('\n'));
+      assert.match(result.advisories.join('\n'), /placeholder-only section/);
+      assert.equal(result.report.implementationProjection.modules['module.commit-sequencer'].productionActivationVerified, false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+}
+
+for (const heading of ['Identity', 'Open blockers', 'Operational runbook']) {
+  test(`machine-referenced ${heading} section remains unique and mandatory`, () => {
+    const root = createFixture();
+    try {
+      const file = path.join(root, WRITER_SPEC);
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`## ${heading}`, '## Other text'));
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, false);
+      assert.match(result.failures.join('\n'), /missing heading|mismatch|work-state projection/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 }

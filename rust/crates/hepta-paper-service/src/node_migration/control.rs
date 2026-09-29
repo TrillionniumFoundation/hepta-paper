@@ -50,7 +50,7 @@ impl MigrationControl {
     }
     pub(super) fn lock_wait(&self, maximum: Duration) -> Result<Duration, NodeMigrationError> {
         self.check()?;
-        Ok(self.deadline.map_or(maximum, |deadline| {
+        sqlite_wait_duration(self.deadline.map_or(maximum, |deadline| {
             maximum.min(deadline.saturating_duration_since(Instant::now()))
         }))
     }
@@ -89,4 +89,14 @@ impl Drop for RollbackProgressGuard {
     fn drop(&mut self) {
         self.disarm();
     }
+}
+
+/// SQLite's busy timeout accepts integer milliseconds. Rounding down can
+/// return Busy just before a live monotonic deadline and misclassify expiry.
+/// Waiting rounds up by less than one millisecond; admission and COMMIT still
+/// recheck the unchanged exact deadline, so this never extends write authority.
+pub(super) fn sqlite_wait_duration(wait: Duration) -> Result<Duration, NodeMigrationError> {
+    let millis = u64::try_from(wait.as_nanos().div_ceil(1_000_000))
+        .map_err(|_| NodeMigrationError::ControlPolicy)?;
+    Ok(Duration::from_millis(millis))
 }

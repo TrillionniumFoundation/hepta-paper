@@ -268,3 +268,29 @@ fn migration_sql_vm_deadline_rolls_back_the_real_owner_and_retries_once() {
     assert_eq!(replay.before_version, 3);
     assert!(replay.applied_versions.is_empty());
 }
+
+#[test]
+fn sqlite_wait_rounding_preserves_fractional_deadline_without_extending_admission() {
+    for (nanos, millis) in [
+        (0, 0),
+        (1, 1),
+        (999_999, 1),
+        (1_000_000, 1),
+        (1_000_001, 2),
+        (9_999_999, 10),
+        (100_000_000, 100),
+    ] {
+        let input = Duration::from_nanos(nanos);
+        let actual = control::sqlite_wait_duration(input).unwrap();
+        assert_eq!(actual, Duration::from_millis(millis));
+        assert!(actual >= input && actual - input < Duration::from_millis(1));
+    }
+    let expired =
+        MigrationControl::bounded(Arc::new(AtomicBool::new(false)), Duration::from_nanos(1))
+            .unwrap();
+    std::thread::sleep(Duration::from_millis(1));
+    assert!(matches!(
+        expired.lock_wait(Duration::from_millis(100)),
+        Err(NodeMigrationError::DeadlineExceeded)
+    ));
+}

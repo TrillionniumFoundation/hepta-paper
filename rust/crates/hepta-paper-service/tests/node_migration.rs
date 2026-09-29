@@ -426,26 +426,31 @@ fn ordinary_migration_cli_refuses_invalid_control_before_mutation() {
 fn ordinary_migration_deadline_preserves_database_held_by_another_writer() {
     let temp = Temp::new();
     let path = temp.database();
-    // Read before locking: closing another descriptor for the same inode
-    // after BEGIN would silently release this process's POSIX SQLite lock.
+    // Closing another source descriptor after BEGIN would release our POSIX lock.
     let before = fs::read(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     db.execute_batch("BEGIN EXCLUSIVE;").unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
-        .arg("store-migrate")
-        .arg(&path)
-        .args(["2", "--timeout-ms", "10"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("deadline exceeded"),
-        "deadline outcome: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(fs::read(&path).unwrap(), before);
+    for budget in ["1", "10", "11", "40"] {
+        for _ in 0..3 {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+                .arg("store-migrate")
+                .arg(&path)
+                .args(["2", "--timeout-ms", budget])
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            assert!(output.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("deadline exceeded"),
+                "budget={budget}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    // Keep the competing lock until ALL child invocations have stopped.
     db.execute_batch("ROLLBACK;").unwrap();
+    drop(db);
+    assert_eq!(fs::read(&path).unwrap(), before);
 }
 
 #[test]

@@ -359,6 +359,8 @@
 "rust/crates/hepta-paper-service/src/runtime_source_cas.rs",
 "rust/crates/hepta-paper-service/src/runtime_source_cas/archive_process.rs",
 "rust/crates/hepta-paper-service/src/runtime_source_cas/archive_process/tests.rs",
+"rust/crates/hepta-paper-service/src/runtime_source_cas/observation.rs",
+"rust/crates/hepta-paper-service/src/runtime_source_cas/observation/tests.rs",
 "rust/crates/hepta-paper-service/src/runtime_source_cas/tests.rs",
 "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process.rs",
 "rust/crates/hepta-paper-service/src/sqlite_mutation_coordinator/authority/process/native_command.rs",

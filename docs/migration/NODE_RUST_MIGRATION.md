@@ -263,3 +263,9 @@ lock. They do not open/close another descriptor for that inode while establishin
 the lock-wait precondition. Signal readiness and actual stop latency have
 separate bounds; a registered handler is observed rather than assumed after a
 fixed startup sleep. These local tests do not fence the installed Node service.
+
+SQLite busy-wait budgets are rounded upward to integer milliseconds so truncation
+does not turn a deadline refusal into an early generic busy error. This only
+changes wait granularity by less than one millisecond; every admission and COMMIT
+check uses the original exact monotonic deadline. A repeated ordinary-CLI matrix
+covers 1/10/11/40 ms budgets while a real competing writer retains its lock.

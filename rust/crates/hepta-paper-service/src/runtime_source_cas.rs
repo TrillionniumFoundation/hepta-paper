@@ -35,6 +35,20 @@
 //! downloads, mixed seed/network acquisition and orphan disposal remain open. The command's actual recovery and Node
 //! comparisons are in `tests/runtime_r_source_cas_seed.rs`; syscall/crash owners
 //! are the private unit tests, not an alternative execution implementation.
+//!
+//! Status, initial lock reads and acquisition replay use one descriptor-pinned,
+//! nonblocking observer. Documents are limited to 16 MiB, an archive to 256 MiB,
+//! and each complete observation/publication to 1 GiB including lock and indexes.
+//! Archive hashes stream through a 64 KiB buffer. FIFO/special files, child links,
+//! hardlinked files, oversized/sparse inputs and namespace/content drift refuse
+//! readiness without changing the source. Only the explicitly selected root may
+//! resolve an alias; all child components use retained directory descriptors.
+//! Metadata/namespace/cancellation are checked after hashes and before readiness.
+//! Staged archives remain pinned across tar and across later package checks;
+//! all generated indexes and the complete staged namespace are rechecked before
+//! the existing publisher's no-replace rename. A post-rename failure still keeps
+//! published bytes. These observations are not filesystem snapshots, hostile
+//! same-UID exclusion, kernel-I/O preemption or publisher/installation authority.
 
 use hepta_legacy_compatibility::production_hash_record_v1;
 use nix::fcntl::{Flock, FlockArg, OFlag, RenameFlags, renameat2};
@@ -51,7 +65,9 @@ use std::{
 };
 
 mod archive_process;
+mod observation;
 use archive_process::{ArchiveExecution, require_active};
+use observation::{MAX_DOCUMENT_BYTES, ObservationBudget, SourceObservation};
 
 const SNAPSHOT: &str = "https://packagemanager.posit.co/cran/2024-11-01";
 
@@ -118,15 +134,16 @@ fn valid_sha256(value: Option<&Value>) -> bool {
     })
 }
 
-fn read_lock(path: &Path) -> Result<(Vec<Value>, String), String> {
-    let bytes =
-        fs::read(path).map_err(|error| format!("r_runtime_source_cas_unavailable:{error}"))?;
-    let lock: Value = serde_json::from_slice(&bytes)
+fn parse_lock(bytes: &[u8]) -> Result<(Vec<Value>, String), String> {
+    let lock: Value = serde_json::from_slice(bytes)
         .map_err(|_| "r_runtime_source_cas_lock_json_invalid".to_owned())?;
     let packages = lock
         .get("Packages")
         .and_then(Value::as_object)
         .ok_or_else(|| "r_runtime_source_cas_lock_closure_invalid".to_owned())?;
+    if packages.len() > MAX_SEED_ENTRIES - 5 {
+        return Err("r_runtime_source_cas_observation_limit_exceeded".to_owned());
+    }
     let mut entries = Vec::new();
     for (name, value) in packages {
         let Some(entry) = value.as_object() else {
@@ -165,36 +182,7 @@ fn read_lock(path: &Path) -> Result<(Vec<Value>, String), String> {
     if entries.is_empty() {
         return Err("r_runtime_source_cas_lock_closure_invalid".to_owned());
     }
-    Ok((entries, digest(&bytes)))
-}
-
-fn collect_files(root: &Path, relative: &str, output: &mut Vec<String>) -> Result<(), String> {
-    let entries = fs::read_dir(root).map_err(|error| error.to_string())?;
-    for entry in entries {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if relative.is_empty() && (name == ".git" || name == ".gitattributes") {
-            continue;
-        }
-        let path = entry.path();
-        let child = if relative.is_empty() {
-            name.clone()
-        } else {
-            format!("{relative}/{name}")
-        };
-        let metadata = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-        if metadata.file_type().is_symlink() {
-            return Err("symlink".to_owned());
-        }
-        if metadata.is_dir() {
-            collect_files(&path, &child, output)?;
-        } else if metadata.is_file() {
-            output.push(child);
-        } else {
-            return Err("type".to_owned());
-        }
-    }
-    Ok(())
+    Ok((entries, digest(bytes)))
 }
 
 fn expected_indexes(packages: &[Value]) -> (String, String) {
@@ -227,6 +215,22 @@ fn expected_indexes(packages: &[Value]) -> (String, String) {
     (format!("{sums}\n"), format!("{}\n", rows.join("\n")))
 }
 
+fn expected_cas_files(packages: &[Value]) -> Vec<String> {
+    let mut files = vec![
+        "PACKAGES.tsv".to_owned(),
+        "SHA256SUMS".to_owned(),
+        "manifest.json".to_owned(),
+    ];
+    files.extend(packages.iter().filter_map(|entry| {
+        entry
+            .get("file")
+            .and_then(Value::as_str)
+            .map(|file| format!("src/contrib/{file}"))
+    }));
+    files.sort();
+    files
+}
+
 fn manifest_hash(manifest: &Value) -> Option<String> {
     let object = manifest.as_object()?;
     let supplied = object.get("rRuntimeSourceCasManifestHash")?.as_str()?;
@@ -239,182 +243,182 @@ fn manifest_hash(manifest: &Value) -> Option<String> {
 
 /// Verify the exact lock closure and content-addressed source archive set.
 pub fn inspect_runtime_source_cas_v1(repository_root: &Path) -> Value {
-    let context = repository_root.join("runtime-images/r-scientific");
-    let lock_path = context.join("renv.lock");
-    let cas = context.join("source-cas");
-    let (expected, lockfile_hash) = match read_lock(&lock_path) {
-        Ok(value) => value,
-        Err(error) => return blocked(error),
-    };
-    let manifest_bytes = match fs::read(cas.join("manifest.json")) {
-        Ok(bytes) => bytes,
-        Err(error) => return blocked(format!("r_runtime_source_cas_unavailable:{error}")),
-    };
-    let manifest: Value = match serde_json::from_slice(&manifest_bytes) {
-        Ok(value) => value,
-        Err(_) => {
-            return blocked(
-                "r_runtime_source_cas_unavailable:r_runtime_source_cas_manifest_json_invalid",
-            );
-        }
-    };
-    let Some(object) = manifest.as_object() else {
-        return blocked("r_runtime_source_cas_manifest_drift");
-    };
-    let Some(packages) = object.get("packages").and_then(Value::as_array) else {
-        return blocked("r_runtime_source_cas_manifest_drift");
-    };
-    let metadata: Vec<Value> = packages
-        .iter()
-        .map(|entry| {
-            json!({
-                "package": entry.get("package").and_then(Value::as_str).unwrap_or_default(),
-                "version": entry.get("version").and_then(Value::as_str).unwrap_or_default(),
-                "file": entry.get("file").and_then(Value::as_str).unwrap_or_default(),
-                "url": entry.get("url").and_then(Value::as_str).unwrap_or_default(),
+    inspect_runtime_source_cas_with_cancellation_v1(repository_root, &AtomicBool::new(false))
+}
+
+/// The same read-only status owner is used by the ordinary CLI and acquisition
+/// replay. Cancellation, input bounds and source drift cannot become readiness.
+pub fn inspect_runtime_source_cas_with_cancellation_v1(
+    repository_root: &Path,
+    cancelled: &AtomicBool,
+) -> Value {
+    inspect_with_checkpoint(repository_root, cancelled, &mut || {})
+}
+
+fn inspect_with_checkpoint(
+    repository_root: &Path,
+    cancelled: &AtomicBool,
+    checkpoint: &mut impl FnMut(),
+) -> Value {
+    let result = (|| -> Result<Value, String> {
+        let context = repository_root.join("runtime-images/r-scientific");
+        let mut observed = SourceObservation::new(&context, cancelled)?;
+        let lock = observed.document(Path::new("renv.lock"))?;
+        let (expected, lockfile_hash) = parse_lock(&lock)?;
+        let manifest_bytes = observed.document(Path::new("source-cas/manifest.json"))?;
+        let manifest: Value = match serde_json::from_slice(&manifest_bytes) {
+            Ok(value) => value,
+            Err(_) => {
+                return Ok(blocked(
+                    "r_runtime_source_cas_unavailable:r_runtime_source_cas_manifest_json_invalid",
+                ));
+            }
+        };
+        let Some(object) = manifest.as_object() else {
+            return Ok(blocked("r_runtime_source_cas_manifest_drift"));
+        };
+        let Some(packages) = object.get("packages").and_then(Value::as_array) else {
+            return Ok(blocked("r_runtime_source_cas_manifest_drift"));
+        };
+        let metadata: Vec<Value> = packages
+            .iter()
+            .map(|entry| {
+                json!({
+                    "package": entry.get("package").and_then(Value::as_str).unwrap_or_default(),
+                    "version": entry.get("version").and_then(Value::as_str).unwrap_or_default(),
+                    "file": entry.get("file").and_then(Value::as_str).unwrap_or_default(),
+                    "url": entry.get("url").and_then(Value::as_str).unwrap_or_default(),
+                })
             })
-        })
-        .collect();
-    let entries_valid = packages.iter().all(|entry| {
-        exact_keys(
-            entry,
-            &["bytes", "file", "package", "sha256", "url", "version"],
-        ) && entry
-            .get("package")
-            .and_then(Value::as_str)
-            .is_some_and(valid_package)
-            && entry
-                .get("version")
+            .collect();
+        let entries_valid = packages.iter().all(|entry| {
+            exact_keys(
+                entry,
+                &["bytes", "file", "package", "sha256", "url", "version"],
+            ) && entry
+                .get("package")
                 .and_then(Value::as_str)
-                .is_some_and(valid_version)
-            && entry.get("file").and_then(Value::as_str)
-                == Some(&format!(
-                    "{}_{}.tar.gz",
-                    entry
-                        .get("package")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                    entry
-                        .get("version")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                ))
-            && entry.get("url").and_then(Value::as_str)
-                == Some(&format!(
-                    "{SNAPSHOT}/src/contrib/{}",
-                    entry
-                        .get("file")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                ))
-            && entry
-                .get("bytes")
-                .and_then(Value::as_u64)
-                .is_some_and(|bytes| bytes >= 100)
-            && valid_sha256(entry.get("sha256"))
-    });
-    let packages_sorted = packages.windows(2).all(|pair| {
-        pair[0]
-            .get("package")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            < pair[1]
+                .is_some_and(valid_package)
+                && entry
+                    .get("version")
+                    .and_then(Value::as_str)
+                    .is_some_and(valid_version)
+                && entry.get("file").and_then(Value::as_str)
+                    == Some(&format!(
+                        "{}_{}.tar.gz",
+                        entry
+                            .get("package")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                        entry
+                            .get("version")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                    ))
+                && entry.get("url").and_then(Value::as_str)
+                    == Some(&format!(
+                        "{SNAPSHOT}/src/contrib/{}",
+                        entry
+                            .get("file")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                    ))
+                && entry
+                    .get("bytes")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|bytes| bytes >= 100)
+                && valid_sha256(entry.get("sha256"))
+        });
+        let packages_sorted = packages.windows(2).all(|pair| {
+            pair[0]
                 .get("package")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-    });
-    if object.get("version") != Some(&json!(1))
-        || object.get("kind").and_then(Value::as_str) != Some("RRuntimeSourceCasManifest")
-        || object.get("status").and_then(Value::as_str) != Some("r_runtime_source_cas_complete")
-        || object.get("snapshot").and_then(Value::as_str) != Some(SNAPSHOT)
-        || object.get("exactLockClosure") != Some(&Value::Bool(true))
-        || object.get("allSourceArchivesContentHashed") != Some(&Value::Bool(true))
-        || object.get("offlineRestoreRequired") != Some(&Value::Bool(true))
-        || object.get("lockfileHash").and_then(Value::as_str) != Some(lockfile_hash.as_str())
-        || object.get("packageCount").and_then(Value::as_u64) != Some(expected.len() as u64)
-        || metadata != expected
-        || !entries_valid
-        || !packages_sorted
-        || manifest_hash(&manifest).is_none()
-    {
-        return blocked("r_runtime_source_cas_manifest_drift");
-    }
-    let mut expected_files = vec![
-        "PACKAGES.tsv".to_owned(),
-        "SHA256SUMS".to_owned(),
-        "manifest.json".to_owned(),
-    ];
-    expected_files.extend(packages.iter().filter_map(|entry| {
-        entry
-            .get("file")
-            .and_then(Value::as_str)
-            .map(|file| format!("src/contrib/{file}"))
-    }));
-    expected_files.sort();
-    let mut actual_files = Vec::new();
-    if let Err(error) = collect_files(&cas, "", &mut actual_files) {
-        return blocked(format!("r_runtime_source_cas_unavailable:{error}"));
-    }
-    actual_files.sort();
-    if actual_files != expected_files {
-        return blocked("r_runtime_source_cas_file_closure_mismatch");
-    }
-    let (sums, package_index) = expected_indexes(packages);
-    if fs::read_to_string(cas.join("SHA256SUMS")).ok().as_deref() != Some(sums.as_str())
-        || fs::read_to_string(cas.join("PACKAGES.tsv")).ok().as_deref()
-            != Some(package_index.as_str())
-    {
-        return blocked("r_runtime_source_cas_index_content_mismatch");
-    }
-    for entry in packages {
-        let Some(file) = entry.get("file").and_then(Value::as_str) else {
-            return blocked("r_runtime_source_cas_manifest_drift");
-        };
-        let path = cas.join("src/contrib").join(file);
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) => return blocked(format!("r_runtime_source_cas_unavailable:{error}")),
-        };
-        if bytes.len() != entry.get("bytes").and_then(Value::as_u64).unwrap_or(0) as usize
-            || digest(&bytes)
-                != entry
-                    .get("sha256")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-        {
-            return blocked(format!(
-                "r_runtime_source_cas_archive_hash_mismatch:{}",
-                entry
+                < pair[1]
                     .get("package")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
-            ));
+        });
+        if object.get("version") != Some(&json!(1))
+            || object.get("kind").and_then(Value::as_str) != Some("RRuntimeSourceCasManifest")
+            || object.get("status").and_then(Value::as_str) != Some("r_runtime_source_cas_complete")
+            || object.get("snapshot").and_then(Value::as_str) != Some(SNAPSHOT)
+            || object.get("exactLockClosure") != Some(&Value::Bool(true))
+            || object.get("allSourceArchivesContentHashed") != Some(&Value::Bool(true))
+            || object.get("offlineRestoreRequired") != Some(&Value::Bool(true))
+            || object.get("lockfileHash").and_then(Value::as_str) != Some(lockfile_hash.as_str())
+            || object.get("packageCount").and_then(Value::as_u64) != Some(expected.len() as u64)
+            || metadata != expected
+            || !entries_valid
+            || !packages_sorted
+            || manifest_hash(&manifest).is_none()
+        {
+            return Ok(blocked("r_runtime_source_cas_manifest_drift"));
         }
-    }
-    let manifest_hash = manifest
-        .get("rRuntimeSourceCasManifestHash")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let mut definition_paths = vec![
-        "source-cas/PACKAGES.tsv".to_owned(),
-        "source-cas/SHA256SUMS".to_owned(),
-        "source-cas/manifest.json".to_owned(),
-    ];
-    definition_paths.extend(packages.iter().filter_map(|entry| {
-        entry
-            .get("file")
-            .and_then(Value::as_str)
-            .map(|file| format!("source-cas/src/contrib/{file}"))
-    }));
-    json!({
-        "ready": true,
-        "status": "r_runtime_source_cas_verified",
-        "manifestHash": manifest_hash,
-        "packageCount": packages.len(),
-        "lockfileHash": lockfile_hash,
-        "definitionPaths": definition_paths,
-        "blockers": [],
-    })
+        let expected_files = expected_cas_files(packages);
+        let mut actual_files = observed.files(Path::new("source-cas"))?;
+        actual_files.sort();
+        if actual_files != expected_files {
+            return Ok(blocked("r_runtime_source_cas_file_closure_mismatch"));
+        }
+        let (sums, package_index) = expected_indexes(packages);
+        if observed.document(Path::new("source-cas/SHA256SUMS"))? != sums.as_bytes()
+            || observed.document(Path::new("source-cas/PACKAGES.tsv"))? != package_index.as_bytes()
+        {
+            return Ok(blocked("r_runtime_source_cas_index_content_mismatch"));
+        }
+        for entry in packages {
+            let Some(file) = entry.get("file").and_then(Value::as_str) else {
+                return Ok(blocked("r_runtime_source_cas_manifest_drift"));
+            };
+            let (actual_hash, actual_bytes) = observed.archive(
+                &Path::new("source-cas/src/contrib").join(file),
+                MAX_ARCHIVE_BYTES,
+            )?;
+            if actual_bytes != entry.get("bytes").and_then(Value::as_u64).unwrap_or(0)
+                || actual_hash
+                    != entry
+                        .get("sha256")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+            {
+                return Ok(blocked(format!(
+                    "r_runtime_source_cas_archive_hash_mismatch:{}",
+                    entry
+                        .get("package")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                )));
+            }
+        }
+        let manifest_hash = manifest
+            .get("rRuntimeSourceCasManifestHash")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let mut definition_paths = vec![
+            "source-cas/PACKAGES.tsv".to_owned(),
+            "source-cas/SHA256SUMS".to_owned(),
+            "source-cas/manifest.json".to_owned(),
+        ];
+        definition_paths.extend(packages.iter().filter_map(|entry| {
+            entry
+                .get("file")
+                .and_then(Value::as_str)
+                .map(|file| format!("source-cas/src/contrib/{file}"))
+        }));
+        checkpoint();
+        observed.assert_current()?;
+        Ok(json!({
+            "ready": true,
+            "status": "r_runtime_source_cas_verified",
+            "manifestHash": manifest_hash,
+            "packageCount": packages.len(),
+            "lockfileHash": lockfile_hash,
+            "definitionPaths": definition_paths,
+            "blockers": [],
+        }))
+    })();
+    result.unwrap_or_else(blocked)
 }
 
 const MAX_TAR_LISTING_BYTES: u64 = 16 * 1024 * 1024;
@@ -621,13 +625,20 @@ fn verify_seed_archive(
     entry: &Value,
     destination: &Path,
     execution: &mut ArchiveExecution<'_>,
+    observed: &mut SourceObservation<'_>,
 ) -> Result<Value, String> {
-    let bytes =
-        fs::read(destination).map_err(|_| "r_runtime_source_cas_archive_invalid".to_owned())?;
-    if bytes.len() < 100 {
+    let file = entry["file"]
+        .as_str()
+        .ok_or("r_runtime_source_cas_lock_entry_invalid")?;
+    let (archive_hash, archive_bytes) =
+        observed.archive(&Path::new("src/contrib").join(file), MAX_ARCHIVE_BYTES)?;
+    if archive_bytes < 100 {
         return Err("archive_too_small".to_owned());
     }
     let (package, version) = archive_description_identity(destination, execution)?;
+    // The tool's output cannot rebind the bytes we actually hashed. Retain all
+    // prior archive identities until the original publisher's pre-rename check.
+    observed.assert_current()?;
     if package != entry["package"] || version != entry["version"] {
         return Err("description_identity_mismatch".to_owned());
     }
@@ -635,8 +646,8 @@ fn verify_seed_archive(
         .as_object()
         .cloned()
         .ok_or_else(|| "r_runtime_source_cas_lock_entry_invalid".to_owned())?;
-    object.insert("bytes".to_owned(), json!(bytes.len()));
-    object.insert("sha256".to_owned(), Value::String(digest(&bytes)));
+    object.insert("bytes".to_owned(), json!(archive_bytes));
+    object.insert("sha256".to_owned(), Value::String(archive_hash));
     Ok(Value::Object(object))
 }
 
@@ -828,7 +839,9 @@ fn acquire_from_source_with_controls(
     match fs::symlink_metadata(&destination) {
         Ok(metadata) if metadata.is_dir() => {
             let installed = open_directory(&destination)?;
-            let current = inspect_runtime_source_cas_v1(repository_root);
+            let current =
+                inspect_runtime_source_cas_with_cancellation_v1(repository_root, cancelled);
+            require_active(cancelled)?;
             if current["ready"] != Value::Bool(true) || !retains_directory(&destination, &installed)
             {
                 return Err("r_runtime_source_cas_existing_invalid".to_owned());
@@ -851,7 +864,9 @@ fn acquire_from_source_with_controls(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err("r_runtime_source_cas_existing_invalid".to_owned()),
     }
-    let (expected, lockfile_hash) = read_lock(&context.join("renv.lock"))?;
+    let mut input_observation = SourceObservation::new(&context, cancelled)?;
+    let lock_bytes = input_observation.document(Path::new("renv.lock"))?;
+    let (expected, lockfile_hash) = parse_lock(&lock_bytes)?;
     let seeds = match source {
         AcquisitionSource::Seed(directory) => Some(seed_archives(directory, cancelled)?),
         AcquisitionSource::FixedSnapshot => None,
@@ -862,6 +877,9 @@ fn acquire_from_source_with_controls(
     let mut publication_attempted = false;
     let mut execution = ArchiveExecution::new(cancelled);
     let result = (|| {
+        let mut staged_observation = SourceObservation::new(&staging, cancelled)?;
+        let mut budget = ObservationBudget::default();
+        budget.account(lock_bytes.len() as u64, MAX_DOCUMENT_BYTES)?;
         let mut packages = Vec::with_capacity(expected.len());
         for entry in &expected {
             require_active(cancelled)?;
@@ -879,9 +897,19 @@ fn acquire_from_source_with_controls(
                 require_active(cancelled)?;
                 write_new_file(&target, &bytes)?;
             }
-            packages.push(verify_seed_archive(entry, &target, &mut execution)?);
+            let package =
+                verify_seed_archive(entry, &target, &mut execution, &mut staged_observation)?;
+            budget.account(
+                package["bytes"]
+                    .as_u64()
+                    .ok_or_else(|| "r_runtime_source_cas_archive_invalid".to_owned())?,
+                MAX_ARCHIVE_BYTES,
+            )?;
+            packages.push(package);
         }
         let (sums, package_index) = expected_indexes(&packages);
+        budget.account(sums.len() as u64, MAX_DOCUMENT_BYTES)?;
+        budget.account(package_index.len() as u64, MAX_DOCUMENT_BYTES)?;
         write_new_file(&staging.join("SHA256SUMS"), sums.as_bytes())?;
         write_new_file(&staging.join("PACKAGES.tsv"), package_index.as_bytes())?;
         let payload = json!({
@@ -909,10 +937,29 @@ fn acquire_from_source_with_controls(
         let mut manifest_bytes = serde_json::to_vec_pretty(&Value::Object(manifest))
             .map_err(|_| "r_runtime_source_cas_manifest_write_failed".to_owned())?;
         manifest_bytes.push(b'\n');
+        budget.account(manifest_bytes.len() as u64, MAX_DOCUMENT_BYTES)?;
         write_new_file(&staging.join("manifest.json"), &manifest_bytes)?;
+        // Fresh publication and later status consume the same bounded pinned
+        // byte/namespace observer, not independently drifting validation rules.
+        for (name, bytes) in [
+            ("SHA256SUMS", sums.as_bytes()),
+            ("PACKAGES.tsv", package_index.as_bytes()),
+            ("manifest.json", manifest_bytes.as_slice()),
+        ] {
+            if staged_observation.document(Path::new(name))? != bytes {
+                return Err("r_runtime_source_cas_input_changed".to_owned());
+            }
+        }
+        let mut files = staged_observation.files(Path::new(""))?;
+        files.sort();
+        if files != expected_cas_files(&packages) {
+            return Err("r_runtime_source_cas_file_closure_mismatch".to_owned());
+        }
         observe(PublicationBoundary::BeforePublish, &staging)?;
+        staged_observation.assert_current()?;
         require_parent(&context, &parent)?;
-        if read_lock(&context.join("renv.lock"))?.1 != lockfile_hash {
+        if input_observation.assert_current().is_err() {
+            require_active(cancelled)?;
             return Err("r_runtime_source_cas_lock_changed".to_owned());
         }
         publish_staging(
@@ -923,7 +970,8 @@ fn acquire_from_source_with_controls(
             &mut publication_attempted,
             &mut observe,
         )?;
-        let verified = inspect_runtime_source_cas_v1(repository_root);
+        let verified = inspect_runtime_source_cas_with_cancellation_v1(repository_root, cancelled);
+        require_active(cancelled)?;
         if verified["ready"] != Value::Bool(true) {
             // Rename is the publication boundary. A failed later observation
             // cannot revoke or erase these potentially consumed bytes. Keep the

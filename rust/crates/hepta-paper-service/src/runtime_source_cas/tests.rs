@@ -51,8 +51,9 @@ impl Drop for Fixture {
     }
 }
 fn snapshot(root: &Path) -> BTreeMap<String, (u64, u64, String)> {
-    let mut files = Vec::new();
-    collect_files(root, "", &mut files).unwrap();
+    let cancelled = AtomicBool::new(false);
+    let mut observed = SourceObservation::new(root, &cancelled).unwrap();
+    let files = observed.files(Path::new("")).unwrap();
     files
         .into_iter()
         .map(|name| {
@@ -399,4 +400,127 @@ fn seed_scan_cancellation_stops_collection_and_never_returns_partial_inventory()
         error
     );
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn status_rechecks_actual_files_after_hashing_and_preserves_changed_bytes() {
+    for relative in [
+        "renv.lock",
+        "source-cas/manifest.json",
+        "source-cas/SHA256SUMS",
+        "source-cas/PACKAGES.tsv",
+        "source-cas/src/contrib/demo_1.0.0.tar.gz",
+    ] {
+        let f = Fixture::new();
+        acquire_runtime_source_cas_from_seed_v1(&f.root, &f.seed).unwrap();
+        let path = f.context.join(relative);
+        let mut changed = fs::read(&path).unwrap();
+        changed.push(b' ');
+        let report = inspect_with_checkpoint(&f.root, &AtomicBool::new(false), &mut || {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            fs::write(&path, &changed).unwrap();
+        });
+        assert_eq!(report["ready"], false, "{relative}: {report}");
+        assert_eq!(report["blockers"][0], "r_runtime_source_cas_input_changed");
+        assert_eq!(
+            fs::read(path).unwrap(),
+            changed,
+            "inspection cannot repair input"
+        );
+    }
+}
+
+#[test]
+fn status_rejects_byte_identical_inode_and_directory_replacements() {
+    for replace_directory in [false, true] {
+        let f = Fixture::new();
+        acquire_runtime_source_cas_from_seed_v1(&f.root, &f.seed).unwrap();
+        let original = snapshot(&f.destination());
+        let retained = f.context.join("original-cas");
+        let report = inspect_with_checkpoint(&f.root, &AtomicBool::new(false), &mut || {
+            if replace_directory {
+                fs::rename(f.destination(), &retained).unwrap();
+                fs::create_dir(f.destination()).unwrap();
+                fs::write(f.destination().join("foreign"), b"preserve replacement").unwrap();
+            } else {
+                let input = f.destination().join("manifest.json");
+                let bytes = fs::read(&input).unwrap();
+                fs::rename(&input, f.context.join("original-manifest.json")).unwrap();
+                fs::write(&input, bytes).unwrap();
+                fs::set_permissions(&input, fs::Permissions::from_mode(0o444)).unwrap();
+            }
+        });
+        assert_eq!(report["ready"], false, "{report}");
+        assert_eq!(report["blockers"][0], "r_runtime_source_cas_input_changed");
+        if replace_directory {
+            assert_eq!(snapshot(&retained), original);
+            assert_eq!(
+                fs::read(f.destination().join("foreign")).unwrap(),
+                b"preserve replacement"
+            );
+        }
+    }
+}
+
+#[test]
+fn status_cancellation_precedes_input_and_invalidates_late_readiness_without_writes() {
+    use std::sync::atomic::Ordering;
+    let cancelled = AtomicBool::new(true);
+    let missing = Path::new("/unavailable-input-not-consumed");
+    let report = inspect_runtime_source_cas_with_cancellation_v1(missing, &cancelled);
+    assert_eq!(report["blockers"][0], "r_runtime_source_cas_cancelled");
+    let f = Fixture::new();
+    acquire_runtime_source_cas_from_seed_v1(&f.root, &f.seed).unwrap();
+    let before = snapshot(&f.destination());
+    cancelled.store(false, Ordering::Release);
+    let report = inspect_with_checkpoint(&f.root, &cancelled, &mut || {
+        cancelled.store(true, Ordering::Release)
+    });
+    assert_eq!(report["ready"], false);
+    assert_eq!(report["blockers"][0], "r_runtime_source_cas_cancelled");
+    assert_eq!(
+        acquire_runtime_source_cas_from_seed_with_cancellation_v1(&f.root, &f.seed, &cancelled)
+            .unwrap_err(),
+        "r_runtime_source_cas_cancelled"
+    );
+    assert_eq!(snapshot(&f.destination()), before);
+    cancelled.store(false, Ordering::Release);
+    fs::remove_dir_all(&f.seed).unwrap();
+    assert_eq!(
+        acquire_runtime_source_cas_from_seed_with_cancellation_v1(&f.root, &f.seed, &cancelled)
+            .unwrap()["acquired"],
+        false
+    );
+    assert_eq!(snapshot(&f.destination()), before);
+}
+
+#[test]
+fn prepublish_staged_namespace_and_bytes_remain_bound_to_verified_inputs() {
+    for case in 0..3 {
+        let f = Fixture::new();
+        let original = snapshot(&f.seed);
+        let error = acquire_with_observation(&f.root, &f.seed, &mut |boundary, staging| {
+            if boundary == PublicationBoundary::BeforePublish {
+                if case == 0 {
+                    let archive = staging.join("src/contrib/demo_1.0.0.tar.gz");
+                    let replacement = staging.join("replacement");
+                    fs::write(&replacement, fs::read(&archive).unwrap()).unwrap();
+                    fs::set_permissions(&replacement, fs::Permissions::from_mode(0o444)).unwrap();
+                    fs::rename(replacement, archive).unwrap();
+                } else if case == 1 {
+                    let index = staging.join("SHA256SUMS");
+                    fs::set_permissions(&index, fs::Permissions::from_mode(0o644)).unwrap();
+                    fs::write(index, b"changed after validation").unwrap();
+                } else {
+                    fs::write(staging.join("unexpected"), b"not in the manifest").unwrap();
+                }
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(error, "r_runtime_source_cas_input_changed", "case {case}");
+        assert!(!f.destination().exists());
+        assert_eq!(snapshot(&f.seed), original);
+        assert_eq!(fs::read_dir(&f.context).unwrap().count(), 1);
+    }
 }

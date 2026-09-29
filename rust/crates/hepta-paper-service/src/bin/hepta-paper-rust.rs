@@ -107,7 +107,8 @@ use hepta_paper_service::{
     retirement_status::inspect_retirement_status_v1,
     run_service_v1,
     runtime_source_cas::{
-        acquire_runtime_source_cas_from_seed_with_cancellation_v1, inspect_runtime_source_cas_v1,
+        acquire_runtime_source_cas_from_seed_with_cancellation_v1,
+        inspect_runtime_source_cas_with_cancellation_v1,
     },
     state_recoverability::safety_inspection::{
         StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
@@ -895,7 +896,10 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             let report = match action {
-                "status" => inspect_runtime_source_cas_v1(&repository_root),
+                "status" => {
+                    let cancelled = command_cancellation_flag()?;
+                    inspect_runtime_source_cas_with_cancellation_v1(&repository_root, &cancelled)
+                }
                 "acquire" => {
                     let cancelled = command_cancellation_flag()?;
                     if snapshot {

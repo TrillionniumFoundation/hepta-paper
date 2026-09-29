@@ -147,6 +147,29 @@ evaluator. It does not grant authority or waive compiler/execution checks; curre
 source/head/tree and hosted evidence remain required. Results belong to current
 run receipts, not to this specification.
 
+
+The repository source verifier binds actual bytes of the evidence document,
+three canonical registries and all declared source/test inputs to their indexed
+Git blob and executable mode. A bounded no-follow regular-file read rechecks
+identity and timestamps; Git `assume-unchanged` or `skip-worktree` hints cannot
+substitute different bytes for those inputs. The same captured HEAD/tree, clean
+tracked index/worktree and input pins are observed after semantic validation and
+again after successful owner-test execution, before constructing or publishing
+a passing receipt. Any observed drift rejects the invocation rather than moving
+the subject, retrying a side effect or issuing an old-SHA receipt. The evidence
+SHA-256 is computed from the original verified bytes, not a late reread of a
+possibly different document. Existing create-only receipt publication remains.
+
+This reuses the existing verifier and exact Git source, not another completion
+producer, serialized authority or claim that test processes are sandboxed. These
+are start/end observations of declared inputs, not continuous hostile-same-UID
+isolation or whole-dependency reachability proof. Actual Node owner-test fixtures
+change tracked source, hide a registry edit using an index hint, change the
+evidence document, and advance HEAD without changing its tree; every case must
+fail without publishing a new receipt. Pre-existing hinted source substitutions
+also reject before execution. Rust discovery, compiler checks, the dual immutable
+subjects and hosted-currentness verification remain independently required.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

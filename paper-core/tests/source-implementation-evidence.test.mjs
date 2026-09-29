@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   parseStrictJson,
   verifyRepositorySourceEvidence,
@@ -491,3 +492,90 @@ for (const [name, body] of [
       /verification_test_execution_incomplete/u);
   });
 }
+
+// These commands really run through Node's test runner. They alter only the
+// owned fixture checkout and must never produce a receipt for its earlier SHA.
+for (const [name, mutation] of [
+  ['tracked implementation', "fs.appendFileSync('src/feature.mjs', '// changed after execution\\n');"],
+  ['registry hidden by assume-unchanged', "git(['update-index', '--assume-unchanged', 'docs/system/truth/modules.v1.json']); fs.appendFileSync('docs/system/truth/modules.v1.json', ' ');"],
+  ['evidence document', "fs.appendFileSync('docs/system/evidence/repository-source-implementation-v1.json', ' ');"],
+  ['same-tree replacement HEAD', "git(['-c', 'commit.gpgsign=false', 'commit', '--quiet', '--allow-empty', '-m', 'concurrent fixture head']);"],
+]) {
+  test(`post-execution source drift rejects ${name} without creating a receipt`, (t) => {
+    const fixture = createFixture((evidence, root) => {
+      write(root, 'test/feature.test.mjs', [
+        "import test from 'node:test';",
+        "import fs from 'node:fs';",
+        "import { spawnSync } from 'node:child_process';",
+        "function git(args) { const r = spawnSync('git', args, {encoding: 'utf8'}); if (r.status !== 0) throw new Error(r.stderr); }",
+        `test('feature_test', () => { ${mutation} });`,
+        '',
+      ].join('\n'));
+      evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');
+    });
+    const output = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-source-receipt-'));
+    t.after(() => { fs.rmSync(fixture.root, {recursive: true, force: true}); fs.rmSync(output, {recursive: true, force: true}); });
+    const receipt = path.join(output, 'receipt.json');
+    assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: true,
+      expectedHead: fixture.head, expectedTree: fixture.tree, receipt}),
+    /source_subject_changed|source_worktree_blob_mismatch/u);
+    assert.equal(fs.existsSync(receipt), false);
+  });
+}
+
+test('assume-unchanged cannot substitute source bytes for the indexed Git blob', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  command(fixture.root, 'git', 'update-index', '--assume-unchanged', 'src/feature.mjs');
+  fs.appendFileSync(path.join(fixture.root, 'src/feature.mjs'), '// hidden source mutation\n');
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: false,
+    expectedHead: fixture.head, expectedTree: fixture.tree}), /source_worktree_blob_mismatch/u);
+});
+
+
+test('ignored executable-mode drift cannot match a source input Git mode', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  command(fixture.root, 'git', 'config', 'core.filemode', 'false');
+  fs.chmodSync(path.join(fixture.root, 'src/feature.mjs'), 0o755);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: false,
+    expectedHead: fixture.head, expectedTree: fixture.tree}), /source_worktree_blob_mismatch/u);
+});
+
+test('skip-worktree cannot substitute the canonical evidence document before execution', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  const relative = 'docs/system/evidence/repository-source-implementation-v1.json';
+  command(fixture.root, 'git', 'update-index', '--skip-worktree', relative);
+  fs.appendFileSync(path.join(fixture.root, relative), ' ');
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: true,
+    expectedHead: fixture.head, expectedTree: fixture.tree}), /source_worktree_blob_mismatch/u);
+});
+
+
+test('ordinary source-verifier CLI refuses a successful test that changes its source subject', (t) => {
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', [
+      "import test from 'node:test';",
+      "import fs from 'node:fs';",
+      "test('feature_test', () => fs.appendFileSync('src/feature.mjs', '// CLI observed drift'));",
+      '',
+    ].join('\n'));
+    evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');
+  });
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-source-cli-receipt-'));
+  t.after(() => { fs.rmSync(fixture.root, {recursive: true, force: true}); fs.rmSync(output, {recursive: true, force: true}); });
+  const receipt = path.join(output, 'receipt.json');
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('../bin/verify-source-implementation-evidence.mjs', import.meta.url)),
+    '--root', fixture.root, '--expected-head', fixture.head, '--expected-tree', fixture.tree,
+    '--execute', '--receipt', receipt,
+  ], {encoding: 'utf8', timeout: 30_000});
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /source_subject_changed/u);
+  assert.equal(fs.existsSync(receipt), false);
+  assert.doesNotMatch(result.stdout, /repository_source_evidence_verified/u);
+});

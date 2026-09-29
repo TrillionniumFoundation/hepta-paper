@@ -4,7 +4,9 @@ import { stripRustInertText, rustSymbolMatches } from '../src/source-evidence-ru
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import {
+  fail, run, git, trackedBlob, readPinnedSource, assertSourceSubject,
+} from '../src/source-evidence-git-inputs.mjs';
 import { pathToFileURL } from 'node:url';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
@@ -56,11 +58,6 @@ const RECORD_KEYS = Object.freeze([
   'promotionRequested',
   'workItemId',
 ]);
-
-function fail(code, detail = '') {
-  const suffix = detail ? `: ${detail}` : '';
-  throw new Error(`${code}${suffix}`);
-}
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -246,14 +243,6 @@ export function parseStrictJson(text, label = 'JSON') {
   return new StrictJsonParser(text, label).parse();
 }
 
-function readStrictJson(file) {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_JSON_BYTES) {
-    fail('json_file_invalid', file);
-  }
-  return parseStrictJson(fs.readFileSync(file, 'utf8'), file);
-}
-
 function canonicalRelative(value, label, { allowDot = false } = {}) {
   requireString(value, label);
   if (allowDot && value === '.') return value;
@@ -266,25 +255,6 @@ function canonicalRelative(value, label, { allowDot = false } = {}) {
   }
   if (path.posix.normalize(value) !== value) fail('path_not_canonical', `${label}=${value}`);
   return value;
-}
-
-function run(program, args, options = {}) {
-  const result = spawnSync(program, args, {
-    cwd: options.cwd,
-    encoding: 'utf8',
-    env: options.env ?? process.env,
-    maxBuffer: 16 * 1024 * 1024,
-    shell: false,
-    timeout: options.timeout,
-  });
-  if (result.error) fail('process_spawn_failed', `${program}: ${result.error.message}`);
-  return result;
-}
-
-function git(root, args) {
-  const result = run('git', ['-C', root, ...args]);
-  if (result.status !== 0) fail('git_command_failed', `${args.join(' ')}: ${result.stderr.trim()}`);
-  return result.stdout.trim();
 }
 
 function hashBytes(bytes) {
@@ -300,13 +270,6 @@ function commandDiagnostic(value) {
     tailBase64: tail.toString('base64'),
     truncated: tail.length !== bytes.length,
   };
-}
-
-function trackedBlob(root, relative) {
-  const output = git(root, ['ls-files', '-s', '--', relative]);
-  const match = /^(\d{6}) ([0-9a-f]{40}) 0\t(.+)$/u.exec(output);
-  if (!match || match[3] !== relative) fail('tracked_blob_required', relative);
-  return { mode: match[1], blob: match[2] };
 }
 
 function escaped(value) {
@@ -354,20 +317,7 @@ function checkedFile(root, entry, globalPaths, bundleLabel) {
     fail('source_symbol_required', relative);
   }
   const absolute = path.resolve(root, relative);
-  const rootReal = fs.realpathSync(root);
-  const parentReal = fs.realpathSync(path.dirname(absolute));
-  if (parentReal !== rootReal && !parentReal.startsWith(`${rootReal}${path.sep}`)) {
-    fail('path_escape', relative);
-  }
-  const stat = fs.lstatSync(absolute);
-  if (!stat.isFile() || stat.isSymbolicLink()) fail('regular_file_required', relative);
-  const real = fs.realpathSync(absolute);
-  if (!real.startsWith(`${rootReal}${path.sep}`)) fail('path_escape', relative);
-  const tracked = trackedBlob(root, relative);
-  if (tracked.mode !== entry.mode || tracked.blob !== entry.gitBlob) {
-    fail('git_blob_mismatch', `${relative}=${tracked.mode}:${tracked.blob}`);
-  }
-  const text = fs.readFileSync(absolute, 'utf8');
+  const text = readPinnedSource(root, relative, { mode: entry.mode, blob: entry.gitBlob }).toString('utf8');
   const seenSymbols = new Set();
   for (const [index, symbol] of entry.symbols.entries()) {
     exactKeys(symbol, SYMBOL_KEYS, `${relative}.symbols[${index}]`);
@@ -773,7 +723,6 @@ export function verifyRepositorySourceEvidence(options = {}) {
     options.evidence ?? 'docs/system/evidence/repository-source-implementation-v1.json',
     'evidencePath',
   );
-  const evidencePath = path.resolve(root, evidenceRelative);
   const status = git(root, ['status', '--porcelain=v1', '--untracked-files=no']);
   if (status !== '') fail('tracked_worktree_not_clean', status);
   const head = git(root, ['rev-parse', 'HEAD']);
@@ -782,12 +731,16 @@ export function verifyRepositorySourceEvidence(options = {}) {
   if (options.expectedHead && options.expectedHead !== head) fail('expected_head_mismatch');
   if (options.expectedTree && options.expectedTree !== tree) fail('expected_tree_mismatch');
   const evidenceBlob = trackedBlob(root, evidenceRelative);
-  const document = readStrictJson(evidencePath);
+  const inputs = new Map([[evidenceRelative, evidenceBlob]]);
+  const evidenceBytes = readPinnedSource(root, evidenceRelative, evidenceBlob);
+  const document = parseStrictJson(evidenceBytes.toString('utf8'), evidenceRelative);
   const registries = Object.fromEntries(
-    Object.entries(document.registries).map(([key, relative]) => [
-      key,
-      readStrictJson(path.resolve(root, canonicalRelative(relative, `registry.${key}`))),
-    ]),
+    Object.entries(document.registries).map(([key, value]) => {
+      const relative = canonicalRelative(value, `registry.${key}`);
+      const pin = trackedBlob(root, relative);
+      inputs.set(relative, pin);
+      return [key, parseStrictJson(readPinnedSource(root, relative, pin).toString('utf8'), relative)];
+    }),
   );
   const validation = validateEvidenceDocument(document, {
     root,
@@ -795,9 +748,20 @@ export function verifyRepositorySourceEvidence(options = {}) {
     modules: registries.modules,
     capabilities: registries.capabilities,
   });
+  for (const bundle of validation.bundles.values()) {
+    for (const file of bundle.files) {
+      inputs.set(file.path, { mode: file.mode, blob: file.gitBlob });
+    }
+  }
+  // Complete semantic validation can itself span source changes. Admit all
+  // commands only against the captured subject and with the same bound inputs.
+  if (options.execute) assertSourceSubject(root, { head, tree }, inputs);
   const commandObservations = options.execute
     ? executeCommands(root, validation.bundles)
     : [];
+  // No successful receipt is constructed or published after observed drift.
+  // Do not re-run tests or mint an updated subject from concurrent bytes.
+  assertSourceSubject(root, { head, tree }, inputs);
   const receipt = {
     authorityClaims: Object.fromEntries(AUTHORITY_KEYS.map((key) => [key, false])),
     commandObservations,
@@ -805,7 +769,7 @@ export function verifyRepositorySourceEvidence(options = {}) {
       gitBlob: evidenceBlob.blob,
       mode: evidenceBlob.mode,
       path: evidenceRelative,
-      sha256: hashBytes(fs.readFileSync(evidencePath)),
+      sha256: hashBytes(evidenceBytes),
     },
     kind: 'RepositorySourceImplementationEvidenceReceiptV1',
     promotions: validation.promotions,

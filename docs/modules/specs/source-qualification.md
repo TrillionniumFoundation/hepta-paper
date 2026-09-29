@@ -128,6 +128,25 @@ verification still invokes the existing V1 currentness verifier and cannot turn
 its failure into success. No module, milestone or production authority is promoted
 by these test fixtures. This contributes to QUAL-001..004 without closing G0.
 
+The repository source verifier and its hardening gate share
+`paper-core/src/source-evidence-rust-symbols.mjs` for Rust token recognition.
+Comment/string/character masking retains UTF-16 source offsets and distinguishes
+lifetimes and labels from character literals. Function lookup handles balanced
+generic parameters, nested bounds, function-return arrows and braced const
+expressions rather than requiring a parenthesis immediately after the name.
+Quoted or commented declarations and malformed parameter prefixes are not owners.
+
+The hardening gate retains unique live declarations, direct cfg/cfg_attr refusal,
+exact declared test ownership, actual Cargo `--exact --list` discovery and later
+nonempty successful owner-test execution. Attribute observation no longer uses a
+fixed text-distance window, and attributes between `#[test]` and its function
+remain visible. The existing hardening self-test exercises generic/lifetime,
+Unicode/raw-string, duplicate, malformed and conditional-declaration cases.
+This recognizer is not a Rust parser, macro expander, reachability proof or cfg
+evaluator. It does not grant authority or waive compiler/execution checks; current
+source/head/tree and hosted evidence remain required. Results belong to current
+run receipts, not to this specification.
+
 ## Rollout and rollback
 
 Current channel is `disabled`. A new version progresses through registered/contract-ready/source-implemented/conformance-qualified and then shadow/canary/authoritative where applicable. Rollback binds exact version, protocol/state compatibility, in-flight work, prepared results, and post-rollback verification.

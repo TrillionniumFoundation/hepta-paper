@@ -6,6 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { validateCommand } from '../bin/verify-source-implementation-evidence.mjs';
+import { stripRustInertText, rustSymbolMatches, rustSymbolCfgGated } from '../src/source-evidence-rust-symbols.mjs';
+
+export { stripRustInertText };
 
 const EVIDENCE = 'docs/system/evidence/repository-source-implementation-v1.json';
 const FUNCTIONAL_EVIDENCE = 'docs/system/evidence/rust-functional-source-closure-v1.json';
@@ -271,98 +274,13 @@ function assertRegistryDelta(base, target, evidenceRecords) {
   if (!equal(expectedCapabilities, targetCapabilities)) fail('candidate_registry_drift', CAPABILITIES);
 }
 
-function blankRange(chars, start, end) {
-  for (let i = start; i < end; i += 1) if (chars[i] !== '\n' && chars[i] !== '\r') chars[i] = ' ';
-}
-
-export function stripRustInertText(source) {
-  const chars = [...source];
-  let i = 0;
-  while (i < chars.length) {
-    if (chars[i] === '/' && chars[i + 1] === '/') {
-      const start = i;
-      i += 2;
-      while (i < chars.length && chars[i] !== '\n') i += 1;
-      blankRange(chars, start, i);
-      continue;
-    }
-    if (chars[i] === '/' && chars[i + 1] === '*') {
-      const start = i;
-      i += 2;
-      let depth = 1;
-      while (i < chars.length && depth > 0) {
-        if (chars[i] === '/' && chars[i + 1] === '*') { depth += 1; i += 2; continue; }
-        if (chars[i] === '*' && chars[i + 1] === '/') { depth -= 1; i += 2; continue; }
-        i += 1;
-      }
-      if (depth !== 0) fail('unterminated_block_comment');
-      blankRange(chars, start, i);
-      continue;
-    }
-    const rawStart = source.slice(i).match(/^(?:br|r)(#*)"/u);
-    if (rawStart) {
-      const start = i;
-      const hashes = rawStart[1];
-      i += rawStart[0].length;
-      const close = `"${hashes}`;
-      const end = source.indexOf(close, i);
-      if (end < 0) fail('unterminated_raw_string');
-      i = end + close.length;
-      blankRange(chars, start, i);
-      continue;
-    }
-    if (chars[i] === '"' || (chars[i] === 'b' && chars[i + 1] === '"')) {
-      const start = i;
-      if (chars[i] === 'b') i += 1;
-      i += 1;
-      while (i < chars.length) {
-        if (chars[i] === '\\') { i += 2; continue; }
-        if (chars[i] === '"') { i += 1; break; }
-        i += 1;
-      }
-      blankRange(chars, start, i);
-      continue;
-    }
-    if (chars[i] === '\'' || (chars[i] === 'b' && chars[i + 1] === '\'')) {
-      const start = i;
-      if (chars[i] === 'b') i += 1;
-      i += 1;
-      while (i < chars.length) {
-        if (chars[i] === '\\') { i += 2; continue; }
-        if (chars[i] === '\'') { i += 1; break; }
-        if (chars[i] === '\n') break;
-        i += 1;
-      }
-      blankRange(chars, start, i);
-      continue;
-    }
-    i += 1;
-  }
-  return chars.join('');
-}
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function rustSymbolRegex(symbol) {
-  const name = escapeRegex(symbol.name);
-  if (symbol.kind === 'test') return new RegExp(`#\\s*\\[\\s*test\\s*\\]\\s*(?:#\\s*\\[[^\\]]+\\]\\s*)*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`, 'gu');
-  if (symbol.kind === 'function') return new RegExp(`(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`, 'gu');
-  if (symbol.kind === 'type') return new RegExp(`(?:struct|enum|trait|type)\\s+${name}\\b`, 'gu');
-  return new RegExp(`(?:const|static)\\s+${name}\\b`, 'gu');
-}
-
 function assertRustSymbolOwnership(root, entry) {
   const source = fs.readFileSync(path.join(root, entry.path), 'utf8');
   const live = stripRustInertText(source);
   for (const symbol of entry.symbols) {
-    const matches = [...live.matchAll(rustSymbolRegex(symbol))];
+    const matches = rustSymbolMatches(live, symbol);
     if (matches.length !== 1) fail('rust_symbol_not_unique_live', `${entry.path}:${symbol.kind}:${symbol.name}:${matches.length}`);
-    const index = matches[0].index ?? 0;
-    const localPrefix = live.slice(Math.max(0, index - 320), index);
-    const attrs = localPrefix.match(/(?:#\s*\[[^\]]+\]\s*)+$/u)?.[0] ?? '';
-    if (/\bcfg(?:_attr)?\s*\(/u.test(attrs)) fail('rust_symbol_cfg_gated', `${entry.path}:${symbol.name}`);
+    if (rustSymbolCfgGated(live, matches[0])) fail('rust_symbol_cfg_gated', `${entry.path}:${symbol.name}`);
   }
 }
 
@@ -389,7 +307,7 @@ function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (owners.length !== 1) fail('cargo_selector_declared_owner_cardinality', `${selector}:${owners.length}`);
   const { entry, symbol } = owners[0];
   const source = stripRustInertText(fs.readFileSync(path.join(root, entry.path), 'utf8'));
-  const matches = [...source.matchAll(rustSymbolRegex(symbol))];
+  const matches = rustSymbolMatches(source, symbol);
   if (matches.length !== 1) fail('cargo_declared_test_not_unique_live', `${entry.path}:${symbol.name}:${matches.length}`);
 
   const discoveryArgs = [...discoveryPrefix, selector, '--', '--exact', '--list'];
@@ -417,6 +335,9 @@ function validateEvidenceSemantics(root, evidence, runtime) {
 }
 
 function selfTest() {
+  const generic = stripRustInertText('pub fn generic_owner<T: Clone>(value: T) -> T { value }');
+  assert.equal(rustSymbolMatches(generic, { kind: 'function', name: 'generic_owner' }).length, 1,
+    'a real generic function is a source owner, not a missing textual shape');
   const live = 'fn real() {}\n#[test]\nfn live_test() {}\n';
   const inert = '// fn fake() {}\nconst S: &str = "fn hidden() {}";\nr#"#[test] fn raw_fake() {}"#;\n/* fn blocked() {} */\n';
   const stripped = stripRustInertText(`${live}${inert}`);
@@ -425,9 +346,44 @@ function selfTest() {
     if (new RegExp(`fn\\s+${name}\\s*\\(`, 'u').test(stripped)) fail('selftest_inert_visible', name);
   }
   const cfg = stripRustInertText('#[cfg(feature = "never")]\nfn gated() {}\n');
-  const match = [...cfg.matchAll(rustSymbolRegex({ kind: 'function', name: 'gated' }))][0];
-  const attrs = cfg.slice(Math.max(0, match.index - 320), match.index).match(/(?:#\s*\[[^\]]+\]\s*)+$/u)?.[0] ?? '';
-  if (!/\bcfg(?:_attr)?\s*\(/u.test(attrs)) fail('selftest_cfg_not_detected');
+  const match = rustSymbolMatches(cfg, { kind: 'function', name: 'gated' })[0];
+  if (!rustSymbolCfgGated(cfg, match)) fail('selftest_cfg_not_detected');
+  const genericSymbol = { kind: 'function', name: 'generic_owner' };
+  for (const source of [
+    'pub fn generic_owner<T: Clone>(value: T) -> T { value }',
+    "pub(crate) fn generic_owner<'a, T: for<'b> Fn(&'b str) -> Vec<u8>>(value: &'a T) {}",
+    'fn generic_owner<const N: usize>(value: [u8; N]) -> [u8; N] { value }',
+    'fn generic_owner<T: Trait<{1 > 0}>>() {}',
+    'fn generic_owner<T: Fn() -> Vec<(u8, u8)>>(_: T) {}',
+    String.raw`const U: &str = "🦀"; const R: &str = r###" " fn raw_decoy<T>() {} " "###; fn generic_owner<'α>(x: &'α str) {}`,
+    String.raw`const C: char = '\''; const B: u8 = b'>'; fn generic_owner<T>() {}`,
+  ]) {
+    const tokens = stripRustInertText(source);
+    assert.equal(rustSymbolMatches(tokens, genericSymbol).length, 1, source);
+    assert.equal(rustSymbolMatches(tokens, { kind: 'function', name: 'raw_decoy' }).length, 0);
+    assert.equal(tokens.length, source.length, 'source positions must retain UTF-16 offsets');
+  }
+  for (const source of [
+    '// fn generic_owner<T>() {}',
+    '/* nested /* fn generic_owner<T>() {} */ comment */',
+    String.raw`const X: &str = "fn generic_owner<T>() {}";`,
+    String.raw`const X: &str = r###" " fn generic_owner<T>() {} " "###;`,
+    'fn generic_owner<T', 'fn generic_owner<T>;', 'fn generic_owner<(T]>() {}',
+    'fn generic_owner_extra<T>() {}',
+  ]) assert.equal(rustSymbolMatches(stripRustInertText(source), genericSymbol).length, 0, source);
+  assert.equal(rustSymbolMatches('fn generic_owner<T>() {} fn generic_owner<U>() {}', genericSymbol).length, 2);
+  for (const source of [
+    '#[cfg(feature = "absent")]\npub fn generic_owner<T>() {}',
+    `#[cfg_attr(any(), cfg(any()))]${' '.repeat(1024)}pub fn generic_owner<T>() {}`,
+    '#[cfg(any())]\npub unsafe extern "C" fn generic_owner<T>() {}',
+  ]) {
+    const tokens = stripRustInertText(source);
+    const [found] = rustSymbolMatches(tokens, genericSymbol);
+    assert.ok(found); assert.equal(rustSymbolCfgGated(tokens, found), true);
+  }
+  const annotatedTest = stripRustInertText('#[test]\n#[cfg(any())]\nfn guarded_test() {}');
+  const [testMatch] = rustSymbolMatches(annotatedTest, { kind: 'test', name: 'guarded_test' });
+  assert.ok(testMatch); assert.equal(rustSymbolCfgGated(annotatedTest, testMatch), true);
   const base = {
     work: { items: { 'TEST-001': {
       state: 'source_implemented', evidenceTier: 'source', moduleId: 'module.example',

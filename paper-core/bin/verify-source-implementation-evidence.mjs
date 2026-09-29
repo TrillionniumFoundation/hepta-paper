@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { stripRustInertText, rustSymbolMatches } from '../src/source-evidence-rust-symbols.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -316,15 +317,10 @@ function verifySymbol(text, language, symbol, relative) {
   const name = escaped(symbol.name);
   let expression;
   if (language === 'rust') {
-    if (symbol.kind === 'function') {
-      expression = new RegExp(`(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`, 'u');
-    } else if (symbol.kind === 'test') {
-      expression = new RegExp(`#\\s*\\[\\s*test\\s*\\][\\s\\S]{0,320}?fn\\s+${name}\\s*\\(`, 'u');
-    } else if (symbol.kind === 'type') {
-      expression = new RegExp(`(?:struct|enum|trait|type)\\s+${name}\\b`, 'u');
-    } else {
-      expression = new RegExp(`(?:const|static)\\s+${name}\\b`, 'u');
+    if (rustSymbolMatches(stripRustInertText(text), symbol).length === 0) {
+      fail('source_symbol_missing', `${relative}:${symbol.kind}:${symbol.name}`);
     }
+    return;
   } else if (language === 'javascript') {
     if (symbol.kind === 'test') {
       expression = new RegExp(`(?:test|it)\\s*\\(\\s*['\"]${name}['\"]`, 'u');

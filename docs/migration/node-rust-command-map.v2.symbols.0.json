@@ -442,6 +442,7 @@
 [226,"parse_node_migration_arguments_v1"],
 [226,"reject_sidecars"],
 [226,"validate_history"],
+[226,"validate_structure"],
 [228,"assert_current"],
 [228,"hash_with_check"],
 [228,"open"],
@@ -572,6 +573,5 @@
 [329,"pre_cancelled_research_run_creates_no_campaign_database"],
 [329,"qualification_currentness_is_rechecked_across_service_boundaries"],
 [329,"qualified_research_run_commits_and_replays_without_release_authority"],
-[329,"qualified_workflow_uses_existing_owner_and_cannot_fall_back_to_standard_runner"],
-[329,"run_research_service_v1"]
+[329,"qualified_workflow_uses_existing_owner_and_cannot_fall_back_to_standard_runner"]
 ]

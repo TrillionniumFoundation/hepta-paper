@@ -585,6 +585,7 @@
 "rust/crates/hepta-qualification-ingest/src/qualification_closure/tests/joint_closure.rs",
 "rust/crates/hepta-qualification-ingest/src/qualification_closure/trust_source.rs",
 "rust/crates/hepta-qualification-ingest/src/qualification_closure/trust_source/tests.rs",
+"rust/crates/hepta-readonly-control/src/node_schema.rs",
 "rust/crates/hepta-readonly-store/src/lib.rs",
 "rust/crates/hepta-readonly-store/tests/node_production_parity.rs",
 "rust/oracle/automation-readiness-policy-v1.mjs",

@@ -312,16 +312,19 @@ fn ordinary_cli_signal_terminates_tar_after_stdout_closes_without_publishing() {
             .spawn()
             .unwrap();
         let until = Instant::now() + Duration::from_secs(10);
-        while !pid_path.exists() && Instant::now() < until {
+        // Existence is not a ready handshake: the shell creates the inode
+        // before printf writes its PID. Keep the same startup/signal deadlines.
+        let ready_pid = || {
+            fs::read_to_string(&pid_path)
+                .ok()
+                .and_then(|value| value.parse::<i32>().ok())
+                .filter(|pid| *pid > 1)
+        };
+        while ready_pid().is_none() && Instant::now() < until {
             thread::sleep(Duration::from_millis(5));
         }
-        let reached = pid_path.exists();
-        let tar_pid = reached.then(|| {
-            fs::read_to_string(&pid_path)
-                .unwrap()
-                .parse::<i32>()
-                .unwrap()
-        });
+        let tar_pid = ready_pid();
+        let reached = tar_pid.is_some();
         let cli_pid = Pid::from_raw(child.id().try_into().unwrap());
         let began = Instant::now();
         let _ = kill(cli_pid, signal);
@@ -568,3 +571,6 @@ fn ordinary_cli_seed_scan_aggregate_limit_counts_nested_and_irrelevant_entries()
     assert_eq!(fs::read(seed.join("demo_1.0.0.tar.gz")).unwrap(), original);
     remove(&root);
 }
+
+#[path = "runtime_r_source_cas_seed/snapshot.rs"]
+mod snapshot;

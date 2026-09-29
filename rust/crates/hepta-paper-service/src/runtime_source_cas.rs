@@ -21,8 +21,18 @@
 //! native profile refusals, not universal Node compatibility claims. Failed group/pipe
 //! cleanup retains the original unpublished stage rather than deleting live
 //! inputs. This is not kernel-I/O preemption or containment of escaped sessions.
-//! Network acquisition, tar-tool identity qualification and orphan disposal are
-//! separate remaining boundaries. The command's actual recovery and Node
+//! Explicit --snapshot acquisition adds sequential HTTPS GETs for missing CAS
+//! roots through this SAME archive/process/publication owner. --seed remains
+//! strictly offline; there is no partial-seed network fallback. Snapshot URLs
+//! are derived solely from validated lock entries at the fixed original origin.
+//! Redirects, non-2xx responses and mismatched effective URLs fail closed. The
+//! curl process gets no inherited proxy, credentials, CA override or curlrc;
+//! system TLS verification is not disabled. Downloads have a 120-second bound
+//! and a 63 MiB archive ceiling within the unchanged process capture limit.
+//! Successful replay does not resolve curl/tar or perform another GET. Neither
+//! transport nor an offline seed verifies publisher provenance or grants runtime,
+//! release or submission authority. Tool/CA identity qualification, concurrent
+//! downloads, mixed seed/network acquisition and orphan disposal remain open. The command's actual recovery and Node
 //! comparisons are in `tests/runtime_r_source_cas_seed.rs`; syscall/crash owners
 //! are the private unit tests, not an alternative execution implementation.
 
@@ -756,9 +766,43 @@ fn acquire_with_observation(
     )
 }
 
+enum AcquisitionSource<'a> {
+    Seed(&'a Path),
+    FixedSnapshot,
+}
+
+/// Explicit fixed-snapshot HTTPS acquisition through the SAME locked publisher.
+/// Existing valid CAS replay remains offline; this never changes the lockfile,
+/// follows redirects, runs Node, installs R packages or grants runtime authority.
+pub fn acquire_runtime_source_cas_from_snapshot_with_cancellation_v1(
+    repository_root: &Path,
+    cancelled: &AtomicBool,
+) -> Result<Value, String> {
+    acquire_from_source_with_controls(
+        repository_root,
+        AcquisitionSource::FixedSnapshot,
+        cancelled,
+        &mut |_, _| Ok(()),
+    )
+}
+
 fn acquire_with_controls(
     repository_root: &Path,
     seed_source_directory: &Path,
+    cancelled: &AtomicBool,
+    observe: &mut impl FnMut(PublicationBoundary, &Path) -> Result<(), String>,
+) -> Result<Value, String> {
+    acquire_from_source_with_controls(
+        repository_root,
+        AcquisitionSource::Seed(seed_source_directory),
+        cancelled,
+        observe,
+    )
+}
+
+fn acquire_from_source_with_controls(
+    repository_root: &Path,
+    source: AcquisitionSource<'_>,
     cancelled: &AtomicBool,
     observe: &mut impl FnMut(PublicationBoundary, &Path) -> Result<(), String>,
 ) -> Result<Value, String> {
@@ -808,7 +852,10 @@ fn acquire_with_controls(
         Err(_) => return Err("r_runtime_source_cas_existing_invalid".to_owned()),
     }
     let (expected, lockfile_hash) = read_lock(&context.join("renv.lock"))?;
-    let seeds = seed_archives(seed_source_directory, cancelled)?;
+    let seeds = match source {
+        AcquisitionSource::Seed(directory) => Some(seed_archives(directory, cancelled)?),
+        AcquisitionSource::FixedSnapshot => None,
+    };
     require_active(cancelled)?;
     let staging = begin_staging(&context)?;
     let stage = open_directory(&staging)?;
@@ -821,11 +868,17 @@ fn acquire_with_controls(
             let file = entry["file"]
                 .as_str()
                 .ok_or_else(|| "r_runtime_source_cas_lock_entry_invalid".to_owned())?;
-            let source = seeds
-                .get(file)
-                .ok_or_else(|| format!("r_runtime_source_cas_seed_missing:{file}"))?;
             let target = staging.join("src/contrib").join(file);
-            copy_seed_archive(source, &target)?;
+            if let Some(seeds) = &seeds {
+                let source = seeds
+                    .get(file)
+                    .ok_or_else(|| format!("r_runtime_source_cas_seed_missing:{file}"))?;
+                copy_seed_archive(source, &target)?;
+            } else {
+                let bytes = execution.snapshot_archive(entry, &target)?;
+                require_active(cancelled)?;
+                write_new_file(&target, &bytes)?;
+            }
             packages.push(verify_seed_archive(entry, &target, &mut execution)?);
         }
         let (sums, package_index) = expected_indexes(&packages);

@@ -862,11 +862,16 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let repository_root = PathBuf::from(&args[1]);
             let mut action = "status";
             let mut seed = None;
+            let mut snapshot = false;
             let mut action_seen = false;
             let mut seed_seen = false;
             let mut index = 2;
             while index < args.len() {
                 match args[index].as_str() {
+                    "--snapshot" if !snapshot => {
+                        snapshot = true;
+                        index += 1;
+                    }
                     "--action" if index + 1 < args.len() && !action_seen => {
                         action = args[index + 1].as_str();
                         action_seen = true;
@@ -879,21 +884,33 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     _ => {
                         return Err(
-                            "runtime-r-source-cas accepts ROOT [--action status|acquire] [--seed DIRECTORY] only".into(),
+                            "runtime-r-source-cas accepts ROOT [--action status|acquire] [--seed DIRECTORY | --snapshot] only".into(),
                         );
                     }
                 }
             }
+            if snapshot && (seed.is_some() || action != "acquire") {
+                return Err(
+                    "runtime-r-source-cas --snapshot requires exclusive acquire mode".into(),
+                );
+            }
             let report = match action {
                 "status" => inspect_runtime_source_cas_v1(&repository_root),
                 "acquire" => {
-                    let seed = seed.ok_or("runtime-r-source-cas acquire requires --seed")?;
                     let cancelled = command_cancellation_flag()?;
-                    acquire_runtime_source_cas_from_seed_with_cancellation_v1(
-                        &repository_root,
-                        &seed,
-                        &cancelled,
-                    )?
+                    if snapshot {
+                        hepta_paper_service::runtime_source_cas::acquire_runtime_source_cas_from_snapshot_with_cancellation_v1(
+                            &repository_root, &cancelled,
+                        )?
+                    } else {
+                        let seed = seed
+                            .ok_or("runtime-r-source-cas acquire requires --seed or --snapshot")?;
+                        acquire_runtime_source_cas_from_seed_with_cancellation_v1(
+                            &repository_root,
+                            &seed,
+                            &cancelled,
+                        )?
+                    }
                 }
                 _ => return Err("runtime-r-source-cas action must be status or acquire".into()),
             };
@@ -1871,7 +1888,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | release-state REQUEST",
                 " | release-attest REQUEST",
                 " | retirement-status [REQUEST]",
-                " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
+                " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY | --snapshot]",
                 " | research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
                 " | external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",
                 " | generic-domain-capability-evidence --action status|converge --runtime-root ABSOLUTE_PATH",

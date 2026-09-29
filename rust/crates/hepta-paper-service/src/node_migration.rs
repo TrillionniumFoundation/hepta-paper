@@ -6,7 +6,9 @@
 //! transaction for the requested range. History and leases are checked under
 //! that lock. No production authority is granted.
 
-use hepta_readonly_control::node_schema::NODE_MIGRATIONS_V1;
+use hepta_readonly_control::node_schema::{
+    NODE_MIGRATIONS_V1, validate_node_migration_structure_v1,
+};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -211,8 +213,9 @@ fn read_history(connection: &Connection) -> Result<Vec<(u32, String, String)>, N
     if !table_exists(connection, "schema_migrations")? {
         return Ok(Vec::new());
     }
-    let mut statement = connection
-        .prepare("SELECT version,name,migration_sha256 FROM schema_migrations ORDER BY version")?;
+    let mut statement = connection.prepare(
+        "SELECT version,name,migration_sha256 FROM schema_migrations ORDER BY version LIMIT 26",
+    )?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -244,6 +247,19 @@ fn validate_history(rows: &[(u32, String, String)]) -> Result<u32, NodeMigration
     Ok(expected_version.saturating_sub(1))
 }
 
+// Reuse the read-only schema owner without another source-file connection.
+// A callback interruption remains cancellation/deadline, not a schema error.
+fn validate_structure(
+    connection: &Connection,
+    version: u32,
+    control: &MigrationControl,
+) -> Result<(), NodeMigrationError> {
+    control.check()?;
+    let result = validate_node_migration_structure_v1(connection, version);
+    control.check()?;
+    result.map_err(|_| NodeMigrationError::History)
+}
+
 /// Apply embedded Node migrations through the Rust offline maintenance boundary.
 ///
 /// This operation is intentionally limited to local private stores.  It does
@@ -257,7 +273,7 @@ pub fn migrate_node_store_v1(
         path,
         target_version,
         #[cfg(test)]
-        &mut |_| {},
+        &mut |_, _| {},
     )
 }
 
@@ -319,14 +335,14 @@ pub fn migrate_node_store_with_control_v1(
         target_version,
         &control,
         #[cfg(test)]
-        &mut |_| {},
+        &mut |_, _| {},
     )
 }
 
 fn migrate(
     path: &Path,
     target_version: Option<u32>,
-    #[cfg(test)] checkpoint: &mut dyn FnMut(&'static str),
+    #[cfg(test)] checkpoint: &mut dyn FnMut(&'static str, &Connection),
 ) -> Result<NodeMigrationReceiptV1, NodeMigrationError> {
     migrate_controlled(
         path,
@@ -341,7 +357,7 @@ fn migrate_controlled(
     path: &Path,
     target_version: Option<u32>,
     control: &MigrationControl,
-    #[cfg(test)] checkpoint: &mut dyn FnMut(&'static str),
+    #[cfg(test)] checkpoint: &mut dyn FnMut(&'static str, &Connection),
 ) -> Result<NodeMigrationReceiptV1, NodeMigrationError> {
     control.check()?;
     let (canonical, _) = canonical_private_database(path)?;
@@ -371,7 +387,7 @@ fn migrate_controlled(
         return Err(NodeMigrationError::History);
     }
     #[cfg(test)]
-    checkpoint("before_transaction");
+    checkpoint("before_transaction", &connection);
     control.check()?;
     source.assert_current()?;
     reject_sidecars(&canonical)?;
@@ -392,8 +408,13 @@ fn migrate_controlled(
         if active_leases(&transaction)? {
             return Err(NodeMigrationError::ActiveLease);
         }
+        if before > 0 {
+            // Known history must match actual schema before a new migration
+            // or an idempotent receipt; never silently repair source drift.
+            validate_structure(&transaction, before, control)?;
+        }
         #[cfg(test)]
-        checkpoint("after_admission");
+        checkpoint("after_admission", &transaction);
         let mut applied_versions = Vec::new();
         for descriptor in NODE_MIGRATIONS_V1
             .iter()
@@ -412,11 +433,11 @@ fn migrate_controlled(
             )?;
             applied_versions.push(descriptor.version);
             #[cfg(test)]
-            checkpoint("after_migration");
+            checkpoint("after_migration", &transaction);
         }
-        if validate_history(&read_history(&transaction)?)? != target {
-            return Err(NodeMigrationError::History);
-        }
+        // Also covers version-zero bootstrap: extra foreign SQL objects cannot
+        // survive into a success receipt. Failure rolls back the entire range.
+        validate_structure(&transaction, target, control)?;
         let integrity: String =
             transaction.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         let foreign_keys = transaction
@@ -426,7 +447,7 @@ fn migrate_controlled(
             return Err(NodeMigrationError::History);
         }
         #[cfg(test)]
-        checkpoint("before_commit");
+        checkpoint("before_commit", &transaction);
         control.check()?;
         source.assert_current()?;
         control.check()?;
@@ -451,14 +472,14 @@ fn migrate_controlled(
         .commit()
         .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
     #[cfg(test)]
-    checkpoint("after_commit");
+    checkpoint("after_commit", &connection);
     // EXCLUSIVE locking mode retains the database lock through receipt hashing.
     // Observation failure after COMMIT must not claim rollback or no effect.
     let database_sha256 = source
         .hash_with_check(&mut || control.check())
         .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
     #[cfg(test)]
-    checkpoint("after_hash");
+    checkpoint("after_hash", &connection);
     source
         .assert_current()
         .map_err(|_| NodeMigrationError::OutcomeUnknown)?;

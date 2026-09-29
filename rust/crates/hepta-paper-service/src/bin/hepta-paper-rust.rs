@@ -84,7 +84,7 @@ use hepta_paper_service::{
         execute_local_golden_dataset_provisioning_v1, inspect_local_golden_dataset_provisioning_v1,
         local_golden_dataset_provisioning_usage, parse_local_golden_dataset_provisioning_arguments,
     },
-    migrate_node_store_v1, native_implementation_hash_v1,
+    native_implementation_hash_v1,
     personal_self_hosted_gpu::{
         blocked_personal_gpu_receipt_v1, encode_personal_gpu_operational_receipt_v1,
         parse_personal_gpu_operational_receipt_v1, personal_gpu_receipt_json_v1,
@@ -549,12 +549,19 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let _ = json;
             println!("{}", automation_status_help_json_v1());
         }
-        Some(CommandV1::StoreMigrate) if (args.len() == 2 || args.len() == 3) => {
-            let target = args.get(2).map(|value| value.parse::<u32>()).transpose()?;
-            println!(
-                "{}",
-                serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
-            );
+        Some(CommandV1::StoreMigrate) => {
+            use hepta_paper_service::node_migration::{
+                migrate_node_store_with_control_v1, parse_node_migration_arguments_v1,
+            };
+            let options = parse_node_migration_arguments_v1(&args[1..])?;
+            let cancelled = command_cancellation_flag()?;
+            let receipt = migrate_node_store_with_control_v1(
+                &options.path,
+                options.target_version,
+                cancelled,
+                options.timeout,
+            )?;
+            println!("{}", serde_json::to_string(&receipt)?);
         }
         Some(CommandV1::RepositoryAssets) => {
             let (root, manifest_path, flag_start) =
@@ -1850,7 +1857,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "store-status [IMMUTABLE_DB [RUNTIME_ROOT]] [--allow-isolated-verification-evidence] | ",
                 "automation-status --help [--json] | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
-                "store-migrate NODE_DB [TARGET_VERSION] | ",
+                "store-migrate NODE_DB [TARGET_VERSION] [--timeout-ms N] | ",
                 "repository-assets ROOT MANIFEST [--handoff] [--require-externalized]",
                 " | command-surface ROOT [--write-package|--check-package|--npm-aliases|--help-artifact|--ci-matrix]",
                 " | verify-architecture ROOT [--json] [--strict]",

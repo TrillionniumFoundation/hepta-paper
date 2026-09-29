@@ -369,3 +369,166 @@ fn ordinary_node_and_rust_upgrade_preserve_real_results_and_same_schema_history(
     assert_eq!(replay["databaseSha256"], receipt["databaseSha256"]);
     assert_eq!(fs::read(&native).unwrap(), before);
 }
+
+#[test]
+fn ordinary_migration_cli_accepts_bounded_timeout_without_changing_node_results() {
+    let temp = Temp::new();
+    let path = temp.database();
+    for (target, expected_before) in [(2, 0), (3, 2), (3, 3)] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("store-migrate")
+            .arg(&path)
+            .arg(target.to_string())
+            .args(["--timeout-ms", "30000"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let receipt: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(receipt["beforeVersion"], expected_before);
+        assert_eq!(receipt["targetVersion"], target);
+        assert_eq!(receipt["productionActivation"], false);
+        assert_eq!(receipt["nodeRetirementVerified"], false);
+    }
+}
+
+#[test]
+fn ordinary_migration_cli_refuses_invalid_control_before_mutation() {
+    let temp = Temp::new();
+    let path = temp.database();
+    let before = fs::read(&path).unwrap();
+    for tail in [
+        vec!["--timeout-ms"],
+        vec!["--timeout-ms", "0"],
+        vec!["--timeout-ms", "3600001"],
+        vec!["--timeout-ms", "-1"],
+        vec!["--timeout-ms", "10", "--timeout-ms", "20"],
+        vec!["--timeout-ms=10"],
+        vec!["--unknown"],
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("store-migrate")
+            .arg(&path)
+            .args(&tail)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{tail:?}");
+        assert!(output.stdout.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn ordinary_migration_deadline_preserves_database_held_by_another_writer() {
+    let temp = Temp::new();
+    let path = temp.database();
+    // Read before locking: closing another descriptor for the same inode
+    // after BEGIN would silently release this process's POSIX SQLite lock.
+    let before = fs::read(&path).unwrap();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("store-migrate")
+        .arg(&path)
+        .args(["2", "--timeout-ms", "10"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("deadline exceeded"),
+        "deadline outcome: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+    db.execute_batch("ROLLBACK;").unwrap();
+}
+
+#[test]
+fn ordinary_migration_signals_stop_without_receipt_or_source_mutation() {
+    use nix::{
+        sys::signal::{Signal, kill},
+        unistd::Pid,
+    };
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    for signal in [Signal::SIGINT, Signal::SIGTERM] {
+        let temp = Temp::new();
+        let path = temp.database();
+        // Preserve the actual holder's lock while the ordinary CLI runs.
+        let before = fs::read(&path).unwrap();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("store-migrate")
+            .arg(&path)
+            .arg("2")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let limit = Instant::now() + Duration::from_secs(5);
+        let mask = 1_u64 << (signal as u32 - 1);
+        let registered = loop {
+            let status =
+                fs::read_to_string(format!("/proc/{}/status", child.id())).unwrap_or_default();
+            let caught = status
+                .lines()
+                .find_map(|line| line.strip_prefix("SigCgt:"))
+                .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
+                .unwrap_or(0);
+            if caught & mask != 0 {
+                break true;
+            }
+            if child.try_wait().unwrap().is_some() || Instant::now() >= limit {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        if !registered {
+            let _ = child.kill();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "ordinary signal adapter not reached: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        // Startup readiness and cancellation latency are separate bounds. A
+        // loaded builder must not consume the time allowed for the actual stop.
+        let stop_limit = Instant::now() + Duration::from_secs(2);
+        kill(Pid::from_raw(i32::try_from(child.id()).unwrap()), signal).unwrap();
+        while child.try_wait().unwrap().is_none() && Instant::now() < stop_limit {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        if child.try_wait().unwrap().is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("owned migration child did not stop");
+        }
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("cancelled before commit"));
+        assert!(output.stdout.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        db.execute_batch("ROLLBACK;").unwrap();
+        drop(db);
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+        assert_eq!(
+            migrate_node_store_v1(&path, Some(2))
+                .unwrap()
+                .before_version,
+            0
+        );
+    }
+}

@@ -73,7 +73,11 @@ impl MigrationSource {
         }
         Ok(())
     }
-    pub(super) fn hash(&self) -> Result<String, NodeMigrationError> {
+    pub(super) fn hash_with_check(
+        &self,
+        check: &mut dyn FnMut() -> Result<(), NodeMigrationError>,
+    ) -> Result<String, NodeMigrationError> {
+        check()?;
         self.assert_current()?;
         let before = self.file.metadata()?;
         if before.len() > MAX_DATABASE_BYTES {
@@ -83,6 +87,7 @@ impl MigrationSource {
         let mut buffer = [0_u8; 64 * 1024];
         let mut offset = 0;
         while offset < before.len() {
+            check()?;
             let remaining = (before.len() - offset).min(buffer.len() as u64) as usize;
             let count = self.file.read_at(&mut buffer[..remaining], offset)?;
             if count == 0 {
@@ -91,6 +96,7 @@ impl MigrationSource {
             digest.update(&buffer[..count]);
             offset += count as u64;
         }
+        check()?;
         let after = self.file.metadata()?;
         self.assert_current()?;
         if before.len() != after.len()

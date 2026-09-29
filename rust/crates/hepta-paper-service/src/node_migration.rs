@@ -18,13 +18,26 @@ use std::{
 };
 use thiserror::Error;
 
+mod control;
 mod source;
+use control::{MigrationControl, RollbackProgressGuard};
+use std::sync::{Arc, atomic::AtomicBool};
 
 const MAX_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+/// Default ordinary CLI budget; this does not grant writer authority.
+pub const NODE_MIGRATION_DEFAULT_TIMEOUT_MS: u64 = 300_000;
+/// Largest accepted native migration invocation budget (one hour).
+pub const NODE_MIGRATION_MAX_TIMEOUT_MS: u64 = 3_600_000;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Error)]
 pub enum NodeMigrationError {
+    #[error("node migration control policy is invalid")]
+    ControlPolicy,
+    #[error("node migration cancelled before commit")]
+    Cancelled,
+    #[error("node migration deadline exceeded before commit")]
+    DeadlineExceeded,
     #[error("node migration path is invalid")]
     Path,
     #[error("node migration database is not private or canonical")]
@@ -248,11 +261,89 @@ pub fn migrate_node_store_v1(
     )
 }
 
+/// Closed native invocation options, not a persisted authorization record.
+pub struct NodeMigrationOptionsV1 {
+    pub path: PathBuf,
+    pub target_version: Option<u32>,
+    pub timeout: Duration,
+}
+
+/// Parse `NODE_DB [TARGET_VERSION] [--timeout-ms POSITIVE_MILLIS]`.
+/// Missing, repeated, unknown and unbounded options fail before source IO.
+pub fn parse_node_migration_arguments_v1(
+    args: &[String],
+) -> Result<NodeMigrationOptionsV1, NodeMigrationError> {
+    let (path, mut tail) = args.split_first().ok_or(NodeMigrationError::Path)?;
+    let target_version = if tail.first().is_some_and(|value| !value.starts_with("--")) {
+        let target = tail[0]
+            .parse::<u32>()
+            .map_err(|_| NodeMigrationError::Target)?;
+        tail = &tail[1..];
+        Some(target)
+    } else {
+        None
+    };
+    if target_version.is_some_and(|target| target == 0 || target > NODE_MIGRATIONS_V1.len() as u32)
+    {
+        return Err(NodeMigrationError::Target);
+    }
+    let timeout_ms = match tail {
+        [] => NODE_MIGRATION_DEFAULT_TIMEOUT_MS,
+        [flag, value] if flag == "--timeout-ms" => value
+            .parse::<u64>()
+            .map_err(|_| NodeMigrationError::ControlPolicy)?,
+        _ => return Err(NodeMigrationError::ControlPolicy),
+    };
+    if timeout_ms == 0 || timeout_ms > NODE_MIGRATION_MAX_TIMEOUT_MS {
+        return Err(NodeMigrationError::ControlPolicy);
+    }
+    Ok(NodeMigrationOptionsV1 {
+        path: PathBuf::from(path),
+        target_version,
+        timeout: Duration::from_millis(timeout_ms),
+    })
+}
+
+/// Use the original EXCLUSIVE transaction with a signal token and monotonic
+/// budget. Post-COMMIT stop is OutcomeUnknown, never a rollback receipt.
+/// Synchronous kernel filesystem IO is not preempted by this control.
+pub fn migrate_node_store_with_control_v1(
+    path: &Path,
+    target_version: Option<u32>,
+    stopped: Arc<AtomicBool>,
+    timeout: Duration,
+) -> Result<NodeMigrationReceiptV1, NodeMigrationError> {
+    let control = MigrationControl::bounded(stopped, timeout)?;
+    migrate_controlled(
+        path,
+        target_version,
+        &control,
+        #[cfg(test)]
+        &mut |_| {},
+    )
+}
+
 fn migrate(
     path: &Path,
     target_version: Option<u32>,
     #[cfg(test)] checkpoint: &mut dyn FnMut(&'static str),
 ) -> Result<NodeMigrationReceiptV1, NodeMigrationError> {
+    migrate_controlled(
+        path,
+        target_version,
+        &MigrationControl::unbounded(),
+        #[cfg(test)]
+        checkpoint,
+    )
+}
+
+fn migrate_controlled(
+    path: &Path,
+    target_version: Option<u32>,
+    control: &MigrationControl,
+    #[cfg(test)] checkpoint: &mut dyn FnMut(&'static str),
+) -> Result<NodeMigrationReceiptV1, NodeMigrationError> {
+    control.check()?;
     let (canonical, _) = canonical_private_database(path)?;
     reject_sidecars(&canonical)?;
     let target = target_version.unwrap_or(NODE_MIGRATIONS_V1.len() as u32);
@@ -263,65 +354,99 @@ fn migrate(
     // Hashing never opens/closes another descriptor for this database inode.
     let source = source::MigrationSource::open(&canonical)?;
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-    let mut connection = Connection::open_with_flags(&canonical, flags)?;
-    connection.busy_timeout(BUSY_TIMEOUT)?;
-    connection.execute_batch(
-        "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL;",
-    )?;
-    let locking: String =
-        connection.query_row("PRAGMA locking_mode=EXCLUSIVE", [], |row| row.get(0))?;
+    control.check()?;
+    let mut connection = Connection::open_with_flags(&canonical, flags)
+        .map_err(|error| control.translate(error.into()))?;
+    let progress = control.install(&connection)?;
+    connection.busy_timeout(control.lock_wait(BUSY_TIMEOUT)?)?;
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL;",
+        )
+        .map_err(|error| control.translate(error.into()))?;
+    let locking: String = connection
+        .query_row("PRAGMA locking_mode=EXCLUSIVE", [], |row| row.get(0))
+        .map_err(|error| control.translate(error.into()))?;
     if locking != "exclusive" {
         return Err(NodeMigrationError::History);
     }
     #[cfg(test)]
     checkpoint("before_transaction");
+    control.check()?;
     source.assert_current()?;
     reject_sidecars(&canonical)?;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-    source.assert_current()?;
-    reject_sidecars(&canonical)?;
-    // Admission comes from the locked state, not an earlier ready observation.
-    let before = validate_history(&read_history(&transaction)?)?;
-    if before > target {
-        return Err(NodeMigrationError::Target);
-    }
-    if active_leases(&transaction)? {
-        return Err(NodeMigrationError::ActiveLease);
-    }
-    #[cfg(test)]
-    checkpoint("after_admission");
-    let mut applied_versions = Vec::new();
-    for descriptor in NODE_MIGRATIONS_V1
-        .iter()
-        .filter(|migration| migration.version > before && migration.version <= target)
-    {
+    connection.busy_timeout(control.lock_wait(BUSY_TIMEOUT)?)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Exclusive)
+        .map_err(|error| control.translate(error.into()))?;
+    let rollback_progress = RollbackProgressGuard(progress);
+    let prepared = (|| -> Result<(u32, Vec<u32>), NodeMigrationError> {
+        control.check()?;
         source.assert_current()?;
-        transaction.execute_batch(descriptor.sql)?;
-        transaction.execute(
-            "INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(?1,?2,?3)",
-            (
-                descriptor.version,
-                descriptor.name,
-                migration_hash(descriptor.sql),
-            ),
-        )?;
-        applied_versions.push(descriptor.version);
+        reject_sidecars(&canonical)?;
+        // Admission comes from the locked state, not an earlier ready observation.
+        let before = validate_history(&read_history(&transaction)?)?;
+        if before > target {
+            return Err(NodeMigrationError::Target);
+        }
+        if active_leases(&transaction)? {
+            return Err(NodeMigrationError::ActiveLease);
+        }
         #[cfg(test)]
-        checkpoint("after_migration");
-    }
-    if validate_history(&read_history(&transaction)?)? != target {
-        return Err(NodeMigrationError::History);
-    }
-    let integrity: String = transaction.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
-    let foreign_keys = transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?;
-    if integrity != "ok" || foreign_keys {
-        return Err(NodeMigrationError::History);
-    }
-    #[cfg(test)]
-    checkpoint("before_commit");
-    source.assert_current()?;
+        checkpoint("after_admission");
+        let mut applied_versions = Vec::new();
+        for descriptor in NODE_MIGRATIONS_V1
+            .iter()
+            .filter(|migration| migration.version > before && migration.version <= target)
+        {
+            control.check()?;
+            source.assert_current()?;
+            transaction.execute_batch(descriptor.sql)?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(?1,?2,?3)",
+                (
+                    descriptor.version,
+                    descriptor.name,
+                    migration_hash(descriptor.sql),
+                ),
+            )?;
+            applied_versions.push(descriptor.version);
+            #[cfg(test)]
+            checkpoint("after_migration");
+        }
+        if validate_history(&read_history(&transaction)?)? != target {
+            return Err(NodeMigrationError::History);
+        }
+        let integrity: String =
+            transaction.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
+        let foreign_keys = transaction
+            .prepare("PRAGMA foreign_key_check")?
+            .exists([])?;
+        if integrity != "ok" || foreign_keys {
+            return Err(NodeMigrationError::History);
+        }
+        #[cfg(test)]
+        checkpoint("before_commit");
+        control.check()?;
+        source.assert_current()?;
+        control.check()?;
+        Ok((before, applied_versions))
+    })();
+    let (before, applied_versions) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            rollback_progress.disarm();
+            // SQLite may already have rolled back an interrupted transaction.
+            if transaction.is_autocommit() {
+                drop(transaction);
+            } else {
+                transaction
+                    .rollback()
+                    .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
+            }
+            return Err(control.translate(error));
+        }
+    };
     transaction
         .commit()
         .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
@@ -330,12 +455,15 @@ fn migrate(
     // EXCLUSIVE locking mode retains the database lock through receipt hashing.
     // Observation failure after COMMIT must not claim rollback or no effect.
     let database_sha256 = source
-        .hash()
+        .hash_with_check(&mut || control.check())
         .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
     #[cfg(test)]
     checkpoint("after_hash");
     source
         .assert_current()
+        .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
+    control
+        .check()
         .map_err(|_| NodeMigrationError::OutcomeUnknown)?;
     drop(connection);
     drop(source);

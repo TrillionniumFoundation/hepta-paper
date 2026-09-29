@@ -109,6 +109,7 @@ test('every required qualification producer always reports on pull requests', ()
     'rust-plan-v3-external-contracts', 'rust-program-truth',
     'rust-qualification-artifacts', 'rust-source-snapshot',
     'rust-supply-chain', 'workflow-lint',
+    'repository-source-evidence', 'rust-functional-source-closure', 'rust-product-targets',
   ].map((name) => `.github/workflows/${name}.yml`));
 
   for (const workflowPath of [...workflowPaths].sort()) {
@@ -123,7 +124,11 @@ test('every required qualification producer always reports on pull requests', ()
       assert.ok(pushBlock, `${workflowPath}: maintained Rust producer lacks push trigger`);
     }
     if (pushBlock) {
-      const expected = workflowPath === '.github/workflows/rust-source-snapshot.yml'
+      // Product targets and source snapshots belong only to the Rust
+      // integration line; other maintained producers also validate Node main.
+      const integrationOnly = ['.github/workflows/rust-source-snapshot.yml',
+        '.github/workflows/rust-product-targets.yml'].includes(workflowPath);
+      const expected = integrationOnly
         ? [rustBranch]
         : ['main', ...(rustPushProducers.has(workflowPath) ? [rustBranch] : [])];
       assert.deepEqual(

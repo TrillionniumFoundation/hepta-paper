@@ -139,11 +139,23 @@ range. Migration hashes, history and lease-bearing state are checked after
 acquiring that lock, including no-op replay and version-zero foreign tables.
 DDL failure rolls back the whole requested range, not just its final migration;
 this is an explicit stricter native failure contract rather than Node per-step
-failure parity. Final history, quick-check and foreign-key checks precede COMMIT.
+failure parity. Final exact schema/history, quick-check and foreign-key checks precede COMMIT.
 EXCLUSIVE locking mode retains the physical SQLite exclusion through the receipt
 hash. The bounded streaming hash uses the already retained database descriptor;
 opening/closing a second descriptor while SQLite owns POSIX locks is avoided.
 SQLite closes before the retained descriptor on normal and error exits.
+
+Known source versions are checked inside that same transaction through
+`hepta-readonly-control::node_schema::validate_node_migration_structure_v1`.
+It reuses the existing trusted SQL replay owner and compares actual SQL objects,
+contiguous migration descriptors and schema metadata with a private in-memory
+expectation. A missing required index, an added column/trigger or changed schema
+metadata refuses both upgrade and no-op replay before new DDL. Version-zero
+bootstrap must also match the complete target schema before commit; foreign
+objects cause the whole range to roll back, not an adopted-store success receipt.
+The structural checker neither reopens the source file nor rewrites its header.
+Existing strict header/format recognition remains in the read-only recognizer;
+a structural match alone is not format acceptance or installed writer authority.
 
 The ordinary entry now accepts `--timeout-ms N`, a native invocation control
 rather than a lease or authority grant. Its default is 300000 ms and its closed
@@ -166,10 +178,12 @@ still consumes the original verified history without duplicate migrations.
 
 Real CLI signal/deadline tests, transactional cut-point tests, a real long SQLite
 query and bounded hash-read tests exercise this control through the existing
-owners. A slow history-insert trigger additionally runs inside the actual migration
-owner: VM deadline interruption rolls back both migration SQL and trigger writes,
-retains the original bytes/history, and an explicit repaired-input retry applies
-one version once. CLI startup-handler observation and actual signal-stop latency
+owners. The existing test-only checkpoint injects a TEMP history-insert trigger
+on the original connection after valid source admission. Real VM deadline
+interruption rolls back both migration SQL and the trigger's business-row write,
+retains the original bytes/history, and the unchanged-input public retry applies
+one version once. No permanent trigger is whitelisted, no source repair is needed,
+and no replacement migration transaction is constructed by that regression. CLI startup-handler observation and actual signal-stop latency
 have separate bounds; no fixed startup sleep stands in for handler readiness. Kernel filesystem calls and durability operations are synchronous and
 are not forcibly preempted; the budget is not a hard real-time or hostile-process
 isolation guarantee. No test result establishes installed writer fencing,

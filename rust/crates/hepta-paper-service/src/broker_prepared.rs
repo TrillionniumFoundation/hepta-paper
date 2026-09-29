@@ -1072,15 +1072,28 @@ pub(crate) fn acknowledge_committed_result(
     state_directory: &Path,
     target: &BrokerCommitTargetV2,
     receipt: &CommitReceiptV1,
-    now_unix_ms: u64,
+    clock: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
     cancelled: &AtomicBool,
 ) -> Result<(), ServiceError> {
     let Some(acknowledgement_source) = &target.source.commit_acknowledgement else {
         return Ok(());
     };
-    if now_unix_ms == 0 || cancelled.load(Ordering::Acquire) {
-        return Err(ServiceError::Execution);
-    }
+    // Reuse the calling service/workflow clock: in a research composition it
+    // also revalidates the retained opaque trust owner. A cached pre-commit or
+    // earlier-ACK timestamp must not authorize a later transport handoff.
+    let mut last = 0;
+    let mut current = || {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(ServiceError::Execution);
+        }
+        let now = clock().map_err(|_| ServiceError::Execution)?;
+        if now == 0 || now < last || cancelled.load(Ordering::Acquire) {
+            return Err(ServiceError::Execution);
+        }
+        last = now;
+        Ok(now)
+    };
+    current()?;
     let result_hash = target
         .result
         .result_hash()
@@ -1117,31 +1130,43 @@ pub(crate) fn acknowledge_committed_result(
     }
     let captured =
         CapturedCommitAcknowledgement::open(acknowledgement_source, &target.result.attempt_id)?;
-    verify_commit_bound_acknowledgement_subject_v2(
-        &captured.acknowledgement,
-        &target.subject,
-        &commit,
-        now_unix_ms,
-        CommitBoundAcknowledgementPolicyV2 {
-            version: 2,
-            maximum_age_ms: acknowledgement_source.maximum_age_ms,
-        },
-        &acknowledgement_source.trust_store()?,
-    )
-    .map_err(|_| ServiceError::Execution)?;
-    captured.revalidate(acknowledgement_source)?;
+    let mut admit_handoff = || {
+        captured.revalidate(acknowledgement_source)?;
+        let now = current()?;
+        verify_commit_bound_acknowledgement_subject_v2(
+            &captured.acknowledgement,
+            &target.subject,
+            &commit,
+            now,
+            CommitBoundAcknowledgementPolicyV2 {
+                version: 2,
+                maximum_age_ms: acknowledgement_source.maximum_age_ms,
+            },
+            &acknowledgement_source.trust_store()?,
+        )
+        .map_err(|_| ServiceError::Execution)?;
+        // The selected clock may perform trust I/O. It cannot silently replace
+        // the authority-owned ACK while returning a fresh timestamp.
+        captured.revalidate(acknowledgement_source)
+    };
+    admit_handoff()?;
     // Persist the exact verified signed fact before any transport. A valid
     // replacement signature after response loss cannot select a second ACK.
     // Every retry still reads the authority-owned receipt and verifies current
     // trust/expiry; the local intent is not a substitute authorization source.
     select_intent(state_directory, &result_hash, &captured.acknowledgement)?;
-    captured.revalidate(acknowledgement_source)?;
+    // Durable publication may block. Recheck current trust/time before opening
+    // the peer, retaining the exact intent on refusal rather than reminting it.
+    admit_handoff()?;
     let peer_policy = PeerPolicyV1::new([PeerPrincipalV1 {
         uid: target.source.broker_uid,
         gid: target.source.broker_gid,
     }])
     .map_err(|_| ServiceError::Configuration)?;
     let (stream, socket_identity) = connect_now(&target.source)?;
+    // Connection/peer admission is another fallible I/O boundary. No ACK frame
+    // is handed off until the original clock and signed subject are current.
+    admit_handoff()?;
     let started = std::time::Instant::now();
     let deadline = started
         .checked_add(std::time::Duration::from_millis(target.source.timeout_ms))

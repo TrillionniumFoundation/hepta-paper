@@ -451,14 +451,13 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         .map_err(|_| ServiceError::PostCommitAcknowledgement)?
         .clone();
     if !targets.is_empty() {
-        let now_unix_ms = clock().map_err(|_| ServiceError::PostCommitAcknowledgement)?;
         for commit_receipt in &receipt.commit_receipts {
             if let Some(target) = targets.get(&commit_receipt.result_hash) {
                 broker_prepared::acknowledge_committed_result(
                     &state_directory,
                     target,
                     commit_receipt,
-                    now_unix_ms,
+                    clock,
                     &cancelled,
                 )
                 .map_err(|_| ServiceError::PostCommitAcknowledgement)?;

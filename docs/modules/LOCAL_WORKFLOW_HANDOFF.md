@@ -674,6 +674,22 @@ successful broker response permits `<result-hash>.json` confirmation. Old valid
 V2 confirmations without an intent companion remain historical replay inputs;
 a present conflicting or corrupt companion is never ignored.
 
+Unconfirmed ACK delivery reuses the service/workflow's selected clock, including
+its retained research-trust checks. Each target observes currentness at entry,
+after capturing the authority input, after durable intent publication, and after
+peer connection immediately before the ACK frame handoff. A prior commit or an
+earlier ACK's timestamp cannot authorize a later send. Expiry, clock failure,
+backward time, cancellation or authority-input replacement stops the handoff;
+the exact durable intent and original result/charge remain for recovery. The
+captured ACK file is checked again after the clock callback because that callback
+can perform trust I/O. Every retry re-verifies the same selected signed fact.
+
+A bound successful broker reply is still recorded as a confirmation without a
+new post-reply clock check: subsequent expiry does not undo an already accepted
+historical fact. This does not grant an atomic clock-to-send or hostile-same-UID
+guarantee; the broker retains its own signed-subject and persisted-commit checks.
+No wire version, recovery journal, writer lease or authority scope is changed.
+
 Both records use descriptor-relative exclusive staging, file fsync, no-replace
 rename, and directory/state fsync. A crash before rename leaves an unselected
 pending inode; retry uses a fresh stage and preserves the old bytes. A crash after

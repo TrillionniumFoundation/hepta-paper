@@ -225,6 +225,164 @@ fn native_verification_rejects_wrong_subject_and_missing_differential_tools() {
 }
 
 #[test]
+fn hidden_index_flags_and_ignored_mode_changes_refuse_before_suite_execution() {
+    use std::os::unix::fs::PermissionsExt;
+    for flag in ["--assume-unchanged", "--skip-worktree", "mode"] {
+        let workspace = NativeWorkspace::new();
+        if flag == "mode" {
+            assert!(
+                Command::new("git")
+                    .current_dir(&workspace.0)
+                    .args(["config", "core.filemode", "false"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            fs::set_permissions(
+                workspace.0.join("rust/src/lib.rs"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        } else {
+            assert!(
+                Command::new("git")
+                    .current_dir(&workspace.0)
+                    .args(["update-index", flag, "rust/src/lib.rs"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            fs::write(
+                workspace.0.join("rust/src/lib.rs"),
+                "pub fn value() -> u8 { 8 }\n",
+            )
+            .unwrap();
+        }
+        let status = Command::new("git")
+            .current_dir(&workspace.0)
+            .args(["status", "--porcelain=v1"])
+            .output()
+            .unwrap();
+        assert!(status.status.success() && status.stdout.is_empty());
+        let output = workspace.command().output().unwrap();
+        assert!(!output.status.success() && output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(if flag == "mode" {
+                "full_suite_verification_source_mode_mismatch"
+            } else {
+                "full_suite_verification_source_hidden_index_flags"
+            })
+        );
+        assert!(!workspace.0.join("rust/target").exists());
+    }
+}
+
+#[test]
+fn clean_git_stat_cache_cannot_substitute_different_bytes_for_the_selected_tree() {
+    use std::fs::{File, FileTimes};
+    use std::time::{Duration, SystemTime};
+    let workspace = NativeWorkspace::new();
+    let source = workspace.0.join("rust/src/lib.rs");
+    for (key, value) in [("core.trustctime", "false"), ("core.checkStat", "minimal")] {
+        assert!(
+            Command::new("git")
+                .current_dir(&workspace.0)
+                .args(["config", key, value])
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let old_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+    File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(old_time))
+        .unwrap();
+    assert!(
+        Command::new("git")
+            .current_dir(&workspace.0)
+            .args(["update-index", "--refresh"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let selected = Command::new("git")
+        .current_dir(&workspace.0)
+        .args(["rev-parse", "HEAD", "HEAD^{tree}"])
+        .output()
+        .unwrap();
+    let selected = String::from_utf8(selected.stdout).unwrap();
+    let selected: Vec<_> = selected.lines().collect();
+    let bytes = fs::read_to_string(&source).unwrap();
+    fs::write(&source, bytes.replacen("    7\n", "    8\n", 1)).unwrap();
+    File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(old_time))
+        .unwrap();
+    let status = Command::new("git")
+        .current_dir(&workspace.0)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success() && status.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+    let output = workspace
+        .command()
+        .args([
+            "--expected-head",
+            selected[0],
+            "--expected-tree",
+            selected[1],
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success() && output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("full_suite_verification_source_blob_mismatch"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!workspace.0.join("rust/target").exists());
+}
+
+#[test]
+fn redirected_git_worktree_cannot_hide_untracked_execution_inputs() {
+    let workspace = NativeWorkspace::new();
+    let other = NativeWorkspace::new();
+    assert!(
+        Command::new("git")
+            .current_dir(&workspace.0)
+            .args(["config", "core.worktree"])
+            .arg(&other.0)
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(workspace.0.join("untracked-input.rs"), "different input\n").unwrap();
+    let status = Command::new("git")
+        .current_dir(&workspace.0)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .unwrap();
+    assert!(status.status.success() && status.stdout.is_empty());
+    let output = workspace.command().output().unwrap();
+    assert!(!output.status.success() && output.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("full_suite_verification_source_root_mismatch")
+    );
+    assert!(!workspace.0.join("rust/target").exists());
+}
+
+#[test]
 fn real_suite_sigterm_and_deadline_keep_failure_receipts_and_reap_the_test_group() {
     use nix::{
         sys::signal::{Signal, kill},

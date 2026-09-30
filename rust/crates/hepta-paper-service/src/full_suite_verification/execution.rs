@@ -141,8 +141,18 @@ impl Owner<'_> {
         })
     }
     fn capture(&self, path: &Path, arguments: &[&str]) -> Result<Vec<u8>, String> {
+        self.capture_with_stdin(path, arguments, None)
+    }
+    fn capture_with_stdin(
+        &self,
+        path: &Path,
+        arguments: &[&str],
+        stdin: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, String> {
+        let mut request = self.request(path, arguments)?;
+        request.stdin = stdin;
         let result = run_bounded_process_capturing_stdout_with_cancellation(
-            &self.request(path, arguments)?,
+            &request,
             self.limits()?,
             self.cancelled,
         )
@@ -193,6 +203,21 @@ struct Source {
 }
 impl Source {
     fn capture(owner: &Owner<'_>, git: &Path) -> Result<Self, String> {
+        let top = owner.capture(git, &["rev-parse", "--show-toplevel"])?;
+        let top = std::str::from_utf8(&top)
+            .map_err(|_| error("source_root_invalid"))?
+            .trim_end_matches('\n');
+        if fs::canonicalize(top).map_err(|_| error("source_root_invalid"))? != owner.root {
+            return Err(error("source_root_mismatch"));
+        }
+        let flags = owner.capture(git, &["ls-files", "--cached", "-v", "-z"])?;
+        if flags
+            .split(|b| *b == 0)
+            .filter(|v| !v.is_empty())
+            .any(|v| !v.starts_with(b"H "))
+        {
+            return Err(error("source_hidden_index_flags"));
+        }
         if !owner
             .capture(
                 git,
@@ -225,10 +250,34 @@ impl Source {
         };
         let head = oid("HEAD^{commit}")?;
         let tree = oid("HEAD^{tree}")?;
+        let tree_entries = owner.capture(git, &["ls-tree", "-r", "--full-tree", "-z", "HEAD"])?;
+        let mut expected_entries = BTreeMap::new();
+        for entry in tree_entries.split(|b| *b == 0).filter(|v| !v.is_empty()) {
+            let separator = entry
+                .iter()
+                .position(|b| *b == b'\t')
+                .ok_or_else(|| error("source_inventory_invalid"))?;
+            let fields: Vec<_> = entry[..separator].split(|b| *b == b' ').collect();
+            if fields.len() != 3 || fields[1] != b"blob" {
+                return Err(error("source_entry_not_supported"));
+            }
+            if expected_entries
+                .insert(
+                    entry[separator + 1..].to_vec(),
+                    (fields[0].to_vec(), fields[2].to_vec()),
+                )
+                .is_some()
+                || expected_entries.len() > MAX_WALK_ENTRIES
+            {
+                return Err(error("source_inventory_invalid"));
+            }
+        }
         let entries = owner.capture(git, &["ls-files", "--stage", "-z"])?;
         let mut hasher = Sha256::new();
         let mut total = 0u64;
         let mut count = 0;
+        let mut hash_input = Vec::new();
+        let mut expected_blobs = Vec::new();
         for entry in entries.split(|b| *b == 0).filter(|b| !b.is_empty()) {
             count += 1;
             if count > MAX_WALK_ENTRIES {
@@ -243,6 +292,18 @@ impl Source {
                 .ok_or_else(|| error("source_inventory_invalid"))?;
             let (header, tail) = entry.split_at(separator);
             let relative = &tail[1..];
+            let fields: Vec<_> = header.split(|b| *b == b' ').collect();
+            let expected = expected_entries
+                .remove(relative)
+                .ok_or_else(|| error("source_index_tree_mismatch"))?;
+            if fields.len() != 3
+                || fields[2] != b"0"
+                || fields[0] != expected.0
+                || fields[1] != expected.1
+                || !matches!(fields[0], b"100644" | b"100755")
+            {
+                return Err(error("source_index_tree_mismatch"));
+            }
             let name = std::str::from_utf8(relative).map_err(|_| error("source_path_invalid"))?;
             let relative = Path::new(name);
             if relative
@@ -253,19 +314,47 @@ impl Source {
             }
             hasher.update(entry);
             hasher.update([0]);
-            // Gitlinks bind the recorded object. The clean submodule status
-            // above is observed again after the commands; no directory is read
-            // as a regular file or represented as an executed submodule suite.
-            if header.starts_with(b"160000 ") {
-                continue;
+            let path = owner.root.join(relative);
+            let metadata = fs::symlink_metadata(&path).map_err(|_| error("source_unreadable"))?;
+            if !metadata.is_file() || (metadata.mode() & 0o111 != 0) != (fields[0] == b"100755") {
+                return Err(error("source_mode_mismatch"));
             }
-            let bytes = read_regular(&owner.root.join(relative))?;
+            let bytes = read_regular(&path)?;
             total += bytes.len() as u64;
             if total > MAX_SOURCE_BYTES {
                 return Err(error("source_inventory_too_large"));
             }
             hasher.update(digest(&bytes));
             hasher.update([0]);
+            // A fixed no-filter Git query hashes the actual regular files in
+            // one bounded batch, independently of the status/stat cache.
+            let quoted = serde_json::to_string(name).map_err(|_| error("source_path_invalid"))?;
+            hash_input.extend_from_slice(quoted.as_bytes());
+            hash_input.push(b'\n');
+            if hash_input.len() > 8 * 1024 * 1024 {
+                return Err(error("source_inventory_too_large"));
+            }
+            expected_blobs.push(fields[1].to_vec());
+        }
+        if !expected_entries.is_empty() {
+            return Err(error("source_index_tree_mismatch"));
+        }
+        let actual_blobs = owner.capture_with_stdin(
+            git,
+            &["hash-object", "--no-filters", "--stdin-paths"],
+            Some(hash_input),
+        )?;
+        let actual_blobs: Vec<_> = actual_blobs
+            .split(|b| *b == b'\n')
+            .filter(|v| !v.is_empty())
+            .collect();
+        if actual_blobs.len() != expected_blobs.len()
+            || actual_blobs
+                .iter()
+                .zip(&expected_blobs)
+                .any(|(a, b)| *a != b)
+        {
+            return Err(error("source_blob_mismatch"));
         }
         Ok(Self {
             head,
@@ -359,6 +448,7 @@ pub fn execute_full_suite_verification_v1(
             "GIT_CONFIG_NOSYSTEM",
             "GIT_CONFIG_GLOBAL",
             "GIT_OPTIONAL_LOCKS",
+            "GIT_NO_REPLACE_OBJECTS",
         ],
         ["PATH", "LC_ALL"],
     )
@@ -375,6 +465,7 @@ pub fn execute_full_suite_verification_v1(
                 ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
                 ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
                 ("GIT_OPTIONAL_LOCKS".into(), "0".into()),
+                ("GIT_NO_REPLACE_OBJECTS".into(), "1".into()),
             ]),
         )
         .map_err(|_| error("environment_invalid"))?;

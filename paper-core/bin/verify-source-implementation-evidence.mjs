@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_COMMAND_DIAGNOSTIC_BYTES = 8 * 1024;
+const MAX_COMMAND_TIMEOUT_SECONDS = 1200;
 const SHA1_PATTERN = /^[0-9a-f]{40}$/;
 const MODULE_PATTERN = /^module\.[a-z0-9-]+$/;
 const CAPABILITY_PATTERN = /^CAP-[A-Z0-9-]+$/;
@@ -349,6 +350,15 @@ function scopedCargoLibraryTarget(expectedTarget) {
   return { packageName: match[1] };
 }
 
+// Call only after the file's declared symbols have been verified against its
+// pinned live source. Rust implementation modules can also own inline #[test]
+// functions; a role label alone must not hide that explicit, checked owner.
+export function declaresTestOwner(entry) {
+  return entry.role === 'test'
+    || (entry.role === 'implementation' && entry.language === 'rust'
+      && entry.symbols.some((symbol) => symbol.kind === 'test'));
+}
+
 export function validateCommand(command, label, testPaths) {
   exactKeys(command, COMMAND_KEYS, label);
   requireString(command.program, `${label}.program`);
@@ -359,7 +369,7 @@ export function validateCommand(command, label, testPaths) {
   }
   const workdir = canonicalRelative(command.workdir, `${label}.workdir`, { allowDot: true });
   if (command.expectedExitCode !== 0) fail('command_exit_policy_invalid', label);
-  requireInteger(command.timeoutSeconds, `${label}.timeoutSeconds`, 1, 600);
+  requireInteger(command.timeoutSeconds, `${label}.timeoutSeconds`, 1, MAX_COMMAND_TIMEOUT_SECONDS);
   requireUniqueStrings(command.expectedTargets, `${label}.expectedTargets`, { minimum: 1 });
   for (const target of command.expectedTargets) {
     canonicalRelative(target, `${label}.expectedTarget`);
@@ -497,7 +507,7 @@ export function validateEvidenceDocument(document, context) {
     if (!roles.has('implementation') || !roles.has('test')) {
       fail('bundle_roles_incomplete', bundleId);
     }
-    const testPaths = new Set(files.filter((entry) => entry.role === 'test').map((entry) => entry.path));
+    const testPaths = new Set(files.filter(declaresTestOwner).map((entry) => entry.path));
     if (!Array.isArray(bundle.verificationCommands) || bundle.verificationCommands.length < 1) {
       fail('verification_commands_required', bundleId);
     }

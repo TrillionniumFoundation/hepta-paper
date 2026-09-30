@@ -162,7 +162,7 @@
         "timeoutSeconds": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 600
+          "maximum": 1200
         },
         "expectedTargets": {
           "type": "array",

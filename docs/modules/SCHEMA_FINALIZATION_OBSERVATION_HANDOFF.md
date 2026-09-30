@@ -45,24 +45,56 @@ principal qualification are separate requirements, not supplied by this journal.
 An operator who lost the independent request pin cannot silently adopt a pin from
 the untrusted progress file through the recovery API.
 
-## Observation, final receipt and activation remain distinct
+## Durable v1 observation after finalization
+
+`prepare_schema_transition_observation_v1` consumes the existing prepared
+finalization owner only after its signed receipt is durably present. It keeps the
+same root-inode maintenance lock, re-verifies the reservation/finalization and
+actual ten-database post-state, generates a fresh bounded nonce, and writes one
+closed `observationProgress` record to the same normalization CAS journal before
+any authority RPC. Version 2 remains fail-closed at the independently owned
+target-configuration restart boundary.
+
+The caller independently retains both finalization and observation request
+hashes. `observe_prepared_schema_transition_v1` may send only the persisted exact
+request. An interruption after RPC leaves a null receipt and therefore an unknown
+result, not permission to choose another nonce/time or reconstruct the request.
+A retry sends the identical request. Only a receipt verified by the pinned
+observation contract can fill the durable slot; an error after publication does
+not erase it.
+
+`resume_schema_transition_observation_v1` requires transition, plan,
+finalization-request and observation-request pins. The observation pin is checked
+before filesystem access. Recovery rebuilds the installed post-state from the
+original signed preimages, verifies the historical finalization and current
+configuration, and rejects missing/extra progress fields, substituted requests,
+forged receipts, changed installations/business rows or journal CAS drift. A
+recorded observation replays without RPC or a clock. That replay is historical
+evidence and is never presented as a fresh unexpired readiness observation.
+
+## Final receipt and activation remain distinct
 
 `build_schema_transition_finalize_request_v1` and
-`build_schema_transition_observe_request_v1` retain the exact Node protocol
-bindings. `observe_schema_transition_post_state_v1` checks actual inventory and
-schema bindings, recomputing the v2 pristine hash where applicable. Durable v1
-finalization additionally verifies full business post-state from signed
-preimages; the passive schema observer alone is not that proof.
+`build_schema_transition_observe_request_v1` remain the exact Node protocol
+builders. `observe_schema_transition_post_state_v1` checks actual inventory and
+schema bindings, recomputing the v2 pristine hash where applicable. The durable
+v1 finalization/observation owners additionally retain full business post-state
+and request identity; passive schema inspection alone is not that proof.
 
-The new durable finalization boundary does not persist observation intents or
-publish `FINAL.json`. The existing [final-receipt publication contract](SCHEMA_FINAL_RECEIPT_PUBLICATION_HANDOFF.md)
-continues to require the independent observation and all historical signatures.
-The observation nonce must be persisted before an external call. V2 remains
-explicitly target-configuration-restart-required; no source-config receipt or
-caller boolean supplies the missing restart proof.
+`publish_prepared_schema_transition_observation_v1` now feeds the existing
+[final-receipt publication contract](SCHEMA_FINAL_RECEIPT_PUBLICATION_HANDOFF.md)
+directly from the durable owner. Callers supply only the independently retained
+plan hash, manifests and optional previous-file hash; they cannot splice raw
+reservation/finalization/observation JSON. The function verifies the complete
+historical audit while holding the original root owner, releases that owner,
+re-observes all ten databases, then uses the existing no-clobber `FINAL.json`
+repository. Exact replay returns the already-published file without another RPC.
+This historical publication still does not activate a runtime or create a fresh
+readiness receipt. V2 needs an owned target-configuration restart proof; no
+source-config receipt or caller boolean supplies it.
 
-The ordinary schema execute CLI still requires the installed owner. This is a
-source-level continuation of its existing installation/finalization owners, not
+The ordinary schema execute CLI still requires the installed owner. These are
+source-level continuations of the existing installation/finalization owners, not
 an alternate product launcher or a claim of installed migration/canary/rollback,
 old-Node-writer fencing, independent role/billing acceptance or full route parity.
 
@@ -73,9 +105,11 @@ The canonical source producer binds these implementations and the nested
 normal planner, signed reservation, normalization and actual ten-database
 installer before finalization. The Node completion contract and ephemeral
 signature fixtures are explicit local peers, not independently installed service
-principals. Tests exercise request preservation, uncertain replies, durable
-receipt errors, real client process exit, altered pins/journals/business rows,
-no reinstall, and offline replay after the original lease expires.
+principals. Tests exercise finalization and observation request preservation, uncertain
+replies, durable receipt errors, real client process exit before either RPC,
+altered pins/journals/business rows, no reinstall, exact-request retry, offline
+historical replay, direct audit assembly and idempotent `FINAL.json` publication
+without caller-provided signed records.
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml --locked --all-features -p hepta-paper-service --test schema_installation_parity

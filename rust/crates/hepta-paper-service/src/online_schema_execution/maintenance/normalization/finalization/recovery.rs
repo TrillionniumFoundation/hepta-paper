@@ -353,3 +353,387 @@ pub fn resume_schema_transition_finalization_v1<T: MutationAuthorityTransportV1>
     }
     Ok(prepared)
 }
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ObservationProgress {
+    version: u16,
+    request: Value,
+    request_hash: String,
+    // A missing receipt is durable ambiguity, never proof that observation did
+    // not happen. Recovery may retry only this exact request.
+    receipt: Option<Value>,
+}
+fn observation_invalid() -> crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError {
+    error("autonomous_research_online_schema_transition_observation_progress_invalid")
+}
+fn observation_request_hash(request: &Value) -> Result<String> {
+    hash(
+        "AutonomousResearchOnlineSchemaTransitionObserveRequest",
+        request,
+    )
+}
+fn observation_progress(journal: &Value) -> Result<ObservationProgress> {
+    ensure(
+        crate::sqlite_mutation_coordinator::keys(
+            &journal["observationProgress"],
+            &["version", "request", "requestHash", "receipt"],
+        ),
+        &observation_invalid().code,
+    )?;
+    let value: ObservationProgress = serde_json::from_value(journal["observationProgress"].clone())
+        .map_err(|_| observation_invalid())?;
+    ensure(
+        value.version == 1 && value.request_hash == observation_request_hash(&value.request)?,
+        &observation_invalid().code,
+    )?;
+    Ok(value)
+}
+fn random_observation_nonce() -> Result<String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| {
+        error("autonomous_research_online_schema_transition_observation_randomness_unavailable")
+    })?;
+    Ok(format!(
+        "schema-transition-observation:{}",
+        hex::encode(bytes)
+    ))
+}
+
+/// Durable v1 observation intent under the same root owner and normalization
+/// journal as installation/finalization. JSON cannot construct this capability.
+///
+/// ```compile_fail
+/// use hepta_paper_service::online_schema_execution::maintenance::normalization::finalization::recovery::PreparedSchemaObservationV1;
+/// let value: PreparedSchemaObservationV1 = serde_json::from_str("{}").unwrap();
+/// ```
+pub struct PreparedSchemaObservationV1 {
+    progress: ObservationProgress,
+    finalization: VerifiedMutationReceiptV1,
+    owner: FinalizationHandoff,
+}
+impl PreparedSchemaObservationV1 {
+    pub fn request_hash(&self) -> &str {
+        &self.progress.request_hash
+    }
+    pub fn request(&self) -> &Value {
+        &self.progress.request
+    }
+    pub fn journal_hash(&self) -> &str {
+        &self.owner.journal_hash
+    }
+    fn guard<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+    ) -> Result<()> {
+        self.owner.lock.assert_current()?;
+        self.owner.post_state.assert_current(
+            &self.owner.journal["plan"],
+            Some(&self.owner.journal["installations"]),
+        )?;
+        ensure(
+            self.owner.journal["plan"]["version"] == 1,
+            "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
+        )?;
+        ensure(
+            self.owner.journal["authorityConfigurationHash"] == authority.configuration_hash(),
+            "autonomous_research_online_schema_transition_authority_configuration_mismatch",
+        )?;
+        authority.verify_historical_schema_transition_reservation(
+            &self.owner.journal["reservation"],
+            &self.owner.journal["request"],
+        )?;
+        let finalization_progress = progress(&self.owner.journal)?;
+        let finalization_receipt = finalization_progress.receipt.as_ref().ok_or_else(|| {
+            error("autonomous_research_online_schema_transition_finalization_recovery_required")
+        })?;
+        let verified = authority.verify_historical_schema_transition_finalization(
+            finalization_receipt,
+            &finalization_progress.request,
+            &self.owner.reservation,
+        )?;
+        ensure(
+            verified.value() == self.finalization.value(),
+            "autonomous_research_online_schema_transition_observation_finalization_changed",
+        )?;
+        let expected = build_schema_transition_observe_request_v1(
+            &self.owner.journal["plan"],
+            &self.finalization,
+            text_field(self.owner.post_state.inventory(), "inventoryHash")?,
+            self.owner.post_state.pristine_runtime_state_hash(),
+            text_field(&self.progress.request, "nonce")?,
+            text_field(&self.progress.request, "requestedAt")?,
+        )?;
+        ensure(
+            expected == self.progress.request
+                && observation_request_hash(&expected)? == self.progress.request_hash,
+            "autonomous_research_online_schema_transition_observation_request_changed",
+        )?;
+        let current = NormalizationRepository::open(&self.owner.lock, false)?
+            .load()?
+            .ok_or_else(observation_invalid)?;
+        ensure(
+            current.0 == self.owner.journal && current.1 == self.owner.journal_hash,
+            "autonomous_research_online_schema_transition_observation_journal_changed",
+        )
+    }
+    fn save(&mut self) -> Result<()> {
+        self.owner.journal["observationProgress"] =
+            serde_json::to_value(&self.progress).map_err(|_| observation_invalid())?;
+        self.owner.journal_hash = NormalizationRepository::open(&self.owner.lock, false)?
+            .publish(&self.owner.journal, Some(&self.owner.journal_hash))?;
+        Ok(())
+    }
+    fn clock(&self, clock: &mut dyn MutationClockV1) -> Result<i64> {
+        let now = clock.now_millis()?;
+        ensure(
+            now >= int(&self.owner.journal, "checkedAtMillis")?,
+            "autonomous_research_online_schema_transition_clock_regressed",
+        )?;
+        Ok(now)
+    }
+}
+
+/// Convert a completed, durably recorded v1 finalization into one persisted
+/// observation request before any authority RPC. V2 intentionally remains at
+/// the target-configuration restart boundary.
+pub fn prepare_schema_transition_observation_v1<T: MutationAuthorityTransportV1>(
+    finalized: PreparedSchemaFinalizationV1,
+    authority: &PinnedMutationAuthorityV1<T>,
+    clock: &mut dyn MutationClockV1,
+) -> Result<PreparedSchemaObservationV1> {
+    ensure(
+        finalized.owner.journal["plan"]["version"] == 1,
+        "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
+    )?;
+    ensure(
+        finalized.owner.journal.get("observationProgress").is_none(),
+        "autonomous_research_online_schema_transition_observation_recovery_required",
+    )?;
+    finalized.guard(authority)?;
+    let finalization_receipt = finalized.progress.receipt.as_ref().ok_or_else(|| {
+        error("autonomous_research_online_schema_transition_finalization_recovery_required")
+    })?;
+    let finalization = authority.verify_historical_schema_transition_finalization(
+        finalization_receipt,
+        &finalized.progress.request,
+        &finalized.owner.reservation,
+    )?;
+    let now = finalized.clock(clock)?;
+    let request = build_schema_transition_observe_request_v1(
+        &finalized.owner.journal["plan"],
+        &finalization,
+        text_field(finalized.owner.post_state.inventory(), "inventoryHash")?,
+        finalized.owner.post_state.pristine_runtime_state_hash(),
+        &random_observation_nonce()?,
+        &iso(now)?,
+    )?;
+    crate::sqlite_mutation_coordinator::contracts::schema_transition::assert_schema_transition_observe_request_v1(
+        &request,
+        authority.trust(),
+    )?;
+    let progress = ObservationProgress {
+        version: 1,
+        request_hash: observation_request_hash(&request)?,
+        request,
+        receipt: None,
+    };
+    let mut prepared = PreparedSchemaObservationV1 {
+        progress,
+        finalization,
+        owner: finalized.owner,
+    };
+    prepared.owner.journal["checkedAtMillis"] = json!(now);
+    prepared.save()?;
+    prepared.guard(authority)?;
+    Ok(prepared)
+}
+
+pub trait SchemaObservationCheckpointV1 {
+    fn checkpoint(&mut self, point: &str) -> Result<()>;
+}
+pub struct NoSchemaObservationCheckpointV1;
+impl SchemaObservationCheckpointV1 for NoSchemaObservationCheckpointV1 {
+    fn checkpoint(&mut self, _: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Retry only the durably selected observation request after an uncertain reply.
+/// A recorded receipt is historical evidence and replays without RPC or clock;
+/// it is not a fresh readiness observation and grants no activation.
+pub fn observe_prepared_schema_transition_v1<T: MutationAuthorityTransportV1>(
+    prepared: &mut PreparedSchemaObservationV1,
+    authority: &mut PinnedMutationAuthorityV1<T>,
+    clock: &mut dyn MutationClockV1,
+    checkpoint: &mut dyn SchemaObservationCheckpointV1,
+) -> Result<SchemaTransitionObservationResult> {
+    prepared.guard(authority)?;
+    if let Some(receipt) = &prepared.progress.receipt {
+        let observation = authority
+            .verify_historical_schema_transition_observation(receipt, &prepared.progress.request)?;
+        prepared.guard(authority)?;
+        return Ok(SchemaTransitionObservationResult {
+            observe_request: prepared.progress.request.clone(),
+            observation,
+        });
+    }
+    checkpoint.checkpoint("before_observation_rpc")?;
+    prepared.guard(authority)?;
+    let now = prepared.clock(clock)?;
+    prepared.owner.journal["checkedAtMillis"] = json!(now);
+    prepared.save()?;
+    prepared.guard(authority)?;
+    let invoke_at = prepared.clock(clock)?;
+    let observation = authority.observe_schema_transition(&prepared.progress.request, invoke_at)?;
+    checkpoint.checkpoint("after_observation_rpc_before_publication")?;
+    prepared.guard(authority)?;
+    let after = prepared.clock(clock)?;
+    ensure(
+        after >= invoke_at,
+        "autonomous_research_online_schema_transition_clock_regressed",
+    )?;
+    prepared.progress.receipt = Some(observation.value().clone());
+    prepared.owner.journal["checkedAtMillis"] = json!(after);
+    prepared.save()?;
+    checkpoint.checkpoint("after_observation_receipt_publication")?;
+    prepared.guard(authority)?;
+    Ok(SchemaTransitionObservationResult {
+        observe_request: prepared.progress.request.clone(),
+        observation,
+    })
+}
+
+pub struct ResumeSchemaObservationOptionsV1<'a> {
+    pub runtime_root: &'a Path,
+    pub state_database_manifest: &'a Value,
+    pub writer_manifest: &'a Value,
+    pub expected_transition_id: &'a str,
+    pub expected_plan_hash: &'a str,
+    /// Retained independently from both durable progress records.
+    pub expected_finalization_request_hash: &'a str,
+    pub expected_observation_request_hash: &'a str,
+}
+
+/// Reopen only an independently selected v1 finalization and observation intent.
+/// No intent is synthesized and no RPC, fresh clock or database write occurs.
+pub fn resume_schema_transition_observation_v1<T: MutationAuthorityTransportV1>(
+    options: ResumeSchemaObservationOptionsV1<'_>,
+    authority: &PinnedMutationAuthorityV1<T>,
+) -> Result<PreparedSchemaObservationV1> {
+    ensure(
+        crate::sqlite_mutation_coordinator::sha(&json!(options.expected_observation_request_hash)),
+        "autonomous_research_online_schema_transition_observation_pin_invalid",
+    )?;
+    let finalized = resume_schema_transition_finalization_v1(
+        ResumeSchemaFinalizationOptionsV1 {
+            runtime_root: options.runtime_root,
+            state_database_manifest: options.state_database_manifest,
+            writer_manifest: options.writer_manifest,
+            expected_transition_id: options.expected_transition_id,
+            expected_plan_hash: options.expected_plan_hash,
+            expected_request_hash: options.expected_finalization_request_hash,
+        },
+        authority,
+    )?;
+    ensure(
+        finalized.owner.journal["plan"]["version"] == 1,
+        "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
+    )?;
+    let progress = observation_progress(&finalized.owner.journal)?;
+    ensure(
+        progress.request_hash == options.expected_observation_request_hash,
+        "autonomous_research_online_schema_transition_observation_request_changed",
+    )?;
+    let finalization_receipt = finalized.progress.receipt.as_ref().ok_or_else(|| {
+        error("autonomous_research_online_schema_transition_finalization_recovery_required")
+    })?;
+    let finalization = authority.verify_historical_schema_transition_finalization(
+        finalization_receipt,
+        &finalized.progress.request,
+        &finalized.owner.reservation,
+    )?;
+    let prepared = PreparedSchemaObservationV1 {
+        progress,
+        finalization,
+        owner: finalized.owner,
+    };
+    prepared.guard(authority)?;
+    if let Some(receipt) = &prepared.progress.receipt {
+        authority
+            .verify_historical_schema_transition_observation(receipt, &prepared.progress.request)?;
+    }
+    Ok(prepared)
+}
+
+pub struct PublishPreparedSchemaObservationOptionsV1<'a> {
+    pub state_database_manifest: &'a Value,
+    pub writer_manifest: &'a Value,
+    /// Retained outside both progress records; never inferred as authority.
+    pub expected_plan_hash: &'a str,
+    pub expected_previous_final_receipt_sha256: Option<&'a str>,
+}
+
+/// Compose the existing historical audit/publication owner directly from one
+/// verified durable observation. No caller supplies reservation/finalization/
+/// observation JSON. The maintenance lock is released before the publication
+/// owner reacquires it and re-observes all ten databases.
+pub fn publish_prepared_schema_transition_observation_v1<T: MutationAuthorityTransportV1>(
+    prepared: PreparedSchemaObservationV1,
+    authority: &PinnedMutationAuthorityV1<T>,
+    options: PublishPreparedSchemaObservationOptionsV1<'_>,
+    checkpoint: &mut dyn super::publication::SchemaFinalReceiptCheckpointV1,
+) -> Result<super::publication::SchemaFinalReceiptPublicationV1> {
+    ensure(
+        crate::sqlite_mutation_coordinator::sha(&json!(options.expected_plan_hash)),
+        "autonomous_research_online_schema_transition_final_receipt_plan_mismatch",
+    )?;
+    prepared.guard(authority)?;
+    let finalization_progress = progress(&prepared.owner.journal)?;
+    let finalization_receipt = finalization_progress.receipt.as_ref().ok_or_else(|| {
+        error("autonomous_research_online_schema_transition_finalization_recovery_required")
+    })?;
+    let observation_receipt = prepared.progress.receipt.as_ref().ok_or_else(|| {
+        error("autonomous_research_online_schema_transition_observation_recovery_required")
+    })?;
+    authority.verify_historical_schema_transition_observation(
+        observation_receipt,
+        &prepared.progress.request,
+    )?;
+    let runtime_root = prepared
+        .owner
+        .post_state
+        .held_inventory()
+        .runtime_root()
+        .to_owned();
+    let proof = super::publication::prepare_schema_transition_audit_v1(
+        super::publication::SchemaTransitionAuditInputV1 {
+            plan: &prepared.owner.journal["plan"],
+            expected_plan_hash: options.expected_plan_hash,
+            state_database_manifest: options.state_database_manifest,
+            writer_manifest: options.writer_manifest,
+            reserve_request: &prepared.owner.journal["request"],
+            reservation: &prepared.owner.journal["reservation"],
+            finalize_request: &finalization_progress.request,
+            finalization: finalization_receipt,
+            observe_request: &prepared.progress.request,
+            observation: observation_receipt,
+            installations: &prepared.owner.journal["installations"],
+        },
+        prepared.owner.post_state.held_inventory(),
+        authority,
+    )?;
+    prepared.guard(authority)?;
+    drop(prepared);
+    let inventory =
+        observe_state_database_inventory_v1(&runtime_root, options.state_database_manifest)?;
+    let result = super::publication::publish_schema_transition_final_receipt_v1(
+        &proof,
+        &inventory,
+        authority,
+        options.expected_previous_final_receipt_sha256,
+        checkpoint,
+    )?;
+    inventory.assert_current()?;
+    Ok(result)
+}

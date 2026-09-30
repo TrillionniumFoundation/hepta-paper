@@ -143,12 +143,13 @@ struct Signing {
 }
 impl MutationAuthorityTransportV1 for Signing {
     fn invoke(&mut self, request: &Value) -> Result<Value> {
-        let operation =
-            if request["kind"] == "AutonomousResearchOnlineSchemaTransitionFinalizeRequest" {
+        let operation = match request["kind"].as_str() {
+            Some("AutonomousResearchOnlineSchemaTransitionFinalizeRequest") => {
                 "finalize-maintenance"
-            } else {
-                "reserve-maintenance"
-            };
+            }
+            Some("AutonomousResearchOnlineSchemaTransitionObserveRequest") => "observe-maintenance",
+            _ => "reserve-maintenance",
+        };
         let v = self
             .oracle
             .borrow_mut()

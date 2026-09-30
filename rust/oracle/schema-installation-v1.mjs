@@ -150,5 +150,16 @@ function finalizeMaintenance(input) {
  return {receipt:value,accepted:schemaContract.verifyAutonomousResearchOnlineSchemaTransitionFinalization({receipt:value,request:input.request,reservation:authority.lastReceipt,trust:authority.trust,now:new Date(input.request.completedAt),verifySignature:v=>crypto.verify(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(v)),authority.keys.publicKey,Buffer.from(v.signature,'base64'))})};
 }
 
+function observeMaintenance(input) {
+ assertRoot(input.root);const authority=authorities.get(input.root);
+ if(!authority?.lastReceipt)throw new Error('missing_temporary_reservation');
+ authority.observationRequests??=[];
+ authority.observationRequests.push(structuredClone(input.request));
+ const value={...authority.raw.client.observeSchemaTransition({request:input.request,now:new Date(input.request.requestedAt)})};
+ delete value.signature;
+ value.signature=crypto.sign(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(value)),authority.keys.privateKey).toString('base64');
+ return {receipt:value,accepted:schemaContract.verifyAutonomousResearchOnlineSchemaTransitionObservation({receipt:value,request:input.request,trust:authority.trust,now:new Date(input.request.requestedAt),verifySignature:v=>crypto.verify(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(v)),authority.keys.publicKey,Buffer.from(v.signature,'base64'))})};
+}
+
 const rl=readline.createInterface({input:process.stdin,crlfDelay:Infinity});
-for await(const line of rl){try{const input=JSON.parse(line);const value=input.operation==='finalization-requests'?authorities.get(input.root).finalizationRequests??[]:input.operation==='finalize-maintenance'?finalizeMaintenance(input):input.operation==='installation-preview'?installationPreview(input):input.operation==='make-wal'?makeWal(input):input.operation==='normalize-scope'?normalizeScope(input):input.operation==='fixture'?fixture(input):input.operation==='normalize-copy'?normalizeCopy(input):input.operation==='full-fixture'?fullFixture(input):input.operation==='full-plan'?fullPlan(input):input.operation==='reserve-maintenance'?reserveMaintenance(input):projection(input);process.stdout.write(JSON.stringify({ok:true,value,profile:productionOracleProfile()})+'\n');}catch(error){process.stdout.write(JSON.stringify({ok:false,error:error.message,profile:productionOracleProfile()})+'\n');}}
+for await(const line of rl){try{const input=JSON.parse(line);const authority=authorities.get(input.root);const value=input.operation==='observation-requests'?authority?.observationRequests??[]:input.operation==='finalization-requests'?authority?.finalizationRequests??[]:input.operation==='observe-maintenance'?observeMaintenance(input):input.operation==='finalize-maintenance'?finalizeMaintenance(input):input.operation==='installation-preview'?installationPreview(input):input.operation==='make-wal'?makeWal(input):input.operation==='normalize-scope'?normalizeScope(input):input.operation==='fixture'?fixture(input):input.operation==='normalize-copy'?normalizeCopy(input):input.operation==='full-fixture'?fullFixture(input):input.operation==='full-plan'?fullPlan(input):input.operation==='reserve-maintenance'?reserveMaintenance(input):projection(input);process.stdout.write(JSON.stringify({ok:true,value,profile:productionOracleProfile()})+'\n');}catch(error){process.stdout.write(JSON.stringify({ok:false,error:error.message,profile:productionOracleProfile()})+'\n');}}

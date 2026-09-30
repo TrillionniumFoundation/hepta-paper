@@ -165,24 +165,24 @@ fn read_bounded(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 }
 fn default_repository_asset_paths() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
     let manifest_relative = Path::new("paper-core/config/repository-asset-externalization.v1.json");
-    let mut candidates = Vec::new();
-    if let Ok(current) = env::current_dir() {
-        candidates.push(current);
+    // A recognized deployment must keep its own missing/corrupt manifest
+    // failure; falling back to this binary's build checkout masks deployment
+    // damage. An explicit native relocation is likewise authoritative.
+    if let Some(root) = env::var_os("HEPTA_PAPER_WORKSPACE_ROOT").filter(|v| !v.is_empty()) {
+        let root = PathBuf::from(root);
+        return Ok((root.clone(), root.join(manifest_relative)));
     }
-    let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    if let Ok(root) = env::current_dir()
+        && root.join("paper-core/bin").is_dir()
+    {
+        return Ok((root.clone(), root.join(manifest_relative)));
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
-        .map(Path::to_path_buf);
-    if let Some(source_root) = source_root {
-        candidates.push(source_root);
-    }
-    for root in candidates {
-        let manifest = root.join(manifest_relative);
-        if manifest.is_file() {
-            return Ok((root, manifest));
-        }
-    }
-    Err("repository_asset_default_manifest_not_found".into())
+        .map(Path::to_path_buf)
+        .ok_or("repository_asset_default_manifest_not_found")?;
+    Ok((root.clone(), root.join(manifest_relative)))
 }
 
 fn main() {
@@ -423,6 +423,14 @@ fn command_cancellation_flag()
 
 fn command() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
+    let args = match hepta_paper_service::canonical_cli::resolve_canonical_cli_arguments_v1(&args) {
+        Ok(Some(arguments)) => arguments,
+        Ok(None) => args,
+        Err(error) => {
+            eprintln!("{}", serde_json::json!({"error": error}));
+            std::process::exit(2);
+        }
+    };
     if args.as_slice() == ["--help-json"] {
         println!(
             "{}",
@@ -564,21 +572,35 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             println!("{}", serde_json::to_string(&receipt)?);
         }
+        Some(CommandV1::WorkspaceStatus) => {
+            let environment = [
+                "HEPTA_PAPER_WORKSPACE_ROOT",
+                "HEPTA_PAPER_ASSET_ROOT",
+                "HEPTA_PAPER_RUNTIME_ROOT",
+                "PAPER_FACTORY_LEGACY_ROOT",
+            ]
+            .into_iter()
+            .filter_map(|name| env::var(name).ok().map(|value| (name.to_owned(), value)))
+            .collect();
+            let (report, code) = hepta_paper_service::workspace_status::workspace_status_cli_v1(
+                &args[1..],
+                &env::current_dir()?,
+                &environment,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
         Some(CommandV1::RepositoryAssets) => {
-            let (root, manifest_path, flag_start) =
-                if args.get(1).is_none_or(|value| value.starts_with("--")) {
-                    let (root, manifest) = default_repository_asset_paths()?;
-                    (root, manifest, 1)
-                } else if args.len() >= 3 {
-                    (PathBuf::from(&args[1]), PathBuf::from(&args[2]), 3)
-                } else {
-                    return Err("repository_asset_root_and_manifest_required".into());
-                };
-            let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(
-                manifest_path
-                    .to_str()
-                    .ok_or("repository_asset_manifest_path_invalid")?,
-            )?)?;
+            let explicit_paths = if args.get(1).is_none_or(|value| value.starts_with("--")) {
+                None
+            } else if args.len() >= 3 && !args[2].starts_with("--") {
+                Some((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
+            } else {
+                return Err(format!("unexpected_cli_positional:{}", args[1]).into());
+            };
+            let flag_start = if explicit_paths.is_some() { 3 } else { 1 };
             let mut handoff = false;
             let mut require_externalized = false;
             for token in args.iter().skip(flag_start) {
@@ -607,6 +629,15 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 *flag = true;
             }
+            let (root, manifest_path) = match explicit_paths {
+                Some(paths) => paths,
+                None => default_repository_asset_paths()?,
+            };
+            let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(
+                manifest_path
+                    .to_str()
+                    .ok_or("repository_asset_manifest_path_invalid")?,
+            )?)?;
             let inspection = inspect_repository_asset_externalization_v1(&root, &manifest)?;
             let value = if handoff {
                 build_repository_asset_externalization_handoff_v1(&root, &manifest)?
@@ -736,11 +767,18 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             if options.help {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&full_suite_verification_help_json_v1())?
+                    serde_json::to_string_pretty(&full_suite_verification_help_json_v1()?)?
                 );
                 return Ok(());
             }
-            let report = inspect_full_suite_verification_v1(&options)?;
+            let report = if options.preflight {
+                inspect_full_suite_verification_v1(&options)?
+            } else {
+                let cancelled = command_cancellation_flag()?;
+                hepta_paper_service::full_suite_verification::execute_full_suite_verification_v1(
+                    &options, &cancelled,
+                )?
+            };
             if options.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -749,9 +787,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                     report["status"].as_str().unwrap_or("verify_full_blocked")
                 );
             }
-            // This route is an explicit acceptance boundary. Inventory is
-            // useful evidence, but it cannot silently become test parity.
-            std::process::exit(2);
+            if report["ok"] != true {
+                std::process::exit(2);
+            }
         }
         Some(CommandV1::AdvancedNumericalPlugin) if args.len() == 2 => {
             if args[1] == "status" {

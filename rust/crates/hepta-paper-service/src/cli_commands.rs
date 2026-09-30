@@ -31,6 +31,7 @@ commands! {
     AutomationStatus => "automation-status",
     StoreMigrate => "store-migrate",
     RepositoryAssets => "repository-assets",
+    WorkspaceStatus => "workspace-status",
     CommandSurface => "command-surface",
     VerifyArchitecture => "verify-architecture",
     VerifyCritical => "verify-critical",

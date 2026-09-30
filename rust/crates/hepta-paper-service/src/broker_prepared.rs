@@ -68,6 +68,10 @@ pub struct BrokerPreparedSourceV1 {
     /// broker after the campaign sequencer has durably committed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_acknowledgement: Option<BrokerCommitAcknowledgementSourceV2>,
+    /// Installed operation authority publishes exact input and provider prompt
+    /// before dispatch; unknown executions read only the retained publication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_publisher: Option<hepta_codex_broker::ProductCodexOperationPublisherV1>,
 }
 
 /// One public billing-authority key. Private billing keys never enter service configuration.
@@ -179,6 +183,12 @@ pub fn broker_prepared_implementation_hash_v1(
         include_str!("broker_prepared/ack_records.rs"),
         include_str!("worker.rs"),
         include_str!("worker_recovery.rs"),
+        source
+            .operation_publisher
+            .as_ref()
+            .map(|publisher| publisher.implementation_hash())
+            .transpose()
+            .map_err(|_| ServiceError::Configuration)?,
         source,
     ))
     .map_err(|_| ServiceError::Configuration)
@@ -198,6 +208,19 @@ impl BrokerPreparedSourceV1 {
                 })
         {
             return Err(ServiceError::Configuration);
+        }
+        if let Some(publisher) = &self.operation_publisher {
+            publisher
+                .validate()
+                .map_err(|_| ServiceError::Configuration)?;
+            if self.request_signer.is_none()
+                || publisher.authority_uid != self.request_owner_uid
+                || publisher.broker_uid != self.broker_uid
+                || publisher.broker_gid != self.broker_gid
+                || publisher.role != self.role
+            {
+                return Err(ServiceError::Configuration);
+            }
         }
         if let Some(signer) = &self.request_signer {
             signer.validate()?;
@@ -814,6 +837,29 @@ pub(crate) fn consume(
         .checked_add(std::time::Duration::from_millis(source.timeout_ms))
         .ok_or(ServiceError::Execution)?;
     let execution_backend = !matches!(mode, BrokerConsumeModeV1::PreparedOnly);
+    let mut published_input = input.clone();
+    if let Some(publisher) = &source.operation_publisher {
+        if input.prompt_envelope_hash != publisher.prompt_prefix_hash
+            || input.output_schema_hash != publisher.output_schema_hash
+        {
+            return Err(ServiceError::Configuration);
+        }
+        published_input.prompt_envelope_hash =
+            if matches!(mode, BrokerConsumeModeV1::ExecuteOnce) {
+                hepta_codex_broker::product_codex_prompt_hash_v1(publisher, &input.input_manifest)
+            } else {
+                let retained = CapturedRequest::open(source, &execution.attempt_id)?;
+                let resolved = hepta_codex_broker::recover_product_codex_prompt_hash_v1(
+                    publisher,
+                    &retained.request,
+                    &input.input_manifest,
+                );
+                retained.revalidate(source)?;
+                resolved
+            }
+            .map_err(|_| ServiceError::Configuration)?;
+    }
+    let input = &published_input;
     if matches!(mode, BrokerConsumeModeV1::ExecuteOnce)
         && let Some(signer) = &source.request_signer
     {
@@ -839,6 +885,20 @@ pub(crate) fn consume(
         maximum_output_bytes,
         execution_backend,
     )?;
+    if matches!(mode, BrokerConsumeModeV1::ExecuteOnce)
+        && let Some(publisher) = &source.operation_publisher
+    {
+        refresh_current_time()?;
+        hepta_codex_broker::publish_product_codex_operation_v1(
+            publisher,
+            &captured.request,
+            &input.input_manifest,
+            context.current_time_unix_ms.load(Ordering::Acquire),
+        )
+        .map_err(|_| ServiceError::Configuration)?;
+        refresh_current_time()?;
+        captured.revalidate(source)?;
+    }
     let policy = PeerPolicyV1::new([PeerPrincipalV1 {
         uid: source.broker_uid,
         gid: source.broker_gid,

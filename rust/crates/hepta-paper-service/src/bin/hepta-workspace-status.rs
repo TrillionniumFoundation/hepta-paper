@@ -39,7 +39,19 @@ fn main() {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("{error}");
-            std::process::exit(1);
+            std::process::exit(
+                if error.starts_with("unknown_cli_option:")
+                    || error.starts_with("duplicate_cli_option:")
+                    || error.starts_with("boolean_cli_option_does_not_take_value:")
+                    || error.starts_with("unexpected_cli_positional:")
+                    || error == "unexpected_cli_argument_separator"
+                    || error == "empty_cli_option"
+                {
+                    2
+                } else {
+                    1
+                },
+            );
         }
     }
 }

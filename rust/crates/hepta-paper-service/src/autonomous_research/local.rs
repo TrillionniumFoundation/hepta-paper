@@ -39,7 +39,9 @@ fn same_file(a: &Metadata, b: &Metadata) -> bool {
         && a.ctime_nsec() == b.ctime_nsec()
 }
 
-fn read_private_request<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, WorkflowError> {
+pub(super) fn read_private_request<T: serde::de::DeserializeOwned>(
+    path: &Path,
+) -> Result<T, WorkflowError> {
     if !path.is_absolute() || fs::canonicalize(path).ok().as_deref() != Some(path) {
         return Err(WorkflowError::Filesystem);
     }
@@ -74,7 +76,7 @@ fn read_private_request<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T
     serde_json::from_slice(&bytes).map_err(|_| WorkflowError::Definition)
 }
 
-fn now() -> Result<u64, WorkflowError> {
+pub(super) fn now() -> Result<u64, WorkflowError> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| WorkflowError::Conflict)?
@@ -102,6 +104,19 @@ pub(super) fn run(
     options: &AutonomousResearchOptions,
     allow_mutation: bool,
     cancelled: &Arc<AtomicBool>,
+) -> Value {
+    run_definition(options, allow_mutation, cancelled, None, None)
+}
+
+pub(super) fn run_definition(
+    options: &AutonomousResearchOptions,
+    allow_mutation: bool,
+    cancelled: &Arc<AtomicBool>,
+    assembled: Option<LocalWorkflowV1>,
+    campaign_request: Option<(
+        &super::AutonomousResearchCampaignRequestV1,
+        &hepta_codex_protocol::Sha256Digest,
+    )>,
 ) -> Value {
     let campaign = options.campaign_id.clone().or_else(|| {
         options
@@ -185,7 +200,9 @@ pub(super) fn run(
         {
             return Err(WorkflowError::Definition);
         }
-        let definition: LocalWorkflowV1 = if let Some(root) = &options.workflow_root {
+        let mut definition: LocalWorkflowV1 = if let Some(definition) = assembled {
+            definition
+        } else if let Some(root) = &options.workflow_root {
             // Recover the real current definition rather than asking the caller
             // to reconstruct private writer/lease fields from an amendment receipt.
             read_current_local_workflow_v1(root)?
@@ -209,11 +226,11 @@ pub(super) fn run(
         }
         let current_digest =
             canonical_hash_v1(&definition).map_err(|_| WorkflowError::Definition)?;
-        let digest = options
+        let mut digest = options
             .definition_hash
             .clone()
             .unwrap_or(current_digest.clone());
-        let root = &definition.template.state_directory;
+        let root = &definition.template.state_directory.clone();
         if options.action == "amend" {
             let amendment: WorkflowAmendmentV1 = read_private_request(
                 options
@@ -251,7 +268,7 @@ pub(super) fn run(
         {
             return Err(WorkflowError::Definition);
         }
-        let action = match options.action.as_str() {
+        let mut action = match options.action.as_str() {
             "prepare" | "status" => WorkflowActionV1::Status,
             "launch" | "converge" => WorkflowActionV1::Advance { through_steps },
             "pause" => WorkflowActionV1::Pause {
@@ -338,6 +355,28 @@ pub(super) fn run(
             }
             operate_local_workflow_v1(root, &digest, WorkflowActionV1::Status, 0)?;
         }
+        if matches!(action, WorkflowActionV1::Advance { .. })
+            && let Some((request, configured_request_hash)) = campaign_request
+        {
+            if let Some(admission) = &research_admission {
+                admission
+                    .observe_current(observe()?)
+                    .map_err(|_| WorkflowError::Qualification)?;
+            }
+            // Retain the exact ordinary business request as the initial CAS
+            // subject. The existing no-overwrite store detects corrupt aliases;
+            // retrying this deterministic put never grants a dispatch or debit.
+            let bytes = serde_json::to_vec(&super::campaign::request_subject(
+                expected,
+                request,
+                configured_request_hash,
+            ))
+            .map_err(|_| WorkflowError::Definition)?;
+            let stored = crate::ObjectStoreV1::open(root)?.put(&bytes)?;
+            if stored != definition.template.initial_state_hash {
+                return Err(WorkflowError::History);
+            }
+        }
         report["campaignPersisted"] = json!(true);
         if matches!(action, WorkflowActionV1::Advance { .. }) {
             execution_invoked = true;
@@ -363,36 +402,75 @@ pub(super) fn run(
                 report["externalActionMayHaveStarted"] = json!(true);
             }
         }
-        let progress = if let (Some(profile), Some(admission)) =
-            (research_profile.as_ref(), research_admission.as_ref())
-        {
-            let receipt = operate_research_local_workflow_with_clock_and_cancellation_v1(
-                root,
-                &digest,
-                action,
-                profile,
-                admission,
-                &mut || {
-                    observe()
-                        .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
-                },
-                Arc::clone(cancelled),
-            )?;
-            report["researchWorkflow"] =
-                serde_json::to_value(&receipt).map_err(|_| WorkflowError::History)?;
-            report["researchActivation"] = json!(receipt.research_activation);
-            receipt.workflow
-        } else {
-            operate_local_workflow_with_clock_and_cancellation_v1(
-                root,
-                &digest,
-                action,
-                &mut || {
-                    observe()
-                        .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
-                },
-                Arc::clone(cancelled),
-            )?
+        let progress = loop {
+            let result = if let (Some(profile), Some(admission)) =
+                (research_profile.as_ref(), research_admission.as_ref())
+            {
+                let receipt = operate_research_local_workflow_with_clock_and_cancellation_v1(
+                    root,
+                    &digest,
+                    action,
+                    profile,
+                    admission,
+                    &mut || {
+                        observe()
+                            .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+                    },
+                    Arc::clone(cancelled),
+                );
+                receipt.and_then(|receipt| {
+                    report["researchWorkflow"] =
+                        serde_json::to_value(&receipt).map_err(|_| WorkflowError::History)?;
+                    report["researchActivation"] = json!(receipt.research_activation);
+                    Ok(receipt.workflow)
+                })
+            } else {
+                operate_local_workflow_with_clock_and_cancellation_v1(
+                    root,
+                    &digest,
+                    action,
+                    &mut || {
+                        observe()
+                            .map_err(|_| hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+                    },
+                    Arc::clone(cancelled),
+                )
+            };
+            match result {
+                Err(WorkflowError::GateRejected)
+                    if campaign_request.is_some() && options.through_steps.is_none() =>
+                {
+                    let (request, _) = campaign_request.ok_or(WorkflowError::Definition)?;
+                    let progress =
+                        operate_local_workflow_v1(root, &digest, WorkflowActionV1::Status, 0)?;
+                    let amendment = super::campaign::revision(request, &definition, &progress)?;
+                    if let Some(admission) = &research_admission {
+                        admission
+                            .observe_current(observe()?)
+                            .map_err(|_| WorkflowError::Qualification)?;
+                    }
+                    let receipt =
+                        amend_local_workflow_with_clock_v1(root, &digest, amendment, &mut || {
+                            let observed = observe().map_err(|_| {
+                                hepta_control_plane::ControlPlaneError::PersistenceInvalid
+                            })?;
+                            if let Some(admission) = &research_admission {
+                                admission.observe_current(observed).map_err(|_| {
+                                    hepta_control_plane::ControlPlaneError::PersistenceInvalid
+                                })?;
+                            }
+                            Ok(observed)
+                        })?;
+                    digest = receipt.definition_hash;
+                    definition = read_current_local_workflow_v1(root)?;
+                    action = WorkflowActionV1::Advance {
+                        through_steps: definition.steps.len(),
+                    };
+                    report["definitionHash"] = json!(digest);
+                    report["totalSteps"] = json!(definition.steps.len());
+                }
+                other => break other?,
+            }
         };
         report["workflow"] = serde_json::to_value(progress).map_err(|_| WorkflowError::History)?;
         report["status"] = json!("local_workflow_operation_completed");

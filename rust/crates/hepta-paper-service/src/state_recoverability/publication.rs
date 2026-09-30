@@ -261,7 +261,7 @@ pub(super) fn nonce() -> Result<String> {
 /// bytes on conflict. Cooperating writers serialize with a private exclusive
 /// kernel lock. The lock pathname is persistent; process death releases the
 /// kernel lock, so a crash cannot strand an empty ownership marker.
-pub(super) fn publish_receipt(
+pub(crate) fn publish_receipt(
     directory: &Directory,
     name: &str,
     receipt: &Value,
@@ -274,7 +274,7 @@ pub(super) fn publish_receipt(
 /// Publish selected deterministic JSON bytes through the same lock/CAS owner.
 /// Parsed bytes must equal the supplied receipt, so wire ordering cannot change
 /// the record's meaning or bypass the existing path and conflict checks.
-pub(super) fn publish_receipt_bytes(
+pub(crate) fn publish_receipt_bytes(
     directory: &Directory,
     name: &str,
     receipt: &Value,

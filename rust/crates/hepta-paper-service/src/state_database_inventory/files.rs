@@ -10,7 +10,7 @@ use std::{
     },
     path::{Component, PathBuf},
 };
-pub(super) const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+pub(crate) const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
 pub(super) fn identity(stat: &Metadata) -> Value {
     json!({"device":stat.dev().to_string(),"inode":stat.ino().to_string(),"mode":stat.mode().to_string(),"links":stat.nlink().to_string(),"bytes":stat.len().to_string(),"modifiedNs":(i128::from(stat.mtime())*1_000_000_000+i128::from(stat.mtime_nsec())).to_string(),"changedNs":(i128::from(stat.ctime())*1_000_000_000+i128::from(stat.ctime_nsec())).to_string()})

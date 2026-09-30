@@ -165,6 +165,13 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
     pub(crate) fn verification_key(&self) -> &VerifyingKey {
         &self.public_key
     }
+    /// Public historical payload signature only. No receipt or maintenance
+    /// capability is minted; the versioned historical consumer must separately
+    /// validate the complete subject, grammar, times and cross-record lineage.
+    pub(crate) fn verify_historical_public_signature_v1(&self, value: &Value) -> Result<bool> {
+        self.current()?;
+        Ok(self.signature(value))
+    }
     /// Names of retained public inputs, for avoiding output collisions. These
     /// names carry no filesystem-publication or service-maintenance authority.
     pub(crate) fn retained_configuration_paths(&self) -> [&Path; 2] {
@@ -206,54 +213,7 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
         }
     }
     fn signature(&self, receipt: &Value) -> bool {
-        let Some(encoded) = receipt["signature"].as_str() else {
-            return false;
-        };
-        // Node permits missing padding, but forbids whitespace, URL-safe alphabet,
-        // junk and more than two trailing '=' via its pre-decoding signature regex.
-        let raw = encoded.trim_end_matches('=');
-        let padding = encoded.len() - raw.len();
-        if raw.is_empty()
-            || padding > 2
-            || !raw
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
-        {
-            return false;
-        }
-        // Buffer.from(..., 'base64') ignores unused low bits of the final
-        // sextet. A 64-byte Ed25519 signature always has 86 data characters.
-        if raw.len() != 86 {
-            return false;
-        }
-        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let Some(last) = raw
-            .as_bytes()
-            .last()
-            .and_then(|last| ALPHABET.iter().position(|v| v == last))
-        else {
-            return false;
-        };
-        let mut normalized = raw.as_bytes().to_vec();
-        if let Some(slot) = normalized.last_mut() {
-            *slot = ALPHABET[last & 0b110000];
-        }
-        normalized.extend_from_slice(b"==");
-        let Ok(normalized) = std::str::from_utf8(&normalized) else {
-            return false;
-        };
-        let Ok(bytes) = Base64::decode_vec(normalized) else {
-            return false;
-        };
-        let Ok(signature) = Signature::from_slice(&bytes) else {
-            return false;
-        };
-        let Ok(payload) = online_mutation_signed_payload_v1(receipt) else {
-            return false;
-        };
-        self.public_key
-            .verify_strict(payload.as_bytes(), &signature)
-            .is_ok()
+        verify_public_payload_signature_v1(receipt, &self.public_key)
     }
     fn checked(
         &self,
@@ -498,4 +458,59 @@ pub(crate) fn verified_for_test(value: serde_json::Value) -> VerifiedMutationRec
         value,
         verifier_identity: String::new(),
     }
+}
+
+/// Public-key-only historical payload verification; no authority token is produced.
+pub(crate) fn verify_public_payload_signature_v1(
+    receipt: &Value,
+    public_key: &VerifyingKey,
+) -> bool {
+    let Some(encoded) = receipt["signature"].as_str() else {
+        return false;
+    };
+    // Node permits missing padding, but forbids whitespace, URL-safe alphabet,
+    // junk and more than two trailing '=' via its pre-decoding signature regex.
+    let raw = encoded.trim_end_matches('=');
+    let padding = encoded.len() - raw.len();
+    if raw.is_empty()
+        || padding > 2
+        || !raw
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+    {
+        return false;
+    }
+    // Buffer.from(..., 'base64') ignores unused low bits of the final
+    // sextet. A 64-byte Ed25519 signature always has 86 data characters.
+    if raw.len() != 86 {
+        return false;
+    }
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let Some(last) = raw
+        .as_bytes()
+        .last()
+        .and_then(|last| ALPHABET.iter().position(|v| v == last))
+    else {
+        return false;
+    };
+    let mut normalized = raw.as_bytes().to_vec();
+    if let Some(slot) = normalized.last_mut() {
+        *slot = ALPHABET[last & 0b110000];
+    }
+    normalized.extend_from_slice(b"==");
+    let Ok(normalized) = std::str::from_utf8(&normalized) else {
+        return false;
+    };
+    let Ok(bytes) = Base64::decode_vec(normalized) else {
+        return false;
+    };
+    let Ok(signature) = Signature::from_slice(&bytes) else {
+        return false;
+    };
+    let Ok(payload) = online_mutation_signed_payload_v1(receipt) else {
+        return false;
+    };
+    public_key
+        .verify_strict(payload.as_bytes(), &signature)
+        .is_ok()
 }

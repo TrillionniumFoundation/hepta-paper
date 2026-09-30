@@ -204,6 +204,21 @@ pub fn prepare_schema_target_configuration_restart_v2<T: MutationAuthorityTransp
     source_authority: &PinnedMutationAuthorityV1<T>,
     clock: &mut dyn MutationClockV1,
 ) -> Result<PreparedSchemaTargetRestartV2> {
+    prepare_schema_target_configuration_restart_with_selection_v2(
+        finalized,
+        source_authority,
+        clock,
+        &mut |_, _, _| Ok(()),
+    )
+}
+pub(crate) fn prepare_schema_target_configuration_restart_with_selection_v2<
+    T: MutationAuthorityTransportV1,
+>(
+    finalized: PreparedSchemaFinalizationV1,
+    source_authority: &PinnedMutationAuthorityV1<T>,
+    clock: &mut dyn MutationClockV1,
+    select: &mut dyn FnMut(&Value, &str, i64) -> Result<()>,
+) -> Result<PreparedSchemaTargetRestartV2> {
     ensure(
         finalized.owner.journal["plan"]["version"] == 2,
         "autonomous_research_pristine_schema_rebind_v2_required",
@@ -262,6 +277,7 @@ pub fn prepare_schema_target_configuration_restart_v2<T: MutationAuthorityTransp
         owner: finalized.owner,
     };
     prepared.owner.journal["checkedAtMillis"] = json!(now);
+    select(prepared.request(), prepared.request_hash(), now)?;
     prepared.save()?;
     prepared.source_guard(source_authority)?;
     Ok(prepared)
@@ -351,6 +367,22 @@ pub fn resume_schema_target_configuration_restart_v2<T: MutationAuthorityTranspo
     options: ResumeSchemaTargetRestartOptionsV2<'_>,
     source_authority: &PinnedMutationAuthorityV1<T>,
 ) -> Result<PreparedSchemaTargetRestartV2> {
+    resume_restart_impl(options, source_authority, None)
+}
+pub(crate) fn resume_schema_target_configuration_restart_from_selected_request_v2<
+    T: MutationAuthorityTransportV1,
+>(
+    options: ResumeSchemaTargetRestartOptionsV2<'_>,
+    selected_request: &Value,
+    source_authority: &PinnedMutationAuthorityV1<T>,
+) -> Result<PreparedSchemaTargetRestartV2> {
+    resume_restart_impl(options, source_authority, Some(selected_request))
+}
+fn resume_restart_impl<T: MutationAuthorityTransportV1>(
+    options: ResumeSchemaTargetRestartOptionsV2<'_>,
+    source_authority: &PinnedMutationAuthorityV1<T>,
+    selected_request: Option<&Value>,
+) -> Result<PreparedSchemaTargetRestartV2> {
     ensure(
         crate::sqlite_mutation_coordinator::sha(&json!(
             options.expected_target_observation_request_hash
@@ -372,7 +404,40 @@ pub fn resume_schema_target_configuration_restart_v2<T: MutationAuthorityTranspo
         finalized.owner.journal["plan"]["version"] == 2,
         "autonomous_research_pristine_schema_rebind_v2_required",
     )?;
-    let progress = restart_progress(&finalized.owner.journal)?;
+    let missing = finalized
+        .owner
+        .journal
+        .get("targetRestartObservationProgress")
+        .is_none();
+    let progress = if missing {
+        let request = selected_request.ok_or_else(invalid)?;
+        TargetRestartObservationProgressV2 {
+            version: 2,
+            source_authority_configuration_hash:
+                finalized.owner.journal["authorityConfigurationHash"]
+                    .as_str()
+                    .ok_or_else(invalid)?
+                    .to_owned(),
+            target_authority_configuration_hash: finalized
+                .progress
+                .receipt
+                .as_ref()
+                .and_then(|receipt| receipt["targetAuthorityConfigurationHash"].as_str())
+                .ok_or_else(invalid)?
+                .to_owned(),
+            request: request.clone(),
+            request_hash: observation_request_hash(request)?,
+            receipt: None,
+        }
+    } else {
+        restart_progress(&finalized.owner.journal)?
+    };
+    if let Some(selected) = selected_request {
+        ensure(
+            *selected == progress.request,
+            "autonomous_research_pristine_schema_rebind_restart_request_changed",
+        )?;
+    }
     ensure(
         progress.request_hash == options.expected_target_observation_request_hash,
         "autonomous_research_pristine_schema_rebind_restart_request_changed",
@@ -385,12 +450,27 @@ pub fn resume_schema_target_configuration_restart_v2<T: MutationAuthorityTranspo
         &finalized.progress.request,
         &finalized.owner.reservation,
     )?;
-    let prepared = PreparedSchemaTargetRestartV2 {
+    if missing {
+        crate::sqlite_mutation_coordinator::contracts::schema_transition::assert_schema_transition_observe_request_v1(&progress.request,source_authority.trust())?;
+        ensure(
+            timestamp(&progress.request["requestedAt"]).is_some_and(|now| {
+                now >= int(&finalized.owner.journal, "checkedAtMillis").unwrap_or(i64::MAX)
+            }),
+            &invalid().code,
+        )?;
+    }
+    let mut prepared = PreparedSchemaTargetRestartV2 {
         progress,
         finalization,
         owner: finalized.owner,
     };
     prepared.source_guard(source_authority)?;
+    if missing {
+        prepared.owner.journal["checkedAtMillis"] =
+            json!(timestamp(&prepared.progress.request["requestedAt"]).ok_or_else(invalid)?);
+        prepared.save()?;
+        prepared.source_guard(source_authority)?;
+    }
     Ok(prepared)
 }
 

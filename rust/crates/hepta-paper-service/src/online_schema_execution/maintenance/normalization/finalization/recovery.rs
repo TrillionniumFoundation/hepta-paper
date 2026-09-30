@@ -1,7 +1,8 @@
 //! V1 finalization request/receipt recovery through the existing normalization
 //! journal and root maintenance owner. No second journal, writer or activation.
-//! A caller retains the request hash independently before dispatch; recovery
-//! cannot create a missing intent, choose another timestamp or repeat SQL work.
+//! A caller retains the request independently before dispatch. Public hash-only
+//! recovery cannot create missing intent; installed recovery can reconstitute
+//! only its separately retained original request, without a new time or SQL work.
 use super::super::installation::{
     FinalizationHandoff, InstalledSchemaMaintenanceV1, verify_finalization_post_state,
 };
@@ -139,6 +140,25 @@ pub fn prepare_schema_transition_finalization_v1<T: MutationAuthorityTransportV1
     authority: &PinnedMutationAuthorityV1<T>,
     clock: &mut dyn MutationClockV1,
 ) -> Result<PreparedSchemaFinalizationV1> {
+    prepare_schema_transition_finalization_with_selection_v1(
+        installed,
+        authority,
+        clock,
+        &mut |_, _, _| Ok(()),
+    )
+}
+
+/// Installed composition records this exact validated request in its independent
+/// root intent before publishing kernel progress. Failure keeps the original
+/// installation owner and produces no RPC or new reservation.
+pub(crate) fn prepare_schema_transition_finalization_with_selection_v1<
+    T: MutationAuthorityTransportV1,
+>(
+    installed: InstalledSchemaMaintenanceV1,
+    authority: &PinnedMutationAuthorityV1<T>,
+    clock: &mut dyn MutationClockV1,
+    select: &mut dyn FnMut(&Value, &str, i64) -> Result<()>,
+) -> Result<PreparedSchemaFinalizationV1> {
     let mut owner = installed.into_finalization(authority, clock)?;
     ensure(
         owner.journal.get("finalizationProgress").is_none(),
@@ -183,6 +203,7 @@ pub fn prepare_schema_transition_finalization_v1<T: MutationAuthorityTransportV1
     };
     owner.journal["checkedAtMillis"] = json!(now);
     let mut prepared = PreparedSchemaFinalizationV1 { progress, owner };
+    select(prepared.request(), prepared.request_hash(), now)?;
     prepared.save()?;
     prepared.guard(authority)?;
     Ok(prepared)
@@ -270,6 +291,26 @@ pub fn resume_schema_transition_finalization_v1<T: MutationAuthorityTransportV1>
     options: ResumeSchemaFinalizationOptionsV1<'_>,
     authority: &PinnedMutationAuthorityV1<T>,
 ) -> Result<PreparedSchemaFinalizationV1> {
+    resume_finalization_impl(options, authority, None)
+}
+
+/// Reconstitute only an exact request already retained outside kernel progress.
+/// The completed SQL post-state and signed reservation are reverified; this
+/// never substitutes a new completion time or renews an expired lease.
+pub(crate) fn resume_schema_transition_finalization_from_selected_request_v1<
+    T: MutationAuthorityTransportV1,
+>(
+    options: ResumeSchemaFinalizationOptionsV1<'_>,
+    selected_request: &Value,
+    authority: &PinnedMutationAuthorityV1<T>,
+) -> Result<PreparedSchemaFinalizationV1> {
+    resume_finalization_impl(options, authority, Some(selected_request))
+}
+fn resume_finalization_impl<T: MutationAuthorityTransportV1>(
+    options: ResumeSchemaFinalizationOptionsV1<'_>,
+    authority: &PinnedMutationAuthorityV1<T>,
+    selected_request: Option<&Value>,
+) -> Result<PreparedSchemaFinalizationV1> {
     for pin in [
         options.expected_transition_id,
         options.expected_plan_hash,
@@ -307,7 +348,24 @@ pub fn resume_schema_transition_finalization_v1<T: MutationAuthorityTransportV1>
         [json!(1), json!(2)].contains(&journal["plan"]["version"]),
         "autonomous_research_online_schema_transition_finalization_progress_invalid",
     )?;
-    let progress = progress(&journal)?;
+    let missing = journal.get("finalizationProgress").is_none();
+    let progress = if missing {
+        let request = selected_request.ok_or_else(invalid)?;
+        FinalizationProgress {
+            version: 1,
+            request: request.clone(),
+            request_hash: request_hash(request)?,
+            receipt: None,
+        }
+    } else {
+        progress(&journal)?
+    };
+    if let Some(selected) = selected_request {
+        ensure(
+            *selected == progress.request,
+            "autonomous_research_online_schema_transition_finalization_request_changed",
+        )?;
+    }
     ensure(
         progress.request_hash == options.expected_request_hash,
         "autonomous_research_online_schema_transition_finalization_request_changed",
@@ -335,7 +393,17 @@ pub fn resume_schema_transition_finalization_v1<T: MutationAuthorityTransportV1>
         None,
     )?;
     verify_finalization_post_state(&lock, &journal, &reservation, post_state.held_inventory())?;
-    let prepared = PreparedSchemaFinalizationV1 {
+    if missing {
+        crate::sqlite_mutation_coordinator::contracts::schema_transition::assert_schema_transition_finalize_request_v1(&progress.request,reservation.value())?;
+        let completed = timestamp(&progress.request["completedAt"]).ok_or_else(invalid)?;
+        ensure(
+            completed >= int(&journal, "checkedAtMillis")?
+                && completed >= timestamp(&reservation.value()["issuedAt"]).ok_or_else(invalid)?
+                && completed < timestamp(&reservation.value()["expiresAt"]).ok_or_else(invalid)?,
+            &invalid().code,
+        )?;
+    }
+    let mut prepared = PreparedSchemaFinalizationV1 {
         progress,
         owner: FinalizationHandoff {
             journal,
@@ -346,6 +414,12 @@ pub fn resume_schema_transition_finalization_v1<T: MutationAuthorityTransportV1>
         },
     };
     prepared.guard(authority)?;
+    if missing {
+        prepared.owner.journal["checkedAtMillis"] =
+            json!(timestamp(&prepared.progress.request["completedAt"]).ok_or_else(invalid)?);
+        prepared.save()?;
+        prepared.guard(authority)?;
+    }
     if let Some(receipt) = &prepared.progress.receipt {
         authority.verify_historical_schema_transition_finalization(
             receipt,
@@ -504,6 +578,21 @@ pub fn prepare_schema_transition_observation_v1<T: MutationAuthorityTransportV1>
     authority: &PinnedMutationAuthorityV1<T>,
     clock: &mut dyn MutationClockV1,
 ) -> Result<PreparedSchemaObservationV1> {
+    prepare_schema_transition_observation_with_selection_v1(
+        finalized,
+        authority,
+        clock,
+        &mut |_, _, _| Ok(()),
+    )
+}
+pub(crate) fn prepare_schema_transition_observation_with_selection_v1<
+    T: MutationAuthorityTransportV1,
+>(
+    finalized: PreparedSchemaFinalizationV1,
+    authority: &PinnedMutationAuthorityV1<T>,
+    clock: &mut dyn MutationClockV1,
+    select: &mut dyn FnMut(&Value, &str, i64) -> Result<()>,
+) -> Result<PreparedSchemaObservationV1> {
     ensure(
         finalized.owner.journal["plan"]["version"] == 1,
         "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
@@ -546,6 +635,7 @@ pub fn prepare_schema_transition_observation_v1<T: MutationAuthorityTransportV1>
         owner: finalized.owner,
     };
     prepared.owner.journal["checkedAtMillis"] = json!(now);
+    select(prepared.request(), prepared.request_hash(), now)?;
     prepared.save()?;
     prepared.guard(authority)?;
     Ok(prepared)
@@ -623,6 +713,22 @@ pub fn resume_schema_transition_observation_v1<T: MutationAuthorityTransportV1>(
     options: ResumeSchemaObservationOptionsV1<'_>,
     authority: &PinnedMutationAuthorityV1<T>,
 ) -> Result<PreparedSchemaObservationV1> {
+    resume_observation_impl(options, authority, None)
+}
+pub(crate) fn resume_schema_transition_observation_from_selected_request_v1<
+    T: MutationAuthorityTransportV1,
+>(
+    options: ResumeSchemaObservationOptionsV1<'_>,
+    selected_request: &Value,
+    authority: &PinnedMutationAuthorityV1<T>,
+) -> Result<PreparedSchemaObservationV1> {
+    resume_observation_impl(options, authority, Some(selected_request))
+}
+fn resume_observation_impl<T: MutationAuthorityTransportV1>(
+    options: ResumeSchemaObservationOptionsV1<'_>,
+    authority: &PinnedMutationAuthorityV1<T>,
+    selected_request: Option<&Value>,
+) -> Result<PreparedSchemaObservationV1> {
     ensure(
         crate::sqlite_mutation_coordinator::sha(&json!(options.expected_observation_request_hash)),
         "autonomous_research_online_schema_transition_observation_pin_invalid",
@@ -642,7 +748,24 @@ pub fn resume_schema_transition_observation_v1<T: MutationAuthorityTransportV1>(
         finalized.owner.journal["plan"]["version"] == 1,
         "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
     )?;
-    let progress = observation_progress(&finalized.owner.journal)?;
+    let missing = finalized.owner.journal.get("observationProgress").is_none();
+    let progress = if missing {
+        let request = selected_request.ok_or_else(observation_invalid)?;
+        ObservationProgress {
+            version: 1,
+            request: request.clone(),
+            request_hash: observation_request_hash(request)?,
+            receipt: None,
+        }
+    } else {
+        observation_progress(&finalized.owner.journal)?
+    };
+    if let Some(selected) = selected_request {
+        ensure(
+            *selected == progress.request,
+            "autonomous_research_online_schema_transition_observation_request_changed",
+        )?;
+    }
     ensure(
         progress.request_hash == options.expected_observation_request_hash,
         "autonomous_research_online_schema_transition_observation_request_changed",
@@ -655,12 +778,28 @@ pub fn resume_schema_transition_observation_v1<T: MutationAuthorityTransportV1>(
         &finalized.progress.request,
         &finalized.owner.reservation,
     )?;
-    let prepared = PreparedSchemaObservationV1 {
+    if missing {
+        crate::sqlite_mutation_coordinator::contracts::schema_transition::assert_schema_transition_observe_request_v1(&progress.request,authority.trust())?;
+        ensure(
+            timestamp(&progress.request["requestedAt"]).is_some_and(|now| {
+                now >= int(&finalized.owner.journal, "checkedAtMillis").unwrap_or(i64::MAX)
+            }),
+            &observation_invalid().code,
+        )?;
+    }
+    let mut prepared = PreparedSchemaObservationV1 {
         progress,
         finalization,
         owner: finalized.owner,
     };
     prepared.guard(authority)?;
+    if missing {
+        prepared.owner.journal["checkedAtMillis"] = json!(
+            timestamp(&prepared.progress.request["requestedAt"]).ok_or_else(observation_invalid)?
+        );
+        prepared.save()?;
+        prepared.guard(authority)?;
+    }
     if let Some(receipt) = &prepared.progress.receipt {
         authority
             .verify_historical_schema_transition_observation(receipt, &prepared.progress.request)?;
@@ -739,3 +878,6 @@ pub fn publish_prepared_schema_transition_observation_v1<T: MutationAuthorityTra
     inventory.assert_current()?;
     Ok(result)
 }
+
+#[cfg(test)]
+mod selected_request_tests;

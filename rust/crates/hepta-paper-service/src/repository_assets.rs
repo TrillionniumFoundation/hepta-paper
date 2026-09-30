@@ -464,7 +464,8 @@ fn inspect_asset(root: &Path, asset: &Value) -> Result<Value, RepositoryAssetErr
                         Err(_) => blockers.push("repository_asset_identity_unreadable".into()),
                     }
                 }
-                _ => blockers.push("repository_asset_identity_not_regular_file".into()),
+                Ok(_) => blockers.push("repository_asset_identity_not_regular_file".into()),
+                Err(_) => blockers.push("repository_asset_identity_unreadable".into()),
             }
         }
     }

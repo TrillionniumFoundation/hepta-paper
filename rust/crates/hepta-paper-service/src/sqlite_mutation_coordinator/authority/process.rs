@@ -104,6 +104,14 @@ impl ProcessMutationAuthorityTransportV1 {
         self.authority_configuration.assert_current()?;
         self.command.assert_current()
     }
+    /// Read-only reference to the independently pinned public verifier input.
+    /// The process owner must remain held; this accessor invokes no command.
+    pub(crate) fn public_configuration_pin(&self) -> (&Path, &str) {
+        (
+            &self.authority_configuration_path,
+            &self.authority_configuration_pin,
+        )
+    }
 
     /// Necessary native-command checks against the actual retained executable.
     /// Expected identity must come from a separately verified, closed adapter

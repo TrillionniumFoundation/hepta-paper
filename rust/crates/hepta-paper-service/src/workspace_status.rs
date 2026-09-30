@@ -318,8 +318,8 @@ pub fn inspect_workspace_status_v1(
 }
 
 /// Relocatable native command root: explicit flag, then nonempty deployment
-/// environment, then the process working directory. Incumbent unknown options
-/// remain ignored; only the added workspace-root option consumes a value.
+/// environment, then the compiled deployment root. Validate the ordinary
+/// route's arguments before inspecting any filesystem state.
 pub fn workspace_status_cli_v1(
     argv: &[String],
     working_directory: &Path,
@@ -327,7 +327,21 @@ pub fn workspace_status_cli_v1(
 ) -> Result<(WorkspaceStatusV1, i32), String> {
     let mut args = argv.iter();
     let mut explicit = None;
+    let mut require_decoupled = false;
     while let Some(arg) = args.next() {
+        if arg == "--" {
+            return Err("unexpected_cli_argument_separator".into());
+        }
+        if arg == "--require-decoupled" {
+            if require_decoupled {
+                return Err("duplicate_cli_option:--require-decoupled".into());
+            }
+            require_decoupled = true;
+            continue;
+        }
+        if arg.starts_with("--require-decoupled=") {
+            return Err("boolean_cli_option_does_not_take_value:--require-decoupled".into());
+        }
         let value = if arg == "--workspace-root" {
             Some(
                 args.next()
@@ -342,6 +356,14 @@ pub fn workspace_status_cli_v1(
                 return Err("workspace_status_workspace_root_invalid".into());
             }
             explicit = Some(value);
+        } else if let Some(raw) = arg.strip_prefix("--") {
+            let key = raw.split('=').next().unwrap_or_default();
+            if key.is_empty() {
+                return Err("empty_cli_option".into());
+            }
+            return Err(format!("unknown_cli_option:--{key}"));
+        } else {
+            return Err(format!("unexpected_cli_positional:{arg}"));
         }
     }
     // The incumbent `paper-core/bin/workspace-status.mjs` resolves its
@@ -354,11 +376,10 @@ pub fn workspace_status_cli_v1(
         .map(PathBuf::from)
         .unwrap_or(compiled_workspace_root);
     let report = inspect_workspace_status_v1(&root, working_directory, environment)?;
-    let code =
-        if argv.iter().any(|a| a == "--require-decoupled") && !report.layout.physically_decoupled {
-            2
-        } else {
-            0
-        };
+    let code = if require_decoupled && !report.layout.physically_decoupled {
+        2
+    } else {
+        0
+    };
     Ok((report, code))
 }

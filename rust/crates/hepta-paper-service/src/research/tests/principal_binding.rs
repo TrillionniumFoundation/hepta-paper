@@ -21,6 +21,7 @@ fn broker_configuration(temp: &Temp, prepared_only: bool) -> ResearchServiceRunV
         )
     };
     let source = BrokerPreparedSourceV1 {
+        operation_publisher: None,
         socket_path: temp.0.join("broker.sock"),
         broker_uid: 1001,
         broker_gid: 2001,

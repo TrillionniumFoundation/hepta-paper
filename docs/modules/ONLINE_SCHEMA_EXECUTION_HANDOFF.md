@@ -5,15 +5,16 @@ normalization/target-schema projection, complete registered-scope v1/v2 local
 planning, signed maintenance reservation, ten-database installation with
 durable progress/recovery, durable v1 finalization/observation, and the v2
 target-configuration observation/final-receipt boundary. The ordinary native
-CLI exposes the read-only pristine-review/predecessor verifier and planner. It is
-not the complete installed execute/recovery CLI, a service-manager restart owner,
-a production canary or independent deployment qualification.
+CLI exposes read-only pristine review/planning and independently pinned installed
+execute/recovery. The installed composition uses the existing kernels and a
+separate physical service-manager owner. Source implementation is distinct from
+actual target-host canary, rollback and independent deployment qualification.
 
 The native module is exposed as `online_schema_execution`; its actual source observer is crate-private `state_database_inventory::schema_source`. The public types retain real source and signature evidence rather than accepting a serialized readiness claim.
 
 ## Source and native entry points
 
-Original behavior comes from `paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs`: source path/identity, stable identity hashing, journal preimage hashing, `expectedNormalizedSourceSha256`, private journal normalization and expected target-schema projection. The later maintenance and installation sources are `autonomous-research-online-schema-transition-journal-normalization.mjs` and `autonomous-research-online-schema-transition-installation.mjs`. The all-scope signed reservation, live local writes, durable progress/recovery, finalization post-state checks and the v2 target-authority observation protocol are implemented. The source path deliberately does not stop or start a service; independently qualified service-manager control, complete CLI modes and installed acceptance remain open.
+Original behavior comes from `paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs`: source path/identity, stable identity hashing, journal preimage hashing, `expectedNormalizedSourceSha256`, private journal normalization and expected target-schema projection. The later maintenance and installation sources are `autonomous-research-online-schema-transition-journal-normalization.mjs` and `autonomous-research-online-schema-transition-installation.mjs`. The all-scope signed reservation, live local writes, durable progress/recovery, finalization post-state checks and the v2 target-authority observation protocol are implemented. The source projection/planner does not control services. Installed execution borrows a separately observed root profile and completes actual fixed-unit stop/restart operations before entering the relevant kernel scopes; independently qualified installed acceptance remains separate.
 
 `online_schema_execution::observe_schema_transition_source_v1(runtime_root, relative_path, role, applied_at)` returns `ObservedSchemaTransitionSourceV1` only after actual filesystem and SQLite operations. All fields are private; `.value()` exposes diagnostic/hash data and `.assert_current()` rechecks the captured physical sources. There is no Deserialize, claim constructor, ready flag, public arbitrary callback, or public live database connection.
 
@@ -165,14 +166,66 @@ configuration or journal hash, and substituted target writer/scope/key fail
 before source planning. V1 retains its original current-configuration equality;
 neither CLI profile silently adopts a historical configuration from the journal.
 
-`--action execute` still requires the original two confirmation fields before
-reporting `native_execute_requires_installed_owner`, and fails before reading
-runtime or authority inputs. It cannot invoke the existing live executor from
-this entry. The library now retains the signed reservation and exact v2 target
-observation across an externally owned restart, then publishes the historical
-FINAL receipt only after the target authority signs activation. Installing that
-composition behind the ordinary entry, service-manager stop/start, canary,
-rollback and independently accepted old-Node-writer fencing remain separate work.
+Before a v2 reservation, installed execution first performs the stopped-source
+authority bootstrap. The installed Node 0.21 protocol only implements the v1
+schema request family and cannot issue v2 pristine-rebind receipts. The fixed
+authority unit is therefore stopped under its independent persistent condition,
+its complete DB/WAL/SHM/journal preimage is retained, and the existing read-only
+signed-history owner builds the native journal under the exact source
+configuration. The root publisher installs that image without replacing an
+unknown file, then starts the separately pinned native daemon with the source
+configuration. Only then does the existing v2 reserve/normalize/install/finalize
+kernel run. The later target restart changes to the signed target configuration;
+it does not repeat the legacy journal conversion. A lost start reply queries
+the exact running native command instead of launching another daemon.
+
+Historical Node initial genesis retains its exact eight-field instance and
+six-field installation signature domains. The versioned public verifier checks
+those original signed bytes and complete SQL heads; it never translates them
+into a newly signed current genesis. Pending native rebind rows remain pending
+until the existing target-daemon activation owner validates and activates them.
+Source and target drop-ins cannot silently rewind a selected target on retry.
+The authority stop condition is durable before publishing either command, and
+the four business-writer barriers remain held throughout bootstrap and target
+activation. Source conversion and target switching use the same physical
+publisher and service-manager owner.
+
+`--action execute` and `--action recover` require `--execute`, the original
+`--transition-id`, `--expected-plan-hash`, `--planned-at`, and an independently
+pinned `--installed-maintenance-profile`/SHA-256 pair. The real and effective UID
+must both be root. The closed profile names the four fixed business writer
+units, exact fragment/drop-in/executable/argument/input hashes, service
+principals and the source/target authority handoff. It grants schema maintenance
+only. The native authority executable is separately pinned as actual ELF bytes;
+its command, configuration and effective manager properties are verified.
+
+`installed_owner::execution` composes reserve, normalization, installation,
+finalization, target restart, signed observation and the original final-receipt
+publisher. Root-owned persistent conditions live under the independent
+`/var/lib/hepta-paper-maintenance/schema-v1` hierarchy. Every ancestor excludes
+non-root renames and each new directory entry is synced before SQL effects.
+Typed stop jobs, authenticated PID-1 manager ownership and actual recursive
+cgroup-v2 population establish physical quiescence. D-Bus readers close before
+kernel scopes; continued checks use only retained profile/barrier/boot/pidfd and
+cgroup facts. Errors and process death retain barriers.
+
+The authority has a separate persistent stop barrier while its legacy journal
+is preserved and published through the existing public-key history, backup and
+native image builders. Actual original DB/WAL/SHM/journal bytes, rowids and raw
+signed records remain retained. Durable intent plus no-replace rename/publication
+lets recovery query completed steps; it cannot overwrite an unknown file or
+renew an old lease. Only verified publication releases the authority stop marker.
+An exact already-running native target is observed after a lost reply rather
+than restarted again. All four business writer barriers remain in place after
+schema publication; canary, rollback, writer activation and accepted Node
+retirement require their separate current-subject evidence.
+
+The control predecessor is archived as the complete verified historical
+namespace before a fresh root-owned control is created. Versioned incumbent
+wire validation remains a historical observation path and never grants current
+reservation or writer authority. Multiple retained generations form a verified
+signed chain to an independently pinned endpoint, with each archive consumed
+once; filename timestamps do not choose a history.
 
 The CLI cases in `tests/schema_source_projection_parity/cli.rs`,
 `tests/finalization_publication.rs`, and the finalization-recovery shard exercise
@@ -182,8 +235,8 @@ unresolved control-state refusal, late observation drift and process death.
 They reuse the original ten-database fixtures; no local test supplies installed
 credentials or claims independent live authority.
 
-## Next execution work
+## Execution and installed acceptance
 
 The local full-scope planner and signed reservation are implemented. The live executor consumes these opaque objects and preserves their subject, source/root pins and fresh lease checks throughout every filesystem and SQLite write; passing a caller Boolean or a detached serialized receipt is insufficient.
 
-The [journal normalization stage](SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md) and [schema genesis installation](SCHEMA_GENESIS_INSTALLATION_HANDOFF.md) now implement actual ten-database normalization, signed genesis/metadata installation, identity-bound stale-SHM handling, live signed-lease checks, durable per-instance progress and recovery across process death. Recovery compares complete expected and actual SQLite state, recognizes an already-installed target only through current schema, pinned file identity and sidecar checks, and validates `1 <= commitSafetyMarginMs < requiredExecutionWindowMs` like Node. The [finalization and observation contract](SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md) owns current post-state, durable v1 recovery, and the v2 source-to-target authority handoff. V2 persists the exact target observation before service control is handed out, retries only that request after an unknown reply, and publishes the existing no-clobber `FINAL.json` from exact verified Node-wire bytes after the target authority signs activation. Ordinary installed execution, the actual service-manager restart, canary/rollback and independent deployment qualification remain open; neither historical receipt replay/publication nor these local primitives grants release, submission or Node retirement.
+The [journal normalization stage](SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md) and [schema genesis installation](SCHEMA_GENESIS_INSTALLATION_HANDOFF.md) now implement actual ten-database normalization, signed genesis/metadata installation, identity-bound stale-SHM handling, live signed-lease checks, durable per-instance progress and recovery across process death. Recovery compares complete expected and actual SQLite state, recognizes an already-installed target only through current schema, pinned file identity and sidecar checks, and validates `1 <= commitSafetyMarginMs < requiredExecutionWindowMs` like Node. The [finalization and observation contract](SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md) owns current post-state, durable v1 recovery, and the v2 source-to-target authority handoff. V2 persists the exact target observation before service control is handed out, retries only that request after an unknown reply, and publishes the existing no-clobber `FINAL.json` from exact verified Node-wire bytes after the target authority signs activation. The installed owner above supplies ordinary execution and physical service control. Actual host canary/rollback, independently qualified custody/roles and Node retirement remain separate acceptance work; historical receipt replay/publication grants no release or submission authority.

@@ -40,11 +40,16 @@ rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml \
   --test workspace_status_parity -- --nocapture
 ```
 
-Current focused result: **4 passed, 0 failed**.
+Execution results belong to the current source-evidence receipt; this contract
+does not carry a reusable test count.
 
 ## Boundary
 
 The command is diagnostic only. It does not provision roots, mutate stores, or
 authorize runtime activation. Rust accepts UTF-8 paths and environment values;
 non-UTF-8 Unix path bytes are outside this JSON command contract and are not
-claimed as Node parity. Independent command acceptance remains separate work.
+claimed as Node parity. The normal adapter is `hepta-paper-rust operator workspace [-- FLAGS]`.
+It accepts the registered boolean grammar before layout I/O; flat native root
+overrides do not expand that ordinary route. Complete current-subject command
+acceptance comes from the independent consumer described in the
+[migration ledger contract](../migration/NODE_RUST_MIGRATION.md).

@@ -1,8 +1,9 @@
 # Native local state authority implementation
 
-Status: source implementation and local contract tests; production installation,
-independent acceptance, existing Node journal migration and Node retirement remain
-open. This support daemon is a separate principal and executable in the intended
+Status: source implementation, local contract tests and installed maintenance
+composition. Actual production installation, independent acceptance and Node
+retirement remain open. Existing Node journal conversion is implemented under
+the separate stopped-authority owner; source implementation is not host acceptance. This support daemon is a separate principal and executable in the intended
 deployment. Adding it to `hepta-paper-service` does not increase the authority
 ceiling of the control-plane module or prove that deployment separation exists.
 
@@ -238,17 +239,21 @@ held main-database transaction, compares the entire Node six-table/twelve-object
 schema against a memory-only reference, checks column/index metadata and actual
 `quick_check`, and returns a schema-only report. Unsafe constraint/schema settings
 and bounded-output violations are rejected without changing caller settings,
-rows or transaction ownership. The source descriptor is never reopened or cloned.
-This schema hash covers no row history or WAL and cannot authorize migration.
+rows or transaction ownership. It has closed six-table and historical 0.21
+five-table profiles; an unknown schema is refused. The source descriptor is
+never reopened or cloned. This schema hash covers no row history or WAL and
+cannot authorize migration.
 
 The [bounded signed-history owner](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/history/HANDOFF.md)
 now composes that structural inspection with actual public-key/configuration pins,
 deterministic initial and activated-rebind genesis reconstruction, complete settled
 mutation replay and comparison against SQL metadata and all ten heads. It requires
-no private key and changes no source data. Pending operations, all backup rows and
-histories beyond its explicit resource profile are refused. This observation has
-no service-stop, archive, conversion, publication or migration capability; those
-execution and installation gaps remain open.
+no private key and changes no source data. Settled signed backup history has its
+own complete replay owner. A separate finalized-pending profile accepts only the
+exact retained v2 request selected by the maintenance kernel, preserving pending
+rows for the target daemon to activate. Unknown pending operations and histories
+beyond the resource profile are refused. This observation alone has no
+service-stop or live publication capability.
 
 The same pinned owner can now produce a
 [detached native SQLite image](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/offline_image/HANDOFF.md)
@@ -278,8 +283,14 @@ the same no-replace and committed/unknown failure semantics as native export.
 This separate offline bundle supplies no live source CAS, restore permission
 or migration authority. The
 [maintenance-owner design](../../rust/crates/hepta-paper-service/src/local_state_authority/migration/MAINTENANCE_OWNER_DESIGN.md)
-documents the separately required persistent manager barrier and installation
-binding; it does not implement or activate that barrier.
+describes the required physical boundary. The concrete
+[installed schema execution owner](ONLINE_SCHEMA_EXECUTION_HANDOFF.md) implements
+the separate root barrier, fixed-unit stop, complete raw-family preimage and
+no-replace journal publication. It bootstraps the native source authority before
+requesting v2, then uses the existing finalized-pending activation during the
+signed target restart. Offline exports remain separate and grant no live
+migration capability. Actual target-host recovery and retirement require fresh
+installed evidence.
 
 The [schema wire adapter](../../rust/crates/hepta-paper-service/src/local_state_authority/server/wire/HANDOFF.md)
 preserves original JSON member order for semantically identical `instances` and

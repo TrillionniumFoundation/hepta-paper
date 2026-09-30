@@ -136,11 +136,12 @@ readiness receipt. V2 uses the durable target-configuration observation owner
 above; no source-config receipt, manager report or caller Boolean substitutes for
 the target authority's signed observation.
 
-The ordinary schema execute CLI still requires the installed owner. These are
-source-level continuations of the existing installation/finalization owners, not
-an alternate product launcher. The actual installed service-manager transaction,
-writer transfer, canary, rollback, old-Node-writer fencing and independent
-acceptance remain open.
+The ordinary schema execute/recovery CLI now composes these continuations through
+the separately pinned [installed owner](ONLINE_SCHEMA_EXECUTION_HANDOFF.md).
+The finalization kernel supplies the original target observation; the physical
+manager owner supplies stop/restart and retained barriers. Writer activation,
+canary, rollback, old-Node-writer retirement and independent host acceptance
+remain separate from publishing a historical final receipt.
 
 ## Executable verification
 

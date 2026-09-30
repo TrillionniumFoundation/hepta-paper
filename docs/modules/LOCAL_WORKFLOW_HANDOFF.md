@@ -263,8 +263,37 @@ local source mappings are not accepted full Node operator semantics.
 
 ## Autonomous research command composition
 
-The existing `hepta-paper-rust autonomous-research` command now accepts an
-explicit `--workflow-file ABSOLUTE_JSON_PATH` in `local-run` mode. The file is
+The ordinary business entry accepts `--paper-id`, an optional `--campaign-id`,
+`--runtime-root` and a lifecycle `--action`. It reads the private, versioned
+`autonomous-research-request.v1.json` under that runtime root. The request supplies
+the objective, independent author/reviewer role endpoints and resource/cost
+limits, review rubric, revision instructions/round bound, total budget/wall bound
+and optional expected research profile. It supplies no workflow, frontier,
+completion or accepted-review claim. `autonomous_research::campaign` derives the
+existing workflow/policy/registry/frontier and reuses its service/CAS/sequencer.
+A rejected independent review causes a bounded ordinary amendment and another
+author/reviewer pair; accepted review closes the campaign. Every role result
+still needs actual signed cost settlement and commit-bound ACK.
+
+First-use `--objective` and `--revision-rounds` select the effective business
+request. The immutable initial CAS subject binds that request and the original
+configuration hash separately. Reopening verifies the existing owner/history and
+retained CAS bytes, so callers need not repeat those overrides. An explicit
+replacement, changed configuration, missing/corrupt initial request or expanded
+budget refuses instead of silently selecting a new plan. Status/replay preserve
+committed results; unknown provider results query the original issued request.
+
+Each role may carry an installed `operationPublisher` policy. The core authority
+publishes the actual protected input, prompt, output schema, original signed
+request and finally the bound descriptor in the role's operation directory.
+Publication is private, identity checked and no-clobber. Recovery retains original
+bytes/hashes and does not adopt rotated live prompt inputs or reissue execution.
+The reviewer mutation policy is read-only; author/reviewer workspace/policy hashes
+remain distinct. A qualified research profile requires both installed publishers
+and independently admitted principals. These business inputs and cross-UID
+fixtures grant no scientific, installed, release or submission acceptance.
+
+The separately supported explicit workflow mode accepts an `--workflow-file ABSOLUTE_JSON_PATH` in `local-run` mode. The file is
 a closed `LocalWorkflowV1`, not another plan, ledger or provider authorization.
 `--campaign-id` must match its template; a supplied `--paper-id` must also match
 `autonomous-research:<paper-id>`. Files are bounded to 16 MiB, private, current-UID,

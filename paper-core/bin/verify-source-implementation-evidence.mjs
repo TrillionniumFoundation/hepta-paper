@@ -384,7 +384,12 @@ export function validateCommand(command, label, testPaths) {
       && workdir === '.';
     if (!allowed) fail('node_command_not_allowlisted', label);
   } else if (command.program === 'cargo') {
-    const args = command.args;
+    // A selected ignored recovery fixture must actually run. This one closed
+    // suffix retains the same exact owner/discovery and one-passed/zero-ignored
+    // transcript policy; it never accepts package-wide or skipped execution.
+    const args = command.args.at(-2) === '--ignored'
+      ? command.args.filter((_argument, index) => index !== command.args.length - 2)
+      : command.args;
     const integrationTarget = command.expectedTargets.length === 1
       ? scopedCargoTestTarget(command.expectedTargets[0])
       : null;

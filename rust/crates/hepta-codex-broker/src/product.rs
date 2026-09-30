@@ -38,6 +38,13 @@ use std::{
 };
 use thiserror::Error;
 
+mod publisher;
+pub use publisher::{
+    ProductCodexOperationPublisherV1, inspect_product_codex_operation_prompt_v1,
+    product_codex_prompt_hash_v1, publish_product_codex_operation_v1,
+    recover_product_codex_prompt_hash_v1,
+};
+
 const MAXIMUM_DESCRIPTOR_BYTES: u64 = 1024 * 1024;
 const MAXIMUM_PROMPT_BYTES: u64 = 8 * 1024 * 1024;
 const MAXIMUM_INPUT_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;

@@ -1,0 +1,457 @@
+// Independent local behavior acceptance. Incoming JSON never grants acceptance:
+// the consumer rebuilds the current Rust owners and replays the ordinary CLIs.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { COMMAND_REGISTRY_ROUTES } from '../../paper-core/src/command-registry-routes.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const hash = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
+const canonical = value => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
+const digest = value => hash(JSON.stringify(canonical(value)));
+const verified = new WeakSet();
+const authority = Object.freeze({ productionActivation: false, targetHostQualification: false,
+  releaseAuthority: false, submissionAuthority: false, writerCutover: false, nodeRetirement: false });
+const environmentKeys = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'USER', 'TMPDIR', 'CARGO_HOME',
+  'CARGO_TARGET_DIR', 'RUSTFLAGS', 'RUSTUP_HOME', 'CARGO_TERM_COLOR'];
+const safeEnvironment = () => Object.fromEntries(environmentKeys.filter(key => typeof process.env[key] === 'string')
+  .map(key => [key, process.env[key]]));
+function run(program, args, options = {}) {
+  const output = spawnSync(program, args, { cwd: ROOT, env: safeEnvironment(), encoding: 'utf8',
+    shell: false, timeout: 600_000, maxBuffer: 16 * 1024 * 1024, ...options });
+  if (output.error) throw output.error;
+  return output;
+}
+function git(args) {
+  const result = run('git', args);
+  if (result.status !== 0) throw new Error(`route_acceptance_git_failed:${result.stderr}`);
+  return result.stdout.trim();
+}
+function sourceSubject() {
+  return { commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']),
+    committedClean: git(['status', '--porcelain=v1', '--untracked-files=all']) === '' };
+}
+function freeze(value) {
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach(freeze);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+const workspaceProfiles = ['present', 'missing', 'relative', 'overlap', 'workspace-overlap',
+  'symlink-missing', 'symlink-cycle', 'symlink-hop-limit', 'file-parent', 'utf8-paths'];
+const assetProfiles = ['pending', 'ready', 'identity-drift', 'identity-missing', 'identity-symlink',
+  'source-symlink', 'invalid-version', 'duplicate-id', 'manifest-missing', 'manifest-malformed', 'utf8-paths'];
+const grammar = flags => [
+  { id: 'unknown', argv: ['--unknown'], error: 'unknown_cli_option:--unknown' },
+  { id: 'help-unsupported', argv: ['--help'], error: 'unknown_cli_option:--help' },
+  { id: 'positional', argv: ['unexpected'], error: 'unexpected_cli_positional:unexpected' },
+  { id: 'multiple-positionals', argv: ['first', 'second'], error: 'unexpected_cli_positional:first' },
+  { id: 'legal-flag-then-positional', argv: [`--${flags[0]}`, 'unexpected'], error: 'unexpected_cli_positional:unexpected' },
+  { id: 'single-dash', argv: ['-'], error: 'unexpected_cli_positional:-' },
+  { id: 'separator', argv: ['--'], error: 'unexpected_cli_argument_separator' },
+  { id: 'empty-option', argv: ['--=x'], error: 'empty_cli_option' },
+  { id: 'missing-route-separator', argv: [`--${flags[0]}`], omitSeparator: true, error: 'command_arguments_require_separator' },
+  ...flags.flatMap(flag => [
+    { id: `inline-${flag}`, argv: [`--${flag}=true`], error: `boolean_cli_option_does_not_take_value:--${flag}` },
+    { id: `inline-false-${flag}`, argv: [`--${flag}=false`], error: `boolean_cli_option_does_not_take_value:--${flag}` },
+    { id: `inline-empty-${flag}`, argv: [`--${flag}=`], error: `boolean_cli_option_does_not_take_value:--${flag}` },
+    { id: `duplicate-${flag}`, argv: [`--${flag}`, `--${flag}`], error: `duplicate_cli_option:--${flag}` },
+  ]),
+];
+const contracts = [
+  { routeId: 'operator/workspace', binary: 'hepta-paper-rust', nativePrefix: ['operator', 'workspace'],
+    flags: ['require-decoupled'], profiles: workspaceProfiles, modes: [[], ['--require-decoupled']] },
+  { routeId: 'verify/repository-assets', binary: 'hepta-paper-rust', nativePrefix: ['verify', 'repository-assets'],
+    flags: ['handoff', 'require-externalized'], profiles: assetProfiles,
+    modes: [[], ['--handoff'], ['--require-externalized'], ['--handoff', '--require-externalized'],
+      ['--require-externalized', '--handoff']] },
+].map(contract => ({ ...contract, strategy: 'semantic-readonly-utf8-v1',
+  normalization: 'fixture-and-workspace-path-prefixes-only-v1',
+  inputRefusal: 'same-error-category-and-exit-2',
+  recovery: 'SIGTERM-and-SIGKILL-at-an-unknown-process-execution-point-then-fresh-retry',
+  grammar: grammar(contract.flags) }));
+export const ROUTE_ACCEPTANCE_CONTRACTS_V1 = freeze(contracts);
+
+export function routeAcceptanceRequirementsV1(routes = COMMAND_REGISTRY_ROUTES) {
+  return routes.map(route => {
+    const id = `${route.group}/${route.name}`;
+    const contract = contracts.find(value => value.routeId === id);
+    const argumentContract = structuredClone({ nodeArgv: route.argv, forwardingPolicy: route.forwardingPolicy,
+      forwardedArgumentSchema: route.forwardedArgumentSchema, unsupportedModes: route.unsupportedModes,
+      mutability: route.mutability, effects: route.effects });
+    if (contract && (route.mutability !== 'read-only'
+      || route.forwardedArgumentSchema?.positional !== false
+      || (route.forwardedArgumentSchema?.valueFlags?.length || 0) !== 0
+      || JSON.stringify([...route.forwardedArgumentSchema.booleanFlags].sort()) !== JSON.stringify([...contract.flags].sort())
+      || route.effects.localMutation !== 'read-only'
+      || Object.entries(route.effects).some(([key, effect]) => key !== 'localMutation' && effect !== 'none'))) {
+      throw new Error(`route_acceptance_contract_drift:${id}`);
+    }
+    return { routeId: id, argumentContract, argumentContractSha256: digest(argumentContract),
+      behaviorContractSha256: contract ? digest(contract) : null,
+      remaining: contract ? ['normal-argument-and-data-matrix', 'input-refusal-before-effects',
+        'process-death-unknown-result-and-retry', 'independent-current-subject-replay']
+        : ['complete-argument-value-domain', 'ordinary-product-effect-and-recovery-matrix',
+          'independent-current-subject-replay'] };
+  }).sort((left, right) => left.routeId.localeCompare(right.routeId));
+}
+
+function normalize(value, fixture) {
+  if (typeof value === 'string') {
+    const relativeFixture = path.relative(ROOT, fixture);
+    const relative = value === relativeFixture || value.startsWith(`${relativeFixture}${path.sep}`)
+      ? value.replace(relativeFixture, '$FIXTURE_RELATIVE_TO_WORKSPACE') : value;
+    return relative.replaceAll(fixture, '$FIXTURE').replaceAll(ROOT, '$WORKSPACE');
+  }
+  if (Array.isArray(value)) return value.map(item => normalize(item, fixture));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
+    .map(([key, item]) => [key, normalize(item, fixture)]));
+  return value;
+}
+function inventory(root, identities) {
+  const rows = [];
+  function visit(relative) {
+    const full = path.join(root, relative);
+    const stat = fs.lstatSync(full, { bigint: true });
+    const row = { path: relative, mode: String(stat.mode), kind: stat.isSymbolicLink() ? 'symlink'
+      : stat.isDirectory() ? 'directory' : 'file' };
+    if (identities) Object.assign(row, { dev: String(stat.dev), ino: String(stat.ino),
+      nlink: String(stat.nlink), size: String(stat.size), mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
+    if (stat.isSymbolicLink()) row.target = normalize(fs.readlinkSync(full), root);
+    else if (stat.isFile()) row.contentSha256 = hash(fs.readFileSync(full));
+    rows.push(row);
+    if (stat.isDirectory()) for (const name of fs.readdirSync(full).sort()) visit(path.join(relative, name));
+  }
+  visit('');
+  return digest(rows);
+}
+function write(file, bytes) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); }
+function assetFixture(fixture, profile) {
+  const deployed = path.join(fixture, 'deployment');
+  for (const file of ['hepta-paper.mjs', 'repository-asset-status.mjs']) {
+    write(path.join(deployed, 'paper-core/bin', file), fs.readFileSync(path.join(ROOT, 'paper-core/bin', file)));
+  }
+  fs.symlinkSync(path.join(ROOT, 'paper-core/src'), path.join(deployed, 'paper-core/src'));
+  fs.symlinkSync(path.join(ROOT, 'paper-composition'), path.join(deployed, 'paper-composition'));
+  fs.mkdirSync(path.join(deployed, 'paper-core/config'), { recursive: true });
+  const identity = Buffer.from('independent ordinary CLI asset fixture\n');
+  write(path.join(deployed, 'asset/identity.txt'), identity);
+  const asset = { assetId: 'fixture', sourcePath: 'asset', identityFile: 'asset/identity.txt',
+    expectedIdentitySha256: hash(identity), currentStorage: 'repository', targetStorage: 'immutable-registry',
+    requiredExternalReferenceKind: 'content-addressed-artifact', retentionPolicy: 'retain-reference',
+    migrationStatus: 'pending-external-registry-reference' };
+  if (profile === 'utf8-paths') {
+    fs.renameSync(path.join(deployed, 'asset'), path.join(deployed, '资产'));
+    fs.renameSync(path.join(deployed, '资产/identity.txt'), path.join(deployed, '资产/身份.txt'));
+    Object.assign(asset, { assetId: '资产-fixture', sourcePath: '资产', identityFile: '资产/身份.txt' });
+  }
+  if (profile === 'ready') {
+    asset.migrationStatus = 'externalized';
+    const receipt = { version: 1, kind: 'RepositoryAssetExternalRestoreDrillReceipt',
+      status: 'repository_asset_external_restore_verified', assetId: asset.assetId,
+      externalReferenceDigest: hash('controlled fixture reference'), restoredIdentitySha256: asset.expectedIdentitySha256,
+      verifiedAt: '2026-01-01T00:00:00.000Z' };
+    receipt.repositoryAssetExternalRestoreDrillReceiptHash = hashRecord('RepositoryAssetExternalRestoreDrillReceipt', receipt);
+    asset.externalReference = { kind: asset.requiredExternalReferenceKind, location: 'cas://controlled-fixture',
+      digest: receipt.externalReferenceDigest, restoreDrillReceipt: receipt };
+  }
+  if (profile === 'identity-drift') write(path.join(deployed, 'asset/identity.txt'), 'changed\n');
+  if (profile === 'identity-missing') fs.unlinkSync(path.join(deployed, 'asset/identity.txt'));
+  if (profile === 'identity-symlink') {
+    write(path.join(deployed, 'original-identity'), identity);
+    fs.unlinkSync(path.join(deployed, 'asset/identity.txt'));
+    fs.symlinkSync('../original-identity', path.join(deployed, 'asset/identity.txt'));
+  }
+  if (profile === 'source-symlink') {
+    fs.renameSync(path.join(deployed, 'asset'), path.join(deployed, 'real-asset'));
+    fs.symlinkSync('real-asset', path.join(deployed, 'asset'));
+  }
+  const manifest = { version: profile === 'invalid-version' ? 2 : 1,
+    kind: 'RepositoryAssetExternalizationManifest', assets: profile === 'duplicate-id' ? [asset, asset] : [asset] };
+  const manifestPath = path.join(deployed, 'paper-core/config/repository-asset-externalization.v1.json');
+  if (profile !== 'manifest-missing') write(manifestPath, profile === 'manifest-malformed' ? '{not JSON' : JSON.stringify(manifest));
+  return { cwd: deployed, environment: {}, node: [path.join(deployed, 'paper-core/bin/hepta-paper.mjs'), 'verify', 'repository-assets'] };
+}
+function workspaceFixture(fixture, profile) {
+  const environment = { HEPTA_PAPER_ASSET_ROOT: path.join(fixture, 'asset'),
+    HEPTA_PAPER_RUNTIME_ROOT: path.join(fixture, 'runtime'), PAPER_FACTORY_LEGACY_ROOT: path.join(fixture, 'legacy') };
+  if (profile !== 'missing') for (const name of ['asset', 'runtime', 'legacy']) fs.mkdirSync(path.join(fixture, name));
+  if (profile === 'present') write(path.join(fixture, 'runtime/hepta-paper.sqlite'), 'read-only presence marker');
+  if (profile === 'relative') for (const key of Object.keys(environment)) environment[key] = path.relative(ROOT, environment[key]);
+  if (profile === 'utf8-paths') {
+    for (const [key, name] of [['HEPTA_PAPER_ASSET_ROOT', '资产'], ['HEPTA_PAPER_RUNTIME_ROOT', '运行'],
+      ['PAPER_FACTORY_LEGACY_ROOT', '旧目录']]) {
+      environment[key] = path.join(fixture, name); fs.mkdirSync(environment[key]);
+    }
+  }
+  if (profile === 'overlap') environment.HEPTA_PAPER_RUNTIME_ROOT = path.join(fixture, 'asset/nested');
+  if (profile === 'workspace-overlap') environment.HEPTA_PAPER_ASSET_ROOT = ROOT;
+  if (profile === 'symlink-missing') {
+    fs.symlinkSync('asset', path.join(fixture, 'link'));
+    environment.HEPTA_PAPER_ASSET_ROOT = path.join(fixture, 'link/missing/../suffix');
+  }
+  if (profile === 'symlink-cycle') {
+    fs.symlinkSync('cycle', path.join(fixture, 'cycle'));
+    environment.HEPTA_PAPER_ASSET_ROOT = path.join(fixture, 'cycle');
+  }
+  if (profile === 'symlink-hop-limit') {
+    for (let index = 0; index < 42; index += 1) fs.symlinkSync(`hop${index + 1}`, path.join(fixture, `hop${index}`));
+    environment.HEPTA_PAPER_ASSET_ROOT = path.join(fixture, 'hop0');
+  }
+  if (profile === 'file-parent') {
+    write(path.join(fixture, 'regular-file'), 'not a directory');
+    environment.HEPTA_PAPER_ASSET_ROOT = path.join(fixture, 'regular-file/child');
+  }
+  return { cwd: ROOT, environment, node: [path.join(ROOT, 'paper-core/bin/hepta-paper.mjs'), 'operator', 'workspace'] };
+}
+function describeCase(contract) {
+  return [
+    ...contract.profiles.flatMap(profile => contract.modes.map((argv, index) => ({
+      id: `${profile}/mode-${index}`, profile, argv, kind: 'normal' }))),
+    ...contract.grammar.flatMap(row => [false, true].map(missing => ({ id: `refuse/${row.id}/${missing ? 'missing-input' : 'present-input'}`,
+      profile: contract.routeId === 'operator/workspace' ? missing ? 'missing' : 'present' : missing ? 'manifest-missing' : 'pending',
+      argv: row.argv, omitSeparator: row.omitSeparator === true, kind: 'grammar', expectedError: row.error }))),
+    { id: 'default-without-forwarding-separator', profile: contract.routeId === 'operator/workspace' ? 'present' : 'pending',
+      argv: [], omitSeparator: true, kind: 'normal' },
+    ...['SIGTERM', 'SIGKILL'].map(signal => ({ id: `unknown-result/${signal}/fresh-retry`,
+      profile: contract.routeId === 'operator/workspace' ? 'present' : 'pending', argv: [], kind: 'death', signal })),
+  ];
+}
+function diagnostic(output, fixture) {
+  if (output.signal) return { outcome: 'unknown-result', signal: output.signal, exitCode: null, stdout: null };
+  if (output.stdout.trim()) return { outcome: 'report', exitCode: output.status,
+    stdout: normalize(JSON.parse(output.stdout), fixture), diagnostic: output.stderr.trim() ? normalize(output.stderr.trim(), fixture) : null };
+  let error;
+  try { error = JSON.parse(output.stderr).error; } catch { /* Native diagnostics are plain text. */ }
+  error ??= /(?:unknown_cli_option|boolean_cli_option_does_not_take_value|duplicate_cli_option|unexpected_cli_positional):[^\s"']+|unexpected_cli_argument_separator|command_arguments_require_separator|empty_cli_option|repository_asset_externalization_handoff_blocked:[^\s"']+/.exec(output.stderr)?.[0];
+  if (!error && /ENOENT|No such file or directory/.test(output.stderr)) error = 'input-unreadable';
+  if (!error && /SyntaxError|key must be a string|expected value|expected ident|EOF while parsing/.test(output.stderr)) error = 'input-json-invalid';
+  if (!error) throw new Error(`route_acceptance_unclassified_diagnostic:${normalize(output.stderr, fixture)}`);
+  return { outcome: 'refusal', exitCode: output.status, error: normalize(error, fixture), stdout: null };
+}
+async function killed(program, args, options, signal) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(program, args, { ...options, detached: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    let stdout = '', stderr = '';
+    const timeout = setTimeout(() => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') reject(error); }
+      reject(new Error('route_acceptance_owned_process_did_not_terminate'));
+    }, 30_000);
+    child.stdout.on('data', data => { stdout += data; }); child.stderr.on('data', data => { stderr += data; });
+    child.once('error', error => { clearTimeout(timeout); reject(error); });
+    child.once('spawn', () => {
+      try {
+        // We know the real executable was spawned; its execution point is
+        // deliberately unknown. Own the complete Node wrapper process group.
+        process.kill(-child.pid, 'SIGSTOP'); process.kill(-child.pid, signal);
+        if (signal !== 'SIGKILL') process.kill(-child.pid, 'SIGCONT');
+      } catch (error) { if (error.code !== 'ESRCH') { clearTimeout(timeout); reject(error); } }
+    });
+    child.once('close', (status, observedSignal) => {
+      clearTimeout(timeout); resolve({ status, signal: observedSignal, stdout, stderr });
+    });
+  });
+}
+function compatible(node, native, testCase) {
+  if (testCase.kind === 'grammar') return node.outcome === 'refusal' && native.outcome === 'refusal'
+    && node.error === testCase.expectedError && native.error === node.error
+    && node.exitCode === 2 && native.exitCode === 2;
+  return JSON.stringify(canonical(node)) === JSON.stringify(canonical(native));
+}
+function expectedBehavior(contract, testCase, result) {
+  if (testCase.kind === 'grammar') return result.outcome === 'refusal' && result.error === testCase.expectedError;
+  if (contract.routeId === 'operator/workspace') {
+    const decoupled = !['overlap', 'workspace-overlap', 'symlink-cycle', 'symlink-hop-limit', 'file-parent'].includes(testCase.profile);
+    const expectedCode = testCase.argv.includes('--require-decoupled') && !decoupled ? 2 : 0;
+    return result.outcome === 'report' && result.exitCode === expectedCode
+      && result.stdout.version === 1 && result.stdout.kind === 'HeptaPaperWorkspaceLayout'
+      && result.stdout.workspaceRoot === '$WORKSPACE' && result.stdout.workspacePresent === true
+      && result.stdout.physicallyDecoupled === decoupled
+      && result.stdout.legacyCatalogRuntimeScanAllowed === false
+      && result.stdout.nativeStorePresent === (testCase.profile === 'present')
+      && result.stdout.status === (decoupled ? 'hepta_workspace_physically_decoupled' : 'hepta_workspace_paths_overlap');
+  }
+  if (['manifest-missing', 'manifest-malformed'].includes(testCase.profile)) {
+    return result.outcome === 'refusal' && result.exitCode === 1
+      && result.error === (testCase.profile === 'manifest-missing' ? 'input-unreadable' : 'input-json-invalid');
+  }
+  const pending = ['pending', 'utf8-paths'].includes(testCase.profile);
+  const blocked = !['ready', 'pending', 'utf8-paths'].includes(testCase.profile);
+  const handoff = testCase.argv.includes('--handoff');
+  if (blocked && handoff) return result.outcome === 'refusal' && result.exitCode === 1
+    && result.error.startsWith('repository_asset_externalization_handoff_blocked:');
+  const inspection = handoff ? result.stdout?.currentInspection : result.stdout;
+  const expectedCode = blocked || (pending && testCase.argv.includes('--require-externalized')) ? 1 : 0;
+  return result.outcome === 'report' && result.exitCode === expectedCode
+    && inspection?.version === 1 && inspection?.kind === 'RepositoryAssetExternalizationInspection'
+    && inspection.repositoryBoundaryReady === !blocked
+    && inspection.fullyExternalized === (testCase.profile === 'ready')
+    && inspection.status === (blocked ? 'repository_asset_boundary_blocked' : pending
+      ? 'repository_asset_boundary_ready_externalization_pending' : 'repository_assets_externalized')
+    && (!handoff || result.stdout.kind === 'RepositoryAssetExternalizationHandoff');
+}
+function buildNativeOwners() {
+  if (process.version !== 'v22.23.1') throw new Error('route_acceptance_node_runtime_unqualified');
+  const version = run('cargo', ['--version']);
+  if (version.status !== 0 || !/^cargo 1\.98\.0\b/.test(version.stdout)) throw new Error('route_acceptance_cargo_runtime_unqualified');
+  const target = process.env.CARGO_TARGET_DIR || path.join(os.tmpdir(), 'hepta-route-acceptance-target');
+  if (target === ROOT || target.startsWith(`${ROOT}${path.sep}`)) throw new Error('route_acceptance_build_cache_must_be_outside_checkout');
+  const args = ['build', '--manifest-path', path.join(ROOT, 'rust/Cargo.toml'), '--locked', '-p', 'hepta-paper-service',
+    ...[...new Set(contracts.map(row => row.binary))].flatMap(binary => ['--bin', binary]), '--message-format=json'];
+  const output = run('cargo', args, { env: { ...safeEnvironment(), CARGO_TARGET_DIR: target } });
+  if (output.status !== 0) throw new Error(`route_acceptance_native_build_failed:${output.stderr}`);
+  const owners = {};
+  for (const line of output.stdout.split('\n').filter(Boolean)) {
+    const row = JSON.parse(line);
+    if (row.reason === 'compiler-artifact' && contracts.some(contract => contract.binary === row.target.name) && row.executable) {
+      const binary = fs.realpathSync(row.executable);
+      if (!fs.readFileSync(binary).subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) throw new Error('route_acceptance_native_owner_not_elf');
+      owners[row.target.name] = { path: binary, sha256: hash(fs.readFileSync(binary)) };
+    }
+  }
+  if (contracts.some(contract => !owners[contract.binary])) throw new Error('route_acceptance_native_owner_missing');
+  return { owners, node: { version: process.version, sha256: hash(fs.readFileSync(process.execPath)) },
+    cargoVersion: version.stdout.trim(), buildArgs: args.map(value => normalize(value, 'unused-fixture')) };
+}
+
+export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row => row.routeId) } = {}) {
+  if (!Array.isArray(routeIds) || routeIds.length === 0 || new Set(routeIds).size !== routeIds.length
+    || routeIds.some(id => !contracts.some(row => row.routeId === id))) throw new Error('route_acceptance_route_selection_invalid');
+  const before = sourceSubject();
+  const requirements = routeAcceptanceRequirementsV1();
+  const runtime = buildNativeOwners();
+  const rows = [];
+  for (const contract of contracts.filter(row => routeIds.includes(row.routeId))) {
+    const cases = [];
+    for (const testCase of describeCase(contract)) {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-route-acceptance-'));
+      try {
+        const prepared = contract.routeId === 'operator/workspace' ? workspaceFixture(fixture, testCase.profile) : assetFixture(fixture, testCase.profile);
+        const env = { ...safeEnvironment(), ...prepared.environment };
+        const nodeArgs = [...prepared.node, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
+        const nativeArgs = [...contract.nativePrefix, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
+        const identity = inventory(fixture, true), inputs = inventory(fixture, false);
+        const execute = async (program, args) => testCase.kind === 'death'
+          ? killed(program, args, { cwd: prepared.cwd, env }, testCase.signal)
+          : run(program, args, { cwd: prepared.cwd, env, timeout: 30_000 });
+        const nodeRaw = await execute(process.execPath, nodeArgs);
+        const afterNode = inventory(fixture, true);
+        const nativeRaw = await execute(runtime.owners[contract.binary].path, nativeArgs);
+        const afterNative = inventory(fixture, true);
+        const node = diagnostic(nodeRaw, fixture), native = diagnostic(nativeRaw, fixture);
+        let retry = null;
+        if (testCase.kind === 'death') {
+          const nodeRetry = diagnostic(run(process.execPath, nodeArgs, { cwd: prepared.cwd, env }), fixture);
+          const nativeRetry = diagnostic(run(runtime.owners[contract.binary].path, nativeArgs, { cwd: prepared.cwd, env }), fixture);
+          retry = { node: nodeRetry, native: nativeRetry, effectsUnchanged: inventory(fixture, true) === identity };
+        }
+        const effectsUnchanged = identity === afterNode && identity === afterNative && (!retry || retry.effectsUnchanged);
+        const passed = compatible(node, native, testCase) && effectsUnchanged
+          && (testCase.kind === 'death' || (expectedBehavior(contract, testCase, node) && expectedBehavior(contract, testCase, native)))
+          && (!retry || (node.signal === testCase.signal && native.signal === testCase.signal
+            && expectedBehavior(contract, testCase, retry.node) && expectedBehavior(contract, testCase, retry.native)
+            && JSON.stringify(canonical(retry.node)) === JSON.stringify(canonical(retry.native))));
+        cases.push({ caseId: testCase.id, inputSha256: inputs,
+          nodeArgv: normalize(nodeArgs, fixture), nativeArgv: nativeArgs,
+          environment: normalize(prepared.environment, fixture), node, native, retry, effectsUnchanged, passed });
+      } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
+    }
+    const requirement = requirements.find(row => row.routeId === contract.routeId);
+    rows.push({ routeId: contract.routeId, argumentContractSha256: requirement.argumentContractSha256,
+      behaviorContractSha256: requirement.behaviorContractSha256, cases });
+  }
+  const after = sourceSubject();
+  if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error('route_acceptance_source_changed_during_execution');
+  const payload = { version: 1, kind: before.committedClean ? 'NodeRustRouteAcceptanceRecordV1' : 'NodeRustRouteBehaviorObservationV1',
+    scope: 'local-readonly-command-behavior-no-external-authority', subject: before,
+    runtime: { node: runtime.node, cargoVersion: runtime.cargoVersion, buildArgs: runtime.buildArgs,
+      nativeOwners: Object.fromEntries(Object.entries(runtime.owners).map(([name, row]) => [name, { sha256: row.sha256 }])) },
+    authority, rows };
+  return freeze({ ...payload, recordSha256: digest(payload) });
+}
+
+function recordPayload(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('route_acceptance_record_invalid');
+  const { recordSha256, ...payload } = record;
+  if (recordSha256 !== digest(payload)) throw new Error('route_acceptance_record_digest_mismatch');
+  if (Object.keys(payload).sort().join(',') !== 'authority,kind,rows,runtime,scope,subject,version'
+    || record.version !== 1 || record.kind !== 'NodeRustRouteAcceptanceRecordV1'
+    || record.scope !== 'local-readonly-command-behavior-no-external-authority'
+    || JSON.stringify(canonical(record.authority)) !== JSON.stringify(canonical(authority))
+    || !Array.isArray(record.rows) || record.rows.length < 1 || record.rows.length > contracts.length) {
+    throw new Error('route_acceptance_record_scope_invalid');
+  }
+  const current = sourceSubject();
+  if (!current.committedClean || JSON.stringify(record.subject) !== JSON.stringify(current)) throw new Error('route_acceptance_subject_not_current_clean_commit');
+  const requirements = routeAcceptanceRequirementsV1();
+  const seen = new Set();
+  for (const row of record.rows) {
+    const contract = contracts.find(value => value.routeId === row.routeId);
+    const requirement = requirements.find(value => value.routeId === row.routeId);
+    if (!contract || seen.has(row.routeId) || row.argumentContractSha256 !== requirement.argumentContractSha256
+      || row.behaviorContractSha256 !== requirement.behaviorContractSha256
+      || !Array.isArray(row.cases) || JSON.stringify(row.cases.map(value => value.caseId)) !== JSON.stringify(describeCase(contract).map(value => value.id))
+      || row.cases.some(value => value.passed !== true || value.effectsUnchanged !== true)) {
+      throw new Error(`route_acceptance_complete_contract_missing:${row.routeId}`);
+    }
+    seen.add(row.routeId);
+  }
+  return payload;
+}
+
+export async function consumeRouteAcceptanceRecordV1(record) {
+  record = freeze(structuredClone(record));
+  recordPayload(record);
+  const replayed = await observeRouteAcceptanceV1({ routeIds: record.rows.map(row => row.routeId) });
+  if (JSON.stringify(canonical(recordPayload(replayed))) !== JSON.stringify(canonical(recordPayload(record)))) {
+    throw new Error('route_acceptance_actual_replay_differs');
+  }
+  const acceptedIds = replayed.rows.map(row => row.routeId);
+  const summary = freeze({ kind: 'VerifiedNodeRustRouteAcceptanceV1', subject: replayed.subject,
+    recordSha256: replayed.recordSha256, verifiedBy: 'ordinary-node-and-built-rust-cli-replay',
+    acceptedRouteIds: acceptedIds, authority,
+    rows: routeAcceptanceRequirementsV1().map(row => ({ ...row,
+      accepted: acceptedIds.includes(row.routeId), remaining: acceptedIds.includes(row.routeId) ? [] : row.remaining })) });
+  verified.add(summary);
+  return summary;
+}
+
+export function readRouteAcceptanceRecord(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file) || path.resolve(file) !== file) {
+    throw new Error('route_acceptance_record_path_must_be_absolute');
+  }
+  let current = path.parse(file).root;
+  for (const part of file.slice(current.length).split(path.sep)) {
+    current = path.join(current, part);
+    if (fs.lstatSync(current).isSymbolicLink()) throw new Error('route_acceptance_record_symlink_refused');
+  }
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile() || before.nlink !== 1n || before.size === 0n || before.size > 4n * 1024n * 1024n) {
+      throw new Error('route_acceptance_record_file_invalid');
+    }
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const named = fs.lstatSync(file, { bigint: true });
+    if (['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].some(key => before[key] !== after[key] || before[key] !== named[key])) {
+      throw new Error('route_acceptance_record_changed_during_read');
+    }
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } finally { fs.closeSync(descriptor); }
+}
+
+export function assertVerifiedRouteAcceptanceV1(value) {
+  if (!verified.has(value) || JSON.stringify(value.subject) !== JSON.stringify(sourceSubject())) {
+    throw new Error('route_acceptance_not_independently_replayed_for_current_subject');
+  }
+  return value;
+}

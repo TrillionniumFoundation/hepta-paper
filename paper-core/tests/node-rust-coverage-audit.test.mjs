@@ -99,8 +99,10 @@ test('partial command mappings bind both concrete Rust sources and tests', () =>
   assert.equal(full.compatibilityDecision, 'candidate');
   assert.ok(full.callChain.some((row) => row.symbol === 'inspect_full_suite_verification_v1'));
   assert.ok(full.testCases.some((row) => row.symbol === 'require_parity_reports_inventory_without_running_node_or_npm'));
-  assert.match(full.remaining, /never executes Node or npm/u);
-  assert.match(full.remaining, /cannot independently accept full-suite parity/u);
+  assert.ok(full.callChain.some((row) => row.symbol === 'execute_full_suite_verification_v1'));
+  assert.ok(full.testCases.some((row) => row.symbol === 'ordinary_native_verification_runs_real_rust_commands_and_binds_the_source'));
+  assert.ok(full.testCases.some((row) => row.symbol === 'real_suite_sigterm_and_deadline_keep_failure_receipts_and_reap_the_test_group'));
+  assert.equal(report.commandMappings.acceptedParity, false);
   assert.equal(report.fullReplacementEstablished, false);
 });
 

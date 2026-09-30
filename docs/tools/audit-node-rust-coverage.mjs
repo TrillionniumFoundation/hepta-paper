@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// A source inventory, never a producer of parity or production authority.
+// Source mapping plus independently replayed local command acceptance.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { COMMAND_REGISTRY_ROUTES } from '../../paper-core/src/command-registry-routes.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
+import { stripRustInertText, rustSymbolMatches } from '../../paper-core/src/source-evidence-rust-symbols.mjs';
+import { assertVerifiedRouteAcceptanceV1, consumeRouteAcceptanceRecordV1,
+  readRouteAcceptanceRecord, routeAcceptanceRequirementsV1 } from './node-rust-route-acceptance.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const sha256 = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -36,7 +39,9 @@ function readSource(relative) {
   return { path: relative, sha256: sha256(bytes) };
 }
 
-export function buildCoverageInventory(routes, catalog, globalCapabilities, modules) {
+export function buildCoverageInventory(routes, catalog, globalCapabilities, modules, { routeAcceptance = null } = {}) {
+  const acceptance = routeAcceptance === null ? null : assertVerifiedRouteAcceptanceV1(routeAcceptance);
+  const acceptedIds = new Set(acceptance?.acceptedRouteIds || []);
   const seen = new Set();
   const commands = [...routes].map((route) => {
     const id = `${route.group}/${route.name}`;
@@ -73,14 +78,20 @@ export function buildCoverageInventory(routes, catalog, globalCapabilities, modu
   }));
   const groups = Object.fromEntries([...new Set(commands.map((row) => row.group))].sort(compare)
     .map((group) => [group, commands.filter((row) => row.group === group).length]));
+  if ([...acceptedIds].some(id => !seen.has(id))) throw new Error('accepted command is outside coverage inventory');
+  const acceptedParityRows = commands.filter(row => acceptedIds.has(row.id)).length;
   return {
     kind: 'NodeRustCoverageInventoryV1', schemaVersion: 1,
-    evidenceScope: 'source_inventory_not_acceptance',
+    evidenceScope: acceptance === null ? 'source_inventory_not_acceptance'
+      : 'source_inventory_with_independently_replayed_local_behavior',
     inventories: { commandGroups: groups, commands: commands.length,
       operatorCatalogCapabilities: catalogCapabilities.length, globalCapabilities: globalRows.length,
       registeredModules: Object.keys(modules).length, boundedKernelHints: globalRows.filter((row) => row.rustCandidate).length },
     commands, catalogCapabilities, globalCapabilities: globalRows,
-    acceptedParityRows: 0,
+    commandAcceptance: acceptance,
+    commandAcceptanceRequirements: routeAcceptanceRequirementsV1(routes),
+    acceptedParityRows,
+    openCommandBehaviorGaps: commands.length - acceptedParityRows,
     fullReplacementEstablished: false, productionActivationVerified: false, nodeRetirementVerified: false,
     remainingAcceptance: [
       'review every command, forwarded argument mode, state transition and effect',
@@ -394,6 +405,7 @@ function validateCommandArgumentModes(row, route) {
 // Rust command candidates (or an explicit unmapped decision), so that command
 // coverage cannot silently disappear while the migration is in progress.
 export function auditNodeRustCommandMap(routes, suppliedMap = null) {
+  const liveSource = new Map();
   const loaded = suppliedMap === null
     ? loadCurrentNodeRustCommandMapV2()
     : { map: suppliedMap, sourcePaths: [] };
@@ -457,10 +469,16 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
         const identity = `${reference.path}:${reference.symbol}`;
         if (seen.has(identity)) throw new Error(`duplicate command symbol binding: ${row.id}`);
         seen.add(identity);
-        const text = fs.readFileSync(path.join(ROOT, reference.path), 'utf8');
-        const prefix = isTest ? '#\\[test\\]\\s*' : '^\\s*(?:pub(?:\\([^\\r\\n)]*\\))?\\s+)?';
-        const declaration = new RegExp(`${prefix}(?:async\\s+)?fn\\s+${reference.symbol}\\s*(?:<[^\\r\\n]*>)?\\s*\\(`, 'm');
-        if (!declaration.test(text)) throw new Error(`mapped command symbol missing: ${identity}`);
+        // Use the same live-token owner as the independent source verifier.
+        // Attribute order, comments and strings cannot create another fact.
+        let live = liveSource.get(reference.path);
+        if (live === undefined) {
+          live = stripRustInertText(fs.readFileSync(path.join(ROOT, reference.path), 'utf8'));
+          liveSource.set(reference.path, live);
+        }
+        if (rustSymbolMatches(live, { kind: isTest ? 'test' : 'function', name: reference.symbol }).length === 0) {
+          throw new Error(`mapped command symbol missing: ${identity}`);
+        }
       }
     }
   }
@@ -478,15 +496,16 @@ export function auditNodeRustCommandMap(routes, suppliedMap = null) {
   };
 }
 
-export function auditCurrentCoverage() {
+export function auditCurrentCoverage({ routeAcceptance = null } = {}) {
   const globalFile = 'docs/system/truth/capabilities.v1.json';
   const moduleFile = 'docs/system/truth/modules.v1.json';
   const global = JSON.parse(fs.readFileSync(path.join(ROOT, globalFile), 'utf8'));
   const modules = JSON.parse(fs.readFileSync(path.join(ROOT, moduleFile), 'utf8'));
   const report = buildCoverageInventory(COMMAND_REGISTRY_ROUTES, CAPABILITY_CATALOG,
-    global.capabilities, modules.modules);
+    global.capabilities, modules.modules, { routeAcceptance });
   const sources = new Set([
     'docs/tools/audit-node-rust-coverage.mjs',
+    'docs/tools/node-rust-route-acceptance.mjs',
     'paper-core/src/command-registry-routes.mjs',
     'paper-core/src/command-registry-support-routes.mjs',
     'paper-core/src/command-registry-catalog.mjs',
@@ -511,11 +530,18 @@ export function auditCurrentCoverage() {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2);
-    if (args.length && !(args.length === 1 && args[0] === '--require-complete')) throw new Error('usage: audit-node-rust-coverage.mjs [--require-complete]');
-    const report = auditCurrentCoverage();
+    let acceptancePath = null;
+    let requireComplete = false;
+    for (let index = 0; index < args.length; index += 1) {
+      if (args[index] === '--require-complete' && !requireComplete) requireComplete = true;
+      else if (args[index] === '--acceptance-record' && !acceptancePath && args[index + 1]) acceptancePath = args[++index];
+      else throw new Error('usage: audit-node-rust-coverage.mjs [--require-complete] [--acceptance-record ABSOLUTE_JSON]');
+    }
+    const routeAcceptance = acceptancePath === null ? null
+      : await consumeRouteAcceptanceRecordV1(readRouteAcceptanceRecord(acceptancePath));
+    const report = auditCurrentCoverage({ routeAcceptance });
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-    // This source inventory consumes no independent acceptance receipts. It cannot certify completion.
-    if (args.includes('--require-complete')) process.exitCode = 2;
+    if (requireComplete && !report.fullReplacementEstablished) process.exitCode = 2;
   } catch (error) {
     process.stderr.write(`coverage-audit: ${error.message}\n`);
     process.exitCode = 1;

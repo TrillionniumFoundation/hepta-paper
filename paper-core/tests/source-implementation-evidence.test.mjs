@@ -395,7 +395,7 @@ test('work-item keys, modules, capabilities and source state are closed-world', 
   }, /unknown_capability/u);
 });
 
-function inlineRustOwnerFixture(t, { declareTest = true, testSource } = {}) {
+function inlineRustOwnerFixture(t, { declareTest = true, testSource, runIgnored = false } = {}) {
   const expectedTarget = 'rust/crates/fixture/src/lib.rs';
   const fixture = createFixture((evidence, root) => {
     write(root, 'rust/Cargo.toml', '[workspace]\nmembers = ["crates/fixture"]\nresolver = "3"\n');
@@ -419,7 +419,7 @@ function inlineRustOwnerFixture(t, { declareTest = true, testSource } = {}) {
     bundle.verificationCommands = [{
       program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 30,
       args: ['test', '--locked', '-p', 'fixture', '--lib', 'tests::selected_owner_test',
-        '--', '--exact', '--nocapture'],
+        '--', '--exact', ...(runIgnored ? ['--ignored'] : []), '--nocapture'],
       expectedTargets: [expectedTarget],
     }];
   });
@@ -450,6 +450,43 @@ test('Rust implementation files with explicit inline test symbols execute their 
     'test', '--locked', '-p', 'fixture', '--lib', 'tests::selected_owner_test',
     '--', '--exact', '--nocapture',
   ]);
+});
+
+test('an exact ignored Rust recovery owner requires actual execution and still rejects skipped success', (t) => {
+  const cargo = command(process.cwd(), 'rustup', 'which', '--toolchain', '1.98.0', 'cargo');
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-ignored-rust-owner-target-'));
+  const oldPath = process.env.PATH;
+  const oldTarget = process.env.CARGO_TARGET_DIR;
+  process.env.PATH = `${path.dirname(cargo)}${path.delimiter}${oldPath ?? ''}`;
+  process.env.CARGO_TARGET_DIR = target;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    if (oldTarget === undefined) delete process.env.CARGO_TARGET_DIR;
+    else process.env.CARGO_TARGET_DIR = oldTarget;
+    fs.rmSync(target, { recursive: true, force: true });
+  });
+  const testSource = '#[test]\n#[ignore = "isolated recovery fixture"]\nfn selected_owner_test() { assert_eq!(super::inline_feature(), 1); }';
+  const skipped = inlineRustOwnerFixture(t, { testSource });
+  assert.throws(() => verifyRepositorySourceEvidence({ root: skipped.root, execute: true }),
+    /verification_test_execution_incomplete/u);
+  const selected = inlineRustOwnerFixture(t, { testSource, runIgnored: true });
+  const receipt = verifyRepositorySourceEvidence({ root: selected.root, execute: true });
+  assert.equal(receipt.verificationCommandsExecuted, true);
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.deepEqual(receipt.commandObservations[0].args.slice(-4),
+    ['--', '--exact', '--ignored', '--nocapture']);
+  const commandValue = receipt.commandObservations[0];
+  for (const args of [
+    [...commandValue.args, '--ignored'],
+    commandValue.args.filter(argument => argument !== '--exact'),
+    commandValue.args.map(argument => argument === '--exact' ? '--ignored' : argument),
+  ]) {
+    assert.throws(() => validateCommand({
+      program: 'cargo', args, workdir: 'rust', expectedExitCode: 0,
+      timeoutSeconds: 30, expectedTargets: ['rust/crates/fixture/src/lib.rs'],
+    }, 'isolated recovery', new Set(['rust/crates/fixture/src/lib.rs'])), /cargo_command_not_allowlisted/u);
+  }
 });
 
 test('inline Rust tests without explicit test symbols cannot become command owners', (t) => {

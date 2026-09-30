@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Generate the reviewed Node/Rust command-gap ledger, including partial source.
-// This is a source/documentation aid; it never grants parity or authority.
+// Source gaps and independently replayed local behavior acceptance stay scoped.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditCurrentCoverage } from './audit-node-rust-coverage.mjs';
+import { assertVerifiedRouteAcceptanceV1, consumeRouteAcceptanceRecordV1,
+  readRouteAcceptanceRecord } from './node-rust-route-acceptance.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUTPUT = path.join(ROOT, 'docs/migration/NODE_RUST_GAP_CLOSURE.md');
@@ -38,12 +40,14 @@ function criterion(category) {
 }
 
 export function renderNodeRustGapReport(report) {
-  // The source inventory has no acceptance-receipt consumer. Never turn a
-  // partial mapping, omitted mapping, or unsupported status into a closed gap.
-  if (report.acceptedParityRows !== 0 || report.commandMappings.acceptedParity !== false
+  const acceptance = report.commandAcceptance == null ? null
+    : assertVerifiedRouteAcceptanceV1(report.commandAcceptance);
+  const acceptedIds = new Set(acceptance?.acceptedRouteIds || []);
+  // Serialized claims, source mapping and status words cannot close a gap.
+  if (report.acceptedParityRows !== acceptedIds.size || report.commandMappings.acceptedParity !== false
       || report.commandMappings.productionActivation !== false
       || report.commandMappings.nodeRetirement !== false) {
-    throw new Error('source gap ledger cannot establish independent acceptance');
+    throw new Error('source gap ledger cannot establish independent acceptance without actual replay');
   }
   const rows = [...report.commandMappings.commands];
   const routes = new Map(report.commands.map((route) => [route.id, route]));
@@ -61,6 +65,7 @@ export function renderNodeRustGapReport(report) {
       throw new Error(`unsupported or empty gap mapping for ${row.id}`);
     }
   }
+  if ([...acceptedIds].some(id => !mappedIds.has(id))) throw new Error('accepted route missing from source ledger');
   rows.sort((left, right) => left.id.localeCompare(right.id));
   const unmapped = rows.filter((row) => row.scope === 'unmapped').length;
   const partial = rows.filter((row) => row.scope === 'partial_local_source').length;
@@ -68,14 +73,15 @@ export function renderNodeRustGapReport(report) {
   const lines = [
     '# Node/Rust command gap closure ledger',
     '',
-    '> Generated from the digest-bound shard manifest `docs/migration/node-rust-command-map.v2.json` and the live command registry. Unmapped and partially implemented commands remain open. This ledger does not grant parity, production activation, or Node retirement.',
+    '> Generated from the digest-bound shard manifest `docs/migration/node-rust-command-map.v2.json` and the live command registry. Local command acceptance is included only after independent current-subject CLI replay. It does not grant host qualification, production activation, release/submission authority, writer cutover or Node retirement.',
     '',
     '- Source of truth: digest-bound `docs/migration/node-rust-command-map.v2.json` manifest + shards + live command registry',
     `- Total command routes: **${report.commands.length}**`,
     `- Unmapped commands: **${unmapped}**`,
     `- Partial source candidates: **${partial}**`,
     `- Independently accepted parity rows: **${report.acceptedParityRows}**`,
-    `- Open command gaps: **${rows.length}**`,
+    `- Open command gaps: **${rows.length - acceptedIds.size}**`,
+    `- Acceptance replay: \`${acceptance ? 'current-subject-ordinary-CLI-verified' : 'not-requested'}\``,
     `- Accepted parity: \`${report.commandMappings.acceptedParity}\``,
     `- Production activation: \`${report.commandMappings.productionActivation}\``,
     `- Node retirement: \`${report.commandMappings.nodeRetirement}\``,
@@ -88,32 +94,49 @@ export function renderNodeRustGapReport(report) {
     const category = classify(row, route);
     const argv = route.nodeArgv.map((value) => `\`${cell(value)}\``).join(' ');
     const rust = row.rustEntrypoint ? `\`${cell(row.rustEntrypoint)}\`` : '—';
-    lines.push(`| \`${row.id}\` | \`${row.scope}\` | ${argv} | ${rust} | ${category} | ${cell(row.remaining)} | ${criterion(category)} |`);
+    const accepted = acceptedIds.has(row.id);
+    const scope = accepted ? 'accepted_local_behavior' : row.scope;
+    const remaining = accepted
+      ? 'Declared local UTF-8 read-only argument/data/refusal/process-recovery contract accepted for the current subject. Installation and authority qualification remain separate.' : row.remaining;
+    const required = accepted ? 'Current commit/tree rebuilt and both ordinary CLIs independently replayed; the acceptance record grants no external authority.' : criterion(category);
+    lines.push(`| \`${row.id}\` | \`${scope}\` | ${argv} | ${rust} | ${category} | ${cell(remaining)} | ${required} |`);
   }
-  lines.push('', 'Partial source candidates remain in this ledger with their remaining implementation and qualification gaps. A smaller unmapped count is source-mapping progress, not closure. This source-only generator cannot remove a route as accepted: independent command/mode acceptance and the required qualification evidence need a separate verified acceptance process.');
+  lines.push('', 'Every route remains visible. Source mappings do not establish acceptance. A local behavior gap closes only when the current-subject consumer actually rebuilds and replays the complete declared command matrix; installation, external authority and Node retirement remain separate requirements.');
   return `${lines.join('\n')}\n`;
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
-  if (args.length && !(args.length === 1 && args[0] === '--check')) {
-    throw new Error('usage: generate-node-rust-gap-report.mjs [--check]');
+  let acceptancePath = null;
+  let outputPath = OUTPUT;
+  let check = false;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === '--check' && !check) check = true;
+    else if (args[index] === '--acceptance-record' && !acceptancePath && args[index + 1]) acceptancePath = args[++index];
+    else if (args[index] === '--output' && outputPath === OUTPUT && args[index + 1]) outputPath = args[++index];
+    else throw new Error('usage: generate-node-rust-gap-report.mjs [--check] [--acceptance-record ABSOLUTE_JSON --output ABSOLUTE_PATH]');
   }
-  const report = auditCurrentCoverage();
+  if (!path.isAbsolute(outputPath) || path.resolve(outputPath) !== outputPath
+    || (acceptancePath !== null && (outputPath === ROOT || outputPath.startsWith(`${ROOT}${path.sep}`)))) {
+    throw new Error('current-subject acceptance report output must be outside the source checkout');
+  }
+  const routeAcceptance = acceptancePath === null ? null
+    : await consumeRouteAcceptanceRecordV1(readRouteAcceptanceRecord(acceptancePath));
+  const report = auditCurrentCoverage({ routeAcceptance });
   const content = renderNodeRustGapReport(report);
   const rows = report.commandMappings.commands;
-  if (args.includes('--check')) {
-    const current = fs.readFileSync(OUTPUT, 'utf8');
+  if (check) {
+    const current = fs.readFileSync(outputPath, 'utf8');
     if (current !== content) {
-      process.stderr.write(`stale ${path.relative(ROOT, OUTPUT)}\n`);
+      process.stderr.write(`stale ${path.relative(ROOT, outputPath)}\n`);
       process.exitCode = 1;
-    } else process.stdout.write(`checked ${path.relative(ROOT, OUTPUT)} rows=${rows.length}\n`);
+    } else process.stdout.write(`checked ${path.relative(ROOT, outputPath)} rows=${rows.length}\n`);
   } else {
-    fs.writeFileSync(OUTPUT, content, { mode: 0o644 });
-    process.stdout.write(`generated ${path.relative(ROOT, OUTPUT)} rows=${rows.length}\n`);
+    fs.writeFileSync(outputPath, content, { mode: 0o644 });
+    process.stdout.write(`generated ${path.relative(ROOT, outputPath)} rows=${rows.length} accepted=${report.acceptedParityRows}\n`);
   }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  await main();
 }

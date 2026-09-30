@@ -1,8 +1,8 @@
 //! Bounded command surface for the Node autonomous-research campaign route.
 //!
 //! Explicit local workflows use the existing SQLite/CAS and dispatch owners.
-//! Automatic research planning, live models, production qualification renewal
-//! and the complete incumbent business surface remain outside this local path.
+//! Ordinary campaign requests assemble broker author/reviewer and bounded
+//! revision through the same durable owner; research admission remains separate.
 
 #![forbid(unsafe_code)]
 
@@ -14,13 +14,16 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+mod campaign;
 mod local;
+pub use campaign::{AutonomousResearchCampaignRequestV1, AutonomousResearchRoleV1};
 
 pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
   "version": 4,
   "kind": "AutonomousResearchCampaignUsage",
   "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
   "defaultLaunchMode": "local-run",
+  "campaignUsage": "--paper-id ID --runtime-root ABSOLUTE_PRIVATE_ROOT [--objective TEXT] [--revision-rounds N] --action prepare|launch|status|converge|pause|resume|cancel; fixed autonomous-research-request.v1.json supplies broker policy and bounded resources",
   "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--research-qualification-request ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
   "persistedWorkflowUsage": "--campaign-id ID --workflow-root ABSOLUTE_STATE --definition-hash SHA256 --action launch|status|converge|pause|resume|cancel|amend [--research-qualification-request ABSOLUTE_JSON] [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
   "safety": {
@@ -31,7 +34,7 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
     "naturalLanguageToLeanEquivalenceMachineProven": false,
     "automaticBudgetExpansionEnabled": false
   },
-  "rustBoundary": "explicit local workflow reuses the existing durable owner; a persisted research profile requires a matching authority-owned V3/V4 research request for every new dispatch; no production, release or submission authority"
+  "rustBoundary": "ordinary campaign requests and explicit local workflows reuse the existing durable owner; a persisted research profile requires a matching authority-owned V3/V4 research request for every new dispatch; no production, release or submission authority"
 }"#;
 
 #[derive(Clone, Debug)]
@@ -40,6 +43,9 @@ pub struct AutonomousResearchOptions {
     pub launch_mode: String,
     pub paper_id: Option<String>,
     pub campaign_id: Option<String>,
+    pub runtime_root: Option<PathBuf>,
+    pub objective: Option<String>,
+    pub revision_rounds: Option<usize>,
     pub workflow_file: Option<PathBuf>,
     pub workflow_root: Option<PathBuf>,
     pub definition_hash: Option<Sha256Digest>,
@@ -69,6 +75,9 @@ pub fn parse_autonomous_research_arguments(
     let mut campaign_id = None;
     let mut require_full_ready = false;
     let mut help = false;
+    let mut runtime_root = None;
+    let mut objective = None;
+    let mut revision_rounds = None;
     let mut workflow_file = None;
     let mut workflow_root = None;
     let mut definition_hash = None;
@@ -91,6 +100,17 @@ pub fn parse_autonomous_research_arguments(
             "--launch-mode" => launch_mode = value(args, &mut index, "launch_mode")?,
             "--paper-id" => paper_id = Some(value(args, &mut index, "paper_id")?),
             "--campaign-id" => campaign_id = Some(value(args, &mut index, "campaign_id")?),
+            "--runtime-root" => {
+                runtime_root = Some(PathBuf::from(value(args, &mut index, "runtime_root")?))
+            }
+            "--objective" => objective = Some(value(args, &mut index, "objective")?),
+            "--revision-rounds" => {
+                revision_rounds = Some(
+                    value(args, &mut index, "revision_rounds")?
+                        .parse::<usize>()
+                        .map_err(|_| "invalid_autonomous_research_revision_rounds".to_owned())?,
+                )
+            }
             "--workflow-file" => {
                 workflow_file = Some(PathBuf::from(value(args, &mut index, "workflow_file")?))
             }
@@ -141,6 +161,9 @@ pub fn parse_autonomous_research_arguments(
             launch_mode,
             paper_id,
             campaign_id,
+            runtime_root,
+            objective,
+            revision_rounds,
             workflow_file,
             workflow_root,
             definition_hash,
@@ -168,6 +191,14 @@ pub fn parse_autonomous_research_arguments(
             "autonomous_research_launch_mode_invalid:{launch_mode}"
         ));
     }
+    if (runtime_root.is_some() || objective.is_some() || revision_rounds.is_some())
+        && (workflow_root.is_some()
+            || workflow_file.is_some()
+            || amendment_file.is_some()
+            || definition_hash.is_some())
+    {
+        return Err("autonomous_research_campaign_and_workflow_modes_conflict".to_owned());
+    }
     if workflow_root.is_some() != definition_hash.is_some()
         || (workflow_root.is_some() && workflow_file.is_some())
         || (workflow_root.is_some() && action == "prepare")
@@ -181,13 +212,14 @@ pub fn parse_autonomous_research_arguments(
         return Err("autonomous_research_local_reference_or_amendment_invalid".to_owned());
     }
     if research_qualification_request.is_some()
-        && (workflow_file.is_none() && workflow_root.is_none()
+        && (workflow_file.is_none() && workflow_root.is_none() && runtime_root.is_none()
             || !matches!(action.as_str(), "launch" | "converge"))
     {
         return Err("autonomous_research_qualification_request_scope_invalid".to_owned());
     }
     if workflow_file.is_none()
         && workflow_root.is_none()
+        && runtime_root.is_none()
         && (through_steps.is_some()
             || expected_revision.is_some()
             || matches!(action.as_str(), "pause" | "cancel"))
@@ -204,6 +236,9 @@ pub fn parse_autonomous_research_arguments(
         launch_mode,
         paper_id,
         campaign_id,
+        runtime_root,
+        objective,
+        revision_rounds,
         workflow_file,
         workflow_root,
         definition_hash,
@@ -217,23 +252,9 @@ pub fn parse_autonomous_research_arguments(
 }
 
 pub fn autonomous_research_help_json_v1() -> Value {
-    json!({
-          "version": 4,
-          "kind": "AutonomousResearchCampaignUsage",
-          "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
-          "defaultLaunchMode": "local-run",
-    "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--research-qualification-request ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
-          "persistedWorkflowUsage": "--campaign-id ID --workflow-root ABSOLUTE_STATE --definition-hash SHA256 --action launch|status|converge|pause|resume|cancel|amend [--research-qualification-request ABSOLUTE_JSON] [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
-          "safety": {
-              "operatorApprovalClaimed": false,
-              "selfSignedExternalTrustClaimed": false,
-              "externalSubmissionEnabled": false,
-              "universalResearchValidityClaimed": false,
-              "naturalLanguageToLeanEquivalenceMachineProven": false,
-              "automaticBudgetExpansionEnabled": false
-          },
-          "rustBoundary": "explicit local workflow reuses the existing durable owner; a persisted research profile requires a matching authority-owned V3/V4 research request for every new dispatch; no production, release or submission authority"
-      })
+    serde_json::from_str(AUTONOMOUS_RESEARCH_USAGE).unwrap_or_else(|_| {
+        json!({"version":1,"kind":"AutonomousResearchCampaignUsage","error":"autonomous_research_usage_definition_invalid","ready":false})
+    })
 }
 
 pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Value {
@@ -241,43 +262,10 @@ pub fn inspect_autonomous_research_v1(options: &AutonomousResearchOptions) -> Va
         || options.workflow_root.is_some()
         || options.definition_hash.is_some()
         || options.amendment_file.is_some()
-        || options.research_qualification_request.is_some()
     {
         return local::run(options, false, &Arc::new(AtomicBool::new(false)));
     }
-    let campaign_id = options.campaign_id.clone().or_else(|| {
-        options
-            .paper_id
-            .as_ref()
-            .map(|id| format!("autonomous-research:{id}"))
-    });
-    let mut blockers = vec![
-        "rust_autonomous_research_campaign_persistence_not_ported".to_owned(),
-        "rust_autonomous_research_provider_execution_not_ported".to_owned(),
-        "rust_autonomous_research_explicit_qualified_workflow_required".to_owned(),
-    ];
-    if options.launch_mode == "production-run" {
-        blockers.push("autonomous_research_production_external_authority_required".to_owned());
-    }
-    blockers.sort();
-    blockers.dedup();
-    json!({
-        "version": 1,
-        "kind": "AutonomousResearchCampaignReport",
-        "status": "autonomous_research_campaign_blocked",
-        "action": options.action,
-        "launchMode": options.launch_mode,
-        "paperId": options.paper_id,
-        "campaignId": campaign_id,
-        "ready": false,
-        "campaignPersisted": false,
-        "providerExecutionPerformed": false,
-        "externalActionPerformed": false,
-        "networkActionPerformed": false,
-        "blockers": blockers,
-        "requireFullReady": options.require_full_ready,
-        "rustBoundary": "diagnostic-only"
-    })
+    campaign::run(options, false, &Arc::new(AtomicBool::new(false)))
 }
 
 pub fn execute_autonomous_research_v1(options: &AutonomousResearchOptions) -> Value {
@@ -294,11 +282,10 @@ pub fn execute_autonomous_research_with_cancellation_v1(
         || options.workflow_root.is_some()
         || options.definition_hash.is_some()
         || options.amendment_file.is_some()
-        || options.research_qualification_request.is_some()
     {
         return local::run(options, true, &cancelled);
     }
-    inspect_autonomous_research_v1(options)
+    campaign::run(options, true, &cancelled)
 }
 
 #[cfg(test)]

@@ -137,5 +137,18 @@ function installationPreview(input) {
  } finally {for(const lock of locks){try{lock.database.close();}catch{ /* Already closed by source installer. */ }}fs.rmSync(root,{recursive:true,force:true});}
 }
 
+// The existing Node fixture constructs the exact completion contract; the
+// ephemeral key adds a real signature, never independent installed authority.
+function finalizeMaintenance(input) {
+ assertRoot(input.root);const authority=authorities.get(input.root);
+ if(!authority?.lastReceipt)throw new Error('missing_temporary_reservation');
+ authority.finalizationRequests??=[];
+ authority.finalizationRequests.push(structuredClone(input.request));
+ const value={...authority.raw.client.finalizeSchemaTransition({request:input.request,reservation:authority.lastReceipt,now:new Date(input.request.completedAt)})};
+ delete value.signature;
+ value.signature=crypto.sign(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(value)),authority.keys.privateKey).toString('base64');
+ return {receipt:value,accepted:schemaContract.verifyAutonomousResearchOnlineSchemaTransitionFinalization({receipt:value,request:input.request,reservation:authority.lastReceipt,trust:authority.trust,now:new Date(input.request.completedAt),verifySignature:v=>crypto.verify(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(v)),authority.keys.publicKey,Buffer.from(v.signature,'base64'))})};
+}
+
 const rl=readline.createInterface({input:process.stdin,crlfDelay:Infinity});
-for await(const line of rl){try{const input=JSON.parse(line);const value=input.operation==='installation-preview'?installationPreview(input):input.operation==='make-wal'?makeWal(input):input.operation==='normalize-scope'?normalizeScope(input):input.operation==='fixture'?fixture(input):input.operation==='normalize-copy'?normalizeCopy(input):input.operation==='full-fixture'?fullFixture(input):input.operation==='full-plan'?fullPlan(input):input.operation==='reserve-maintenance'?reserveMaintenance(input):projection(input);process.stdout.write(JSON.stringify({ok:true,value,profile:productionOracleProfile()})+'\n');}catch(error){process.stdout.write(JSON.stringify({ok:false,error:error.message,profile:productionOracleProfile()})+'\n');}}
+for await(const line of rl){try{const input=JSON.parse(line);const value=input.operation==='finalization-requests'?authorities.get(input.root).finalizationRequests??[]:input.operation==='finalize-maintenance'?finalizeMaintenance(input):input.operation==='installation-preview'?installationPreview(input):input.operation==='make-wal'?makeWal(input):input.operation==='normalize-scope'?normalizeScope(input):input.operation==='fixture'?fixture(input):input.operation==='normalize-copy'?normalizeCopy(input):input.operation==='full-fixture'?fullFixture(input):input.operation==='full-plan'?fullPlan(input):input.operation==='reserve-maintenance'?reserveMaintenance(input):projection(input);process.stdout.write(JSON.stringify({ok:true,value,profile:productionOracleProfile()})+'\n');}catch(error){process.stdout.write(JSON.stringify({ok:false,error:error.message,profile:productionOracleProfile()})+'\n');}}

@@ -143,7 +143,16 @@ struct Signing {
 }
 impl MutationAuthorityTransportV1 for Signing {
     fn invoke(&mut self, request: &Value) -> Result<Value> {
-        let v=self.oracle.borrow_mut().call(json!({"operation":"reserve-maintenance","root":self.root,"request":request,"mode":"valid"}));
+        let operation =
+            if request["kind"] == "AutonomousResearchOnlineSchemaTransitionFinalizeRequest" {
+                "finalize-maintenance"
+            } else {
+                "reserve-maintenance"
+            };
+        let v = self
+            .oracle
+            .borrow_mut()
+            .call(json!({"operation":operation,"root":self.root,"request":request,"mode":"valid"}));
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["value"]["accepted"], true);
         fn float_spelling(value: &mut Value) {
@@ -618,7 +627,13 @@ fn actual_wall_clock_lease_installs_all_ten_databases() {
     let fixture = Fixture::new(false);
     let mut authority = fixture.authority();
     let mut clock = SystemMutationClockV1;
-    let plan = build_schema_transition_plan_v1(fixture.options(), &authority, &mut clock).unwrap();
+    // This is a positive real-I/O lifecycle test, not a 60-second performance
+    // qualification. Request the fixture authority's existing five-minute cap
+    // explicitly; production defaults, commit margins and expiry refusals do
+    // not change. Deterministic expiry regressions retain their 60-second lease.
+    let mut options = fixture.options();
+    options.requested_lease_ms = 300_000;
+    let plan = build_schema_transition_plan_v1(options, &authority, &mut clock).unwrap();
     let maintenance = reserve_schema_maintenance_v1(plan, &mut authority, &mut clock).unwrap();
     let token = normalize_schema_maintenance_v1(
         maintenance,
@@ -742,3 +757,6 @@ fn installation_recovery_requires_plan_pin_before_inventory_lock_or_clock() {
     drop(recovered);
     assert_eq!(plan_bytes(&fixture, &plan), original_databases);
 }
+
+#[path = "schema_installation_parity/finalization_recovery.rs"]
+mod finalization_recovery;

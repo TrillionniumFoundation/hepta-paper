@@ -188,6 +188,9 @@ pub struct SchemaTransitionPostStateV1 {
     inspections: Vec<PristineDatabaseInspectionV1>,
 }
 impl SchemaTransitionPostStateV1 {
+    pub(super) fn held_inventory(&self) -> &ObservedStateDatabaseInventoryV1 {
+        &self.observed
+    }
     pub fn inventory(&self) -> &Value {
         self.observed.value()
     }
@@ -626,3 +629,5 @@ mod tests {
 }
 
 pub mod publication;
+
+pub mod recovery;

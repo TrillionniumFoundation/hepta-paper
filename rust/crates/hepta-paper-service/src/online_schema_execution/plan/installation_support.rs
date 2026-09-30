@@ -6,15 +6,9 @@ impl ObservedSchemaTransitionPlanV1 {
         &self.manifest
     }
 }
-pub(in crate::online_schema_execution) fn validate_installation_journal<
-    T: MutationAuthorityTransportV1,
->(
-    journal: &Value,
-    manifest: &Value,
-    writer: &Value,
-    authority: &PinnedMutationAuthorityV1<T>,
+pub(in crate::online_schema_execution) fn validate_schema_transition_plan_identity_v1(
+    plan: &Value,
 ) -> Result<()> {
-    let plan = &journal["plan"];
     let mut base = plan.clone();
     let object = base.as_object_mut().ok_or_else(invalid)?;
     object.remove("planHash");
@@ -26,6 +20,19 @@ pub(in crate::online_schema_execution) fn validate_installation_journal<
     {
         return Err(invalid());
     }
+    Ok(())
+}
+
+pub(in crate::online_schema_execution) fn validate_installation_journal<
+    T: MutationAuthorityTransportV1,
+>(
+    journal: &Value,
+    manifest: &Value,
+    writer: &Value,
+    authority: &PinnedMutationAuthorityV1<T>,
+) -> Result<()> {
+    let plan = &journal["plan"];
+    validate_schema_transition_plan_identity_v1(plan)?;
     let data: Value = serde_json::from_str(include_str!(
         "../../online_schema_transition/schema_data.json"
     ))

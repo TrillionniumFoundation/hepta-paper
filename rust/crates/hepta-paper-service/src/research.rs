@@ -1,6 +1,6 @@
 //! Restricted-research composition over the existing service/CAS/sequencer.
 //!
-//! This module consumes the complete canonical V3 file/replay request owner. It cannot construct,
+//! This module consumes the complete canonical V3/V4 research file/replay request owner. It cannot construct,
 //! deserialize or promote that value into the full production closure. Research
 //! state may be established, but release, submission, cutover and irreversible
 //! external effects remain structurally unavailable.
@@ -102,7 +102,7 @@ pub struct ResearchWorkflowReceiptV1 {
 }
 
 /// Advance or recover an existing local workflow through the same durable owner,
-/// while requiring the exact opaque V3 qualification for every new service dispatch.
+/// while requiring the exact opaque V3/V4 research qualification for every new service dispatch.
 /// Read-only/lifecycle recovery remains in the ordinary workflow API and cannot
 /// turn the persisted profile into release or submission authority.
 pub fn operate_research_local_workflow_with_clock_and_cancellation_v1(
@@ -209,6 +209,7 @@ trait ResearchQualificationAuthorityV1 {
     fn trust_store_generation(&self) -> u64;
     fn expires_at_unix_ms(&self) -> u64;
     fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1;
+    fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)>;
     fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError>;
 }
 
@@ -230,6 +231,9 @@ impl ResearchQualificationAuthorityV1 for VerifiedResearchQualificationRequestV3
     }
     fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1 {
         self.qualification().runtime_facts()
+    }
+    fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
+        self.qualification().codex_role_principal(role)
     }
     fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError> {
         self.observe_current(now_unix_ms)
@@ -392,6 +396,7 @@ fn run_research_service_with_authority_clock_and_cancellation_v1<
         parse_digest(&qualification.runtime_facts().codex_runtime_identity_hash)
             .map_err(|_| ServiceError::Configuration)?;
     validate_research_service_policy_v1(&config, &runtime_identity_hash)?;
+    validate_research_broker_principals(&config.service, qualification)?;
     let configuration_hash = service_configuration_hash_v1(&config.service)?;
     let preflight_now = observe().map_err(|_| ServiceError::Persistence)?;
     let preflight_now = qualification
@@ -433,6 +438,37 @@ fn run_research_service_with_authority_clock_and_cancellation_v1<
         configuration_hash,
         control_plane_receipt,
     )
+}
+
+fn validate_research_broker_principals<A: ResearchQualificationAuthorityV1>(
+    service: &ServiceRunV1,
+    qualification: &A,
+) -> Result<(), ServiceError> {
+    for worker in service.workers.values() {
+        let source = match worker {
+            WorkerBindingV1::BrokerExecute { source }
+            | WorkerBindingV1::BrokerPrepared { source } => source,
+            _ => continue,
+        };
+        let role = match source.role {
+            hepta_codex_protocol::AgentRole::Author => "author",
+            hepta_codex_protocol::AgentRole::Reviewer => "reviewer",
+            hepta_codex_protocol::AgentRole::FormalReviewer => "formal_reviewer",
+            hepta_codex_protocol::AgentRole::Repairer => "repairer",
+        };
+        if qualification.codex_role_principal(role) != Some((source.broker_uid, source.broker_gid))
+        {
+            return Err(ServiceError::Configuration);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_research_workflow_broker_principals_v1(
+    service: &ServiceRunV1,
+    qualification: &VerifiedResearchQualificationRequestV3,
+) -> Result<(), ServiceError> {
+    validate_research_broker_principals(service, qualification)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -597,6 +633,7 @@ mod tests {
         reject_when_prepared: Option<std::path::PathBuf>,
         post_io_delta_ms: u64,
         checks: Cell<u64>,
+        role_principals: BTreeMap<String, (u32, u32)>,
     }
 
     impl TestQualification {
@@ -608,7 +645,7 @@ mod tests {
                     database_identity_hash: digest(2).to_string(),
                     service_identity_hash: digest(3).to_string(),
                     codex_runtime_identity_hash: digest(4).to_string(),
-                    writer_transfer_receipt_hash: digest(5).to_string(),
+                    writer_transfer_receipt_hash: Some(digest(5).to_string()),
                 },
                 receipt_hash: digest(6).to_string(),
                 binding_hash: digest(7).to_string(),
@@ -618,6 +655,7 @@ mod tests {
                 reject_when_prepared: None,
                 post_io_delta_ms: 0,
                 checks: Cell::new(0),
+                role_principals: BTreeMap::new(),
             }
         }
     }
@@ -640,6 +678,9 @@ mod tests {
         }
         fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1 {
             &self.facts
+        }
+        fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
+            self.role_principals.get(role).copied()
         }
         fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError> {
             let check = self.checks.get().checked_add(1).unwrap();
@@ -1006,4 +1047,5 @@ mod tests {
     }
 
     mod currentness;
+    mod principal_binding;
 }

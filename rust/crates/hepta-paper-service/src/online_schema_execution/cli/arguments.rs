@@ -2,12 +2,16 @@
 use std::{collections::BTreeMap, path::PathBuf};
 pub(super) struct Arguments {
     pub help: bool,
+    pub action: String,
     pub runtime: PathBuf,
     pub process: PathBuf,
     pub process_hash: String,
     pub requested_lease_ms: i64,
     pub execution_window_ms: i64,
     pub expected_pristine: Option<String>,
+    pub expected_previous_final: Option<String>,
+    pub historical_source_process: Option<PathBuf>,
+    pub historical_source_process_hash: Option<String>,
 }
 fn invalid(name: &str) -> String {
     format!("autonomous_research_online_schema_transition_{name}")
@@ -62,11 +66,14 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
             | "runtime-root"
             | "authority-process-config"
             | "authority-process-config-sha256"
+            | "historical-source-authority-process-config"
+            | "historical-source-authority-process-config-sha256"
             | "requested-lease-ms"
             | "required-execution-window-ms"
             | "commit-safety-margin-ms"
             | "transition-id"
-            | "expected-pre-rebind-pristine-runtime-state-hash" => {
+            | "expected-pre-rebind-pristine-runtime-state-hash"
+            | "expected-previous-final-receipt-sha256" => {
                 let value = match inline {
                     Some(value) => value,
                     None => {
@@ -92,18 +99,22 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
     let help = values.contains_key("help");
     let defaults = Arguments {
         help,
+        action: "plan".into(),
         runtime: PathBuf::new(),
         process: PathBuf::new(),
         process_hash: String::new(),
         requested_lease_ms: 120000,
         execution_window_ms: 30000,
         expected_pristine: None,
+        expected_previous_final: None,
+        historical_source_process: None,
+        historical_source_process_hash: None,
     };
     if help {
         return Ok(defaults);
     }
     let action = values.get("action").map(String::as_str).unwrap_or("plan");
-    if !matches!(action, "plan" | "execute") {
+    if !matches!(action, "plan" | "inspect-pristine" | "execute") {
         return Err(invalid(&format!("action_invalid:{action}")));
     }
     if action == "execute" {
@@ -122,6 +133,11 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
     }
     if values.contains_key("transition-id") || values.contains_key("commit-safety-margin-ms") {
         return Err(invalid("execute_option_forbidden_in_plan"));
+    }
+    if action == "inspect-pristine"
+        && values.contains_key("expected-pre-rebind-pristine-runtime-state-hash")
+    {
+        return Err(invalid("expected_pre_rebind_state_forbidden_in_inspection"));
     }
     let runtime = values
         .get("runtime-root")
@@ -147,13 +163,36 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
     if expected.as_ref().is_some_and(|v| !hash(v)) {
         return Err(invalid("expected_pre_rebind_state_hash_invalid"));
     }
+    let expected_previous_final = values
+        .get("expected-previous-final-receipt-sha256")
+        .cloned();
+    if expected_previous_final.as_ref().is_some_and(|v| !hash(v)) {
+        return Err(invalid("expected_previous_final_receipt_hash_invalid"));
+    }
+    let historical_source_process = values
+        .get("historical-source-authority-process-config")
+        .map(PathBuf::from);
+    let historical_source_process_hash = values
+        .get("historical-source-authority-process-config-sha256")
+        .cloned();
+    if historical_source_process.is_some() != historical_source_process_hash.is_some()
+        || historical_source_process_hash
+            .as_ref()
+            .is_some_and(|value| !hash(value))
+    {
+        return Err(invalid("historical_source_authority_process_pin_required"));
+    }
     Ok(Arguments {
         help: false,
+        action: action.into(),
         runtime: runtime.into(),
         process: process.into(),
         process_hash: process_hash.clone(),
         requested_lease_ms: requested,
         execution_window_ms: window,
         expected_pristine: expected,
+        expected_previous_final,
+        historical_source_process,
+        historical_source_process_hash,
     })
 }

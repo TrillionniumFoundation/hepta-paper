@@ -40,12 +40,12 @@ const TABLES: [Table; 6] = [
         columns: "rowid,mutation_attempt_id,reservation_id,status,global_sequence,database_instance_id,reserve_request_json,reservation_receipt_json,finalize_request_json,finalization_receipt_json,abort_request_json,abort_receipt_json",
         maximum: 10_000,
     },
-    // The initial verifier refuses every backup row. Reading at most one is
-    // sufficient to distinguish an empty history without unbounded collection.
+    // Backup history is append-only authority evidence. The bounded verifier
+    // admits only complete signed rows at an otherwise empty mutation history.
     Table {
         name: "authority_backup_reservation",
         columns: "rowid,reservation_id,reserve_request_json,reservation_receipt_json,finalize_request_json,finalization_receipt_json",
-        maximum: 1,
+        maximum: 4_096,
     },
 ];
 
@@ -135,6 +135,13 @@ fn framed(hash: &mut Sha256, bytes: &[u8]) {
     hash.update(bytes);
 }
 pub(super) fn read_source_rows(db: &Connection) -> Result<JournalRows> {
+    read_source_rows_for_profile(db, true)
+}
+
+pub(super) fn read_source_rows_for_profile(
+    db: &Connection,
+    schema_rebind_present: bool,
+) -> Result<JournalRows> {
     let transaction = db.transaction_state(Some("main"))?;
     if !matches!(
         transaction,
@@ -151,6 +158,15 @@ pub(super) fn read_source_rows(db: &Connection) -> Result<JournalRows> {
     for (table, output) in TABLES.iter().zip(&mut tables) {
         framed(&mut digest, table.name.as_bytes());
         framed(&mut digest, table.columns.as_bytes());
+        // The initial Node schema predates the rebind table. The source profile
+        // proves that exact closed catalog before this helper is called; hashing
+        // the absent table as the same empty set keeps the six-table logical
+        // domain stable for the detached native image.
+        if table.name == "authority_schema_rebind" && !schema_rebind_present {
+            digest.update([0]);
+            digest.update(0u64.to_le_bytes());
+            continue;
+        }
         // Identifiers are source-owned literals, never request or database text.
         let sql = format!(
             "SELECT {} FROM main.{} ORDER BY rowid",

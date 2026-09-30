@@ -142,6 +142,8 @@ fn original_node_file_matches_complete_profile_without_byte_row_or_setting_chang
             .query_row("PRAGMA main.journal_mode", [], |r| r.get(0))
             .unwrap();
         profile = inspect_source_schema(&db).unwrap();
+        assert_eq!(profile.profile_id(), CURRENT_PROFILE);
+        assert!(profile.schema_rebind_present());
         assert_eq!(profile.schema()["catalog"].as_array().unwrap().len(), 12);
         assert_eq!(profile.schema()["tables"].as_array().unwrap().len(), 6);
         let mutation = profile.schema()["tables"]
@@ -183,6 +185,57 @@ fn original_node_file_matches_complete_profile_without_byte_row_or_setting_chang
     let db = memory(SOURCE_SCHEMA);
     begin_read(&db);
     assert_eq!(profile, inspect_source_schema(&db).unwrap());
+}
+
+#[test]
+fn exact_initial_node_schema_without_rebind_is_a_separate_closed_profile() {
+    let current = memory(SOURCE_SCHEMA);
+    begin_read(&current);
+    let current_profile = inspect_source_schema(&current).unwrap();
+    let initial = memory(SOURCE_SCHEMA);
+    initial
+        .execute_batch("DROP TABLE authority_schema_rebind")
+        .unwrap();
+    begin_read(&initial);
+    let initial_profile = inspect_source_schema(&initial).unwrap();
+    assert_eq!(initial_profile.profile_id(), INITIAL_PROFILE);
+    assert!(!initial_profile.schema_rebind_present());
+    assert_eq!(
+        initial_profile.schema()["catalog"]
+            .as_array()
+            .unwrap()
+            .len(),
+        10
+    );
+    let rebind = initial_profile.schema()["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|table| table["name"] == "authority_schema_rebind")
+        .unwrap();
+    assert_eq!(rebind["columns"], json!([]));
+    assert_eq!(rebind["indices"], json!([]));
+    assert_ne!(initial_profile.schema_hash(), current_profile.schema_hash());
+    assert_ne!(initial_profile, current_profile);
+
+    for table in [
+        "authority_backup_reservation",
+        "authority_database_head",
+        "authority_metadata",
+        "authority_mutation",
+        "authority_schema_transition",
+    ] {
+        let changed = memory(SOURCE_SCHEMA);
+        changed
+            .execute_batch(&format!("DROP TABLE {table}"))
+            .unwrap();
+        begin_read(&changed);
+        assert_eq!(
+            inspect_source_schema(&changed).unwrap_err().code,
+            "local_authority_source_schema_mismatch",
+            "unexpected missing-table profile accepted: {table}"
+        );
+    }
 }
 
 #[test]
@@ -319,6 +372,35 @@ fn query_helper_rejects_mutation_before_it_runs() {
     );
     inspect_source_schema(&db).unwrap();
     assert_eq!(integer(&db, "PRAGMA query_only").unwrap(), 0);
+}
+
+#[test]
+fn an_extra_index_is_rejected_before_its_unbounded_metadata_is_queried() {
+    let repeated_columns = std::iter::repeat_n("global_sequence", MAX_ROWS + 1)
+        .collect::<Vec<_>>()
+        .join(",");
+    for initial in [false, true] {
+        let db = memory(SOURCE_SCHEMA);
+        if initial {
+            db.execute_batch("DROP TABLE authority_schema_rebind")
+                .unwrap();
+        }
+        db.execute_batch(&format!(
+            "CREATE INDEX oversized_extra_index ON authority_mutation({repeated_columns})"
+        ))
+        .unwrap();
+        begin_read(&db);
+        let changes = db.total_changes();
+        assert_eq!(
+            inspect_source_schema(&db).unwrap_err().code,
+            "local_authority_source_schema_mismatch"
+        );
+        assert_eq!(db.total_changes(), changes);
+        assert_eq!(
+            db.transaction_state(Some("main")).unwrap(),
+            TransactionState::Read
+        );
+    }
 }
 
 #[test]

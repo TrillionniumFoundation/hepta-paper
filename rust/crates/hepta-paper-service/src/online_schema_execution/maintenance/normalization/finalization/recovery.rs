@@ -16,6 +16,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod restart;
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct FinalizationProgress {
@@ -302,8 +304,8 @@ pub fn resume_schema_transition_finalization_v1<T: MutationAuthorityTransportV1>
         &invalid().code,
     )?;
     ensure(
-        journal["plan"]["version"] == 1,
-        "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
+        [json!(1), json!(2)].contains(&journal["plan"]["version"]),
+        "autonomous_research_online_schema_transition_finalization_progress_invalid",
     )?;
     let progress = progress(&journal)?;
     ensure(

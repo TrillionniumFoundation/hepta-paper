@@ -624,9 +624,12 @@ impl InstalledSchemaMaintenanceV1 {
         authority: &PinnedMutationAuthorityV1<T>,
         clock: &mut dyn MutationClockV1,
     ) -> Result<FinalizationHandoff> {
+        // Both v1 and pristine v2 install/finalize under the source authority.
+        // V2 stops at a separately persisted target-configuration observation;
+        // allowing finalization here does not claim that restart has occurred.
         ensure(
-            self.plan()["version"] == 1,
-            "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
+            [json!(1), json!(2)].contains(&self.plan()["version"]),
+            "autonomous_research_online_schema_transition_installation_invalid",
         )?;
         self.assert_current(authority, clock)?;
         let Self {

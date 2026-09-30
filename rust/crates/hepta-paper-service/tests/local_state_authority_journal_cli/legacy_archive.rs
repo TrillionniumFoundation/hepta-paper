@@ -168,12 +168,20 @@ fn check_bundle(
 }
 
 #[test]
-fn actual_node_histories_export_original_schema_and_every_raw_row() {
-    for scenario in ["uninitialized", "rebind2", "aborted-tail"] {
+fn actual_node_histories_and_completed_backups_export_every_original_sql_row() {
+    for scenario in [
+        "uninitialized",
+        "rebind2",
+        "aborted-tail",
+        "completed-backup",
+    ] {
         let fixture = Fixture::node(scenario);
         let original_rows = snapshot(&fixture.database());
         let original_bytes = fs::read(fixture.database()).unwrap();
         let inspected = success(fixture.run(false));
+        if scenario == "completed-backup" {
+            assert_completed_backup_history(&fixture, &original_rows, &inspected);
+        }
         let arguments = arguments(&fixture);
         let inline = std::iter::once(arguments[0].clone()).chain(
             arguments[1..]
@@ -251,13 +259,13 @@ fn committed_only_wal_rows_reach_the_archive_without_changing_the_old_reader() {
 }
 
 #[test]
-fn pending_wrong_pin_and_wrong_key_refusals_leave_no_archive_or_source_change() {
+fn pending_histories_and_wrong_pins_or_keys_leave_no_archive_or_source_change() {
     for scenario in [
         "pending-mutation",
         "pending-schema",
         "pending-rebind",
         "unactivated-rebind",
-        "completed-backup",
+        "pending-backup",
     ] {
         let fixture = Fixture::node(scenario);
         let before_rows = snapshot(&fixture.database());

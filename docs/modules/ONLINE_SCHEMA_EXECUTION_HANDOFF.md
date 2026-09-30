@@ -3,16 +3,17 @@
 This slice implements actual migration-source observation, private SQLite journal
 normalization/target-schema projection, complete registered-scope v1/v2 local
 planning, signed maintenance reservation, ten-database installation with
-durable progress/recovery, and finalization post-state/publication primitives.
-The ordinary native CLI now exposes the fresh read-only planner. It is not the
-complete execute/recovery CLI, a target-host restart/activation proof, an
-externally durable final receipt, or independent production qualification.
+durable progress/recovery, durable v1 finalization/observation, and the v2
+target-configuration observation/final-receipt boundary. The ordinary native
+CLI exposes the read-only pristine-review/predecessor verifier and planner. It is
+not the complete installed execute/recovery CLI, a service-manager restart owner,
+a production canary or independent deployment qualification.
 
 The native module is exposed as `online_schema_execution`; its actual source observer is crate-private `state_database_inventory::schema_source`. The public types retain real source and signature evidence rather than accepting a serialized readiness claim.
 
 ## Source and native entry points
 
-Original behavior comes from `paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs`: source path/identity, stable identity hashing, journal preimage hashing, `expectedNormalizedSourceSha256`, private journal normalization and expected target-schema projection. The later maintenance and installation sources are `autonomous-research-online-schema-transition-journal-normalization.mjs` and `autonomous-research-online-schema-transition-installation.mjs`. The all-scope signed reservation, live local writes, durable progress/recovery and finalization post-state checks are implemented; target restart/authority linearizability and complete CLI modes remain open.
+Original behavior comes from `paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs`: source path/identity, stable identity hashing, journal preimage hashing, `expectedNormalizedSourceSha256`, private journal normalization and expected target-schema projection. The later maintenance and installation sources are `autonomous-research-online-schema-transition-journal-normalization.mjs` and `autonomous-research-online-schema-transition-installation.mjs`. The all-scope signed reservation, live local writes, durable progress/recovery, finalization post-state checks and the v2 target-authority observation protocol are implemented. The source path deliberately does not stop or start a service; independently qualified service-manager control, complete CLI modes and installed acceptance remain open.
 
 `online_schema_execution::observe_schema_transition_source_v1(runtime_root, relative_path, role, applied_at)` returns `ObservedSchemaTransitionSourceV1` only after actual filesystem and SQLite operations. All fields are private; `.value()` exposes diagnostic/hash data and `.assert_current()` rechecks the captured physical sources. There is no Deserialize, claim constructor, ready flag, public arbitrary callback, or public live database connection.
 
@@ -70,18 +71,35 @@ The executable source/projection and signed-maintenance cases below remain regis
 
 The source tests do not qualify installed authority or claim that the production checkpoint has advanced. Strict Clippy, real execution results and failure reproductions are recorded by the existing source-owner evidence and PR/run logs; those observations are not duplicated here.
 
-## Ordinary read-only planning entry
+## Ordinary read-only review and planning entry
+
+For v2, first observe the exact pristine preimage without constructing a plan or
+reservation:
+
+```sh
+hepta-paper-rust autonomous-online-schema-transition --action inspect-pristine \
+  --runtime-root /absolute/native-runtime \
+  --authority-process-config /absolute/authority-process.json \
+  --authority-process-config-sha256 sha256:<exact-file-digest> \
+  [--expected-previous-final-receipt-sha256 sha256:<raw-FINAL-file-digest>]
+```
+
+A separate invocation must pin the returned `prePristineRuntimeStateHash`:
 
 ```sh
 hepta-paper-rust autonomous-online-schema-transition --action plan \
   --runtime-root /absolute/native-runtime \
   --authority-process-config /absolute/authority-process.json \
-  --authority-process-config-sha256 sha256:<exact-file-digest>
+  --authority-process-config-sha256 sha256:<exact-file-digest> \
+  --expected-pre-rebind-pristine-runtime-state-hash sha256:<reviewed-hash> \
+  [--expected-previous-final-receipt-sha256 sha256:<raw-FINAL-file-digest>]
 ```
 
 `online_schema_execution::cli::schema_transition_plan_cli_v1` calls the existing
-`build_schema_transition_plan_v1`; it does not assemble a replacement inventory,
-writer, migration engine or recovery journal. It uses the compiled canonical
+shared source/inventory owner. `inspect-pristine` and `plan` observe the same ten
+databases, descriptors, private SQLite projections and authority configuration;
+the former cannot deserialize into a plan or reservation. The CLI does not
+assemble a replacement inventory, writer, migration engine or recovery journal. It uses the compiled canonical
 state-database manifest and the existing `state_backup_writer_manifest_v1`
 source. The public process configuration, referenced verifier configuration,
 public key document and executable are retained by the original pinned authority
@@ -90,8 +108,9 @@ The actual ordinary-CLI fixtures select a pinned executable that returns failure
 if called; both initial v1 and pristine-rebind v2 plans still succeed.
 
 The command supports `--requested-lease-ms` (default 120000),
-`--required-execution-window-ms` (default 30000), and the separately selected
-`--expected-pre-rebind-pristine-runtime-state-hash`. Each plan is based on the
+`--required-execution-window-ms` (default 30000), the separately selected
+`--expected-pre-rebind-pristine-runtime-state-hash`, and an optional exact raw
+`--expected-previous-final-receipt-sha256`. Each plan is based on the
 real registered ten-database source observations and private SQLite projections.
 The whole inventory, source descriptors, public authority inputs and command
 are revalidated after the final clock observation; a negative/regressing clock,
@@ -114,26 +133,52 @@ the native authority contract (at most 900000 milliseconds); broader Node
 Number/path/environment coercions are not claimed equivalent. The existing v2
 planner remains fail-closed for unsupported genesis inputs.
 
-Any existing `autonomous-research/online-schema-transition` entry, including an
-empty directory, is refused as requiring the existing recovery owner. The CLI
-never reads an `ACTIVE.json` as new authority, adopts old transition progress,
-erases an interrupted plan or changes a final receipt. This deliberately narrower
-fresh-plan surface is not the incumbent existing-state/resume report mode.
-The control path is checked both before and after the complete source observation.
-Actual process-death tests kill the ordinary binary after private-copy creation,
-then retry through the same entry: source bytes remain unchanged and surviving
-private-copy residue is neither adopted nor erased.
+An existing control directory remains fail-closed unless the caller pins the raw
+`FINAL.json` file and the directory is one of two closed finalized shapes:
+`ACTIVE.json + FINAL.json` from the incumbent Node owner, or
+`NORMALIZATION.native.v1.json + FINAL.json` from the canonical Rust owner. The
+Node form must bind a finalized ACTIVE plan/request/reservation/installations to
+the exact FINAL receipt. The Rust form must bind the durable plan, reserve,
+installation, finalization and v1 observation or v2 target-restart observation
+progress to that receipt. Both paths verify the historical signed audit chain and
+retain all source/control descriptors through the new observation. Unknown files,
+unresolved progress, absent/wrong pins, substituted bytes or configuration drift
+remain refused. The CLI never treats persisted JSON as execution authority,
+erases an interrupted plan or changes a final receipt. The control path is checked
+both before and after the complete source observation. Actual process-death tests
+kill the ordinary binary after private-copy creation, then retry through the same
+entry: source bytes remain unchanged and surviving private-copy residue is neither
+adopted nor erased.
+
+A finalized native v2 predecessor additionally requires
+`--historical-source-authority-process-config ABSOLUTE_PATH` and
+`--historical-source-authority-process-config-sha256 sha256:HASH`. This separately
+pinned historical public verifier must match the original journal's public
+configuration hash and verify the original reservation/finalization. The current
+target public verifier independently verifies the complete final audit and must
+retain the same authority, key, scope and database identity with the finalized
+target writer manifest. Both public configuration owners and process inputs are
+retained and rechecked; neither process is invoked during planning. A public
+verifier configuration hash is a different domain from the signed private daemon
+`targetAuthorityConfigurationHash`. Missing historical pins, altered source
+configuration or journal hash, and substituted target writer/scope/key fail
+before source planning. V1 retains its original current-configuration equality;
+neither CLI profile silently adopts a historical configuration from the journal.
 
 `--action execute` still requires the original two confirmation fields before
 reporting `native_execute_requires_installed_owner`, and fails before reading
 runtime or authority inputs. It cannot invoke the existing live executor from
-this entry. Installing the real writable composition, retaining the signed
-reservation through restart, current checkpoint/final-receipt recovery and
-accepting target-host canary/rollback/old-Node-writer fencing remain separate work.
+this entry. The library now retains the signed reservation and exact v2 target
+observation across an externally owned restart, then publishes the historical
+FINAL receipt only after the target authority signs activation. Installing that
+composition behind the ordinary entry, service-manager stop/start, canary,
+rollback and independently accepted old-Node-writer fencing remain separate work.
 
-The CLI cases in `tests/schema_source_projection_parity/cli.rs` exercise actual
-Node/Rust entrypoints, complete v1/v2 reports, invalid modes, pinned-input
-substitution, old control-state refusal, late observation drift and process death.
+The CLI cases in `tests/schema_source_projection_parity/cli.rs`,
+`tests/finalization_publication.rs`, and the finalization-recovery shard exercise
+actual Node/Rust entrypoints, complete v1/v2 reports, independent pristine review,
+Node and Rust finalized predecessors, invalid modes, pinned-input substitution,
+unresolved control-state refusal, late observation drift and process death.
 They reuse the original ten-database fixtures; no local test supplies installed
 credentials or claims independent live authority.
 
@@ -141,4 +186,4 @@ credentials or claims independent live authority.
 
 The local full-scope planner and signed reservation are implemented. The live executor consumes these opaque objects and preserves their subject, source/root pins and fresh lease checks throughout every filesystem and SQLite write; passing a caller Boolean or a detached serialized receipt is insufficient.
 
-The [journal normalization stage](SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md) and [schema genesis installation](SCHEMA_GENESIS_INSTALLATION_HANDOFF.md) now implement actual ten-database normalization, signed genesis/metadata installation, identity-bound stale-SHM handling, live signed-lease checks, durable per-instance progress and recovery across process death. Recovery compares complete expected and actual SQLite state, recognizes an already-installed target only through current schema, pinned file identity and sidecar checks, and validates `1 <= commitSafetyMarginMs < requiredExecutionWindowMs` like Node. The [finalization and observation contract](SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md) owns current post-state, durable v1 finalization/observation recovery and direct composition into the existing historical no-clobber `FINAL.json` publication. Target-configuration restart, ordinary installed execution and independent deployment qualification remain open; neither historical receipt replay/publication nor these local primitives grant activation.
+The [journal normalization stage](SCHEMA_JOURNAL_NORMALIZATION_HANDOFF.md) and [schema genesis installation](SCHEMA_GENESIS_INSTALLATION_HANDOFF.md) now implement actual ten-database normalization, signed genesis/metadata installation, identity-bound stale-SHM handling, live signed-lease checks, durable per-instance progress and recovery across process death. Recovery compares complete expected and actual SQLite state, recognizes an already-installed target only through current schema, pinned file identity and sidecar checks, and validates `1 <= commitSafetyMarginMs < requiredExecutionWindowMs` like Node. The [finalization and observation contract](SCHEMA_FINALIZATION_OBSERVATION_HANDOFF.md) owns current post-state, durable v1 recovery, and the v2 source-to-target authority handoff. V2 persists the exact target observation before service control is handed out, retries only that request after an unknown reply, and publishes the existing no-clobber `FINAL.json` from exact verified Node-wire bytes after the target authority signs activation. Ordinary installed execution, the actual service-manager restart, canary/rollback and independent deployment qualification remain open; neither historical receipt replay/publication nor these local primitives grants release, submission or Node retirement.

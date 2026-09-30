@@ -72,6 +72,48 @@ forged receipts, changed installations/business rows or journal CAS drift. A
 recorded observation replays without RPC or a clock. That replay is historical
 evidence and is never presented as a fresh unexpired readiness observation.
 
+## Durable v2 target-configuration restart boundary
+
+A version-2 finalization cannot reuse the source authority as proof that the
+target configuration is active. `prepare_schema_target_configuration_restart_v2`
+therefore retains the same root lock and verified ten-database post-state, checks
+the signed finalization's distinct target-configuration hash, and persists one
+closed `targetRestartObservationProgress` record in the existing normalization
+CAS journal before any external restart or authority RPC. The request/hash,
+source and target configuration hashes, finalization receipt and plan are all
+cross-bound. Preparation does not control a service manager.
+
+The installed restart owner may stop/start the authority only outside this
+module. After that action, `observe_restarted_schema_transition_v2` accepts a
+separately pinned target authority only when authority/key/scope/database/writer
+identity still agrees with the source history and the exact target configuration
+selected by finalization. It sends the durable observation request and requires a
+signed `authorityConfigurationActivated=true` receipt. A transport loss does not
+repeat stop/start or mint a new request: recovery reopens the exact retained
+intent and retries only the idempotent observation. A recorded receipt replays
+without RPC, clock or SQL installation.
+
+`resume_schema_target_configuration_restart_v2` requires independently retained
+transition, plan, finalization-request and target-observation-request hashes.
+Substituted target configuration, source drift, altered journal bytes, changed
+business state, wrong trust, malformed receipt and missing pins fail before a
+target RPC. Real process-exit regression coverage proves the intent survives a
+client death before that RPC.
+
+`publish_restarted_schema_transition_observation_v2` builds the audit from the
+held source history and target-signed observation, drops the live owner,
+re-observes all ten databases and publishes the existing historical `FINAL.json`.
+The Node audit has a fixed `databaseGenesis` property order; the final-receipt CAS
+owner now accepts only caller-retained bytes that parse exactly to the verified
+closed value, writes those exact bytes under its existing lock/no-clobber policy,
+and checks exact byte/digest readback. This preserves the incumbent signed wire
+identity without allowing raw bytes to choose another receipt.
+
+This boundary proves only the recorded target authority observation. It does not
+supply service-manager credentials, install the ordinary execute entry, run a
+canary, prove rollback, fence a live legacy Node writer or authorize release,
+submission, production activation or retirement.
+
 ## Final receipt and activation remain distinct
 
 `build_schema_transition_finalize_request_v1` and
@@ -90,13 +132,15 @@ historical audit while holding the original root owner, releases that owner,
 re-observes all ten databases, then uses the existing no-clobber `FINAL.json`
 repository. Exact replay returns the already-published file without another RPC.
 This historical publication still does not activate a runtime or create a fresh
-readiness receipt. V2 needs an owned target-configuration restart proof; no
-source-config receipt or caller boolean supplies it.
+readiness receipt. V2 uses the durable target-configuration observation owner
+above; no source-config receipt, manager report or caller Boolean substitutes for
+the target authority's signed observation.
 
 The ordinary schema execute CLI still requires the installed owner. These are
 source-level continuations of the existing installation/finalization owners, not
-an alternate product launcher or a claim of installed migration/canary/rollback,
-old-Node-writer fencing, independent role/billing acceptance or full route parity.
+an alternate product launcher. The actual installed service-manager transaction,
+writer transfer, canary, rollback, old-Node-writer fencing and independent
+acceptance remain open.
 
 ## Executable verification
 
@@ -106,10 +150,11 @@ normal planner, signed reservation, normalization and actual ten-database
 installer before finalization. The Node completion contract and ephemeral
 signature fixtures are explicit local peers, not independently installed service
 principals. Tests exercise finalization and observation request preservation, uncertain
-replies, durable receipt errors, real client process exit before either RPC,
-altered pins/journals/business rows, no reinstall, exact-request retry, offline
-historical replay, direct audit assembly and idempotent `FINAL.json` publication
-without caller-provided signed records.
+replies, durable receipt errors, real client process exit before source and target
+RPCs, altered pins/journals/business rows/configurations, no reinstall or repeated
+restart, exact-request retry, offline historical replay, direct audit assembly,
+exact Node-wire CAS bytes and idempotent `FINAL.json` publication without
+caller-provided signed records.
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml --locked --all-features -p hepta-paper-service --test schema_installation_parity

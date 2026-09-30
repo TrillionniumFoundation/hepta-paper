@@ -285,7 +285,7 @@ The receipt object is diagnostic identity, not authority, and it cannot mint the
 For `launch` or `converge`, a profile-bound definition requires
 `--research-qualification-request ABSOLUTE_JSON_PATH`. The command calls the
 canonical qualification-closure owner, verifies the five independently signed
-V3 packages, and compares the fully verified opaque value with the persisted
+V3 packages or the four signed V4 safety packages, and compares the fully verified opaque value with the persisted
 profile before the replay-ledger transaction. A mismatch consumes no nonce and
 advances no trust or verifier-clock state. Receipt JSON is never deserialized
 into authority; every new dispatch receives and rechecks the opaque Rust value.
@@ -881,7 +881,12 @@ these public execution APIs. This is enforced by Rust types and a compile-fail
 contract, not a new ready flag. The exact
 repository/commit/tree subject, opaque closure identity, trust generation,
 exclusive expiry and qualified Codex runtime identity are cross-bound before a
-new service dispatch. Qualification currentness is checked before filesystem
+new service dispatch. Every BrokerExecute/BrokerPrepared source additionally
+matches its exact role UID/GID from the signed canary payload; a shared runtime
+hash cannot substitute an author principal for a reviewer or an unqualified
+role. The ordinary CLI checks these principals before initial workflow creation;
+the service repeats the check before its execution clock, campaign database,
+request issuance and broker I/O. Qualification currentness is checked before filesystem
 mutation and again on every existing service clock observation through dispatch
 and commit. The accepted request retains the original trust-file descriptor and
 ancestor directory descriptors. Linux directory identities use `O_PATH`, so an
@@ -902,6 +907,19 @@ token; a pre-cancelled run creates no campaign database. A time-window or
 cancellation failure therefore follows the same prepared-result and
 inspection/recovery rules rather than authorizing a fresh effect or claiming
 provider termination.
+
+The version-neutral research request verifier accepts only restricted V3 or V4.
+V4 requires the existing four signed host-cgroup, host-storage, key-owner and
+Codex-role packages, including storage fault recovery and its 10,000-operation,
+72-hour qualification. It omits writer-transfer/cutover evidence and grants no
+release, submission or production activation. Existing `_v3` entrypoints still
+require V3; the retained opaque Rust type name does not let callers construct
+V4 authority from receipt JSON. The signed factory tests exercise V4 receipt
+schema, trust, expiry and replay. The native workflow regression
+`research::tests::principal_binding::restricted_v4_workflow_recovers_native_state_without_writer_transfer`
+uses the existing controlled authority to verify persistent prefix recovery and
+effect-free exact replay with an absent transfer fact; it does not certify an
+installed host or external authority custody.
 
 The profile admits only `TargetHost` research modules in the selected canary or
 established research stage. Registered or selected release verification,

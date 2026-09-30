@@ -62,6 +62,21 @@ durable replay rules. Their version/kind is included in the receipt hash; they
 are not relabelled V1 evidence. A PR merge is neither a runtime grant nor proof
 that an external operation occurred.
 
+### Restricted research versions
+
+Explicit [request V4](../rust/qualification/research-qualification-request-v4.schema.json)
+uses the four existing signed host-containment, storage-recovery, key-owner and
+Codex-role packages. Its [receipt V4](../rust/qualification/research-qualification-receipt-v4.schema.json)
+has three separated operational groups and grants no production, release,
+submission or writer-cutover authority. It does not require or accept the
+production transfer/soak or irreversible-action package. The storage package
+still requires the complete fault/recovery matrix and 72-hour/10,000-operation
+qualification; those checks establish state safety rather than permission to
+perform an irreversible action. V3 retains its explicit five-package scope.
+Both research versions use the original signature, revocation/currentness and
+replay owner; the [implementation handoff](../../rust/crates/hepta-qualification-ingest/HANDOFF.md#restricted-research-qualification-v4)
+owns their executable contract and remaining installed boundaries.
+
 ## 3. Common envelope
 
 Every package binds:

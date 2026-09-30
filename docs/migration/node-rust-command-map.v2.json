@@ -6,44 +6,44 @@
   "acceptedParity": false,
   "productionActivation": false,
   "nodeRetirement": false,
-  "pathCount": 622,
-  "symbolCount": 1331,
+  "pathCount": 628,
+  "symbolCount": 1361,
   "commandCount": 57,
   "shards": [
     {
       "kind": "paths",
       "path": "docs/migration/node-rust-command-map.v2.paths.json",
       "offset": 0,
-      "count": 622,
-      "sha256": "sha256:f0773aae5b1e8e175ca1952bc15d50e8e6cccfdca63d4534626339a0c9bb6997"
+      "count": 628,
+      "sha256": "sha256:87cc4d56a1198d39b4c45b0835a8a416e3ff9f71ee9622143146f994a09cf675"
     },
     {
       "kind": "symbols",
       "path": "docs/migration/node-rust-command-map.v2.symbols.0.json",
       "offset": 0,
       "count": 575,
-      "sha256": "sha256:a7a21f2e586a0a23a756a88cd3478cfd4602d4f101af5fed0938fb97258d4691"
+      "sha256": "sha256:12e8a6e02351eb39a5ceed4b3d700123a806a300c4ff9887be85beaa1728b389"
     },
     {
       "kind": "symbols",
       "path": "docs/migration/node-rust-command-map.v2.symbols.1.json",
       "offset": 575,
-      "count": 756,
-      "sha256": "sha256:7ae6f948d31769bd6c4fd226162b5c185e131889e0d6c59aafcd13661e19dfef"
+      "count": 786,
+      "sha256": "sha256:1102676bf8b910e57f8f4518797a06107ed91e13108fbf64b25a26abeed9941c"
     },
     {
       "kind": "commands",
       "path": "docs/migration/node-rust-command-map.v2.commands.0.json",
       "offset": 0,
       "count": 29,
-      "sha256": "sha256:244f42466ec1b3a72c565d95dc84fb6388da9777032af026769db6bbb4c9e98f"
+      "sha256": "sha256:5fe2a1f410362e881deb572c4cf61ddbae1db988e5ef20d2a2a66230ae35422f"
     },
     {
       "kind": "commands",
       "path": "docs/migration/node-rust-command-map.v2.commands.1.json",
       "offset": 29,
       "count": 28,
-      "sha256": "sha256:7cdc780fa4391b7f6320cd517fa0bb7f3c49fd777807ed10acbe259c8ed5c8f0"
+      "sha256": "sha256:12841990d460a9e744fd13c887ccae013fafa81dfea042a521240348754a1303"
     }
   ]
 }

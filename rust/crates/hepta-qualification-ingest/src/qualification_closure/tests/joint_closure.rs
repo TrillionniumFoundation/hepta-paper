@@ -16,6 +16,8 @@ use serde_json::{Value, json};
 
 #[path = "joint_closure/clock_wait.rs"]
 mod clock_wait;
+#[path = "joint_closure/research_v4.rs"]
+mod research_v4;
 #[path = "joint_closure/validity.rs"]
 mod validity;
 
@@ -1077,6 +1079,12 @@ fn research_profile_accepts_five_signed_packages_without_publication_authority()
         &fixture.signed.trust,
     )
     .unwrap();
+    assert_eq!(verified.codex_role_principal("author"), Some((1001, 1001)));
+    assert_eq!(
+        verified.codex_role_principal("reviewer"),
+        Some((1002, 1002))
+    );
+    assert_eq!(verified.codex_role_principal("repairer"), None);
     let template = first
         .body
         .research_workflow_profile
@@ -1135,6 +1143,35 @@ fn research_profile_accepts_five_signed_packages_without_publication_authority()
         )
         .is_err()
     );
+}
+
+#[test]
+fn signed_research_role_principal_outside_os_identity_domain_consumes_no_nonce() {
+    for field in ["uid", "gid"] {
+        for invalid in [0, u64::from(u32::MAX) + 1] {
+            let mut fixture = AcceptanceFixture::new("research-principal-domain");
+            fixture.signed.update_payload(4, |payload| {
+                payload["roles"][0][field] = json!(invalid);
+            });
+            let fixture = research_only(fixture);
+            for candidate in &fixture.signed.candidates {
+                verify_external_qualification_v1(
+                    &candidate.envelope,
+                    &package_subject(candidate.envelope.package_id),
+                    NOW,
+                    &fixture.signed.trust,
+                )
+                .expect("genuinely signed envelope, including the malformed role facts");
+            }
+            assert!(matches!(
+                fixture.accept(NOW),
+                Err(ClosureError::Payload(
+                    QualificationPayloadError::SemanticInvalid
+                ))
+            ));
+            fixture.assert_no_ledger();
+        }
+    }
 }
 
 #[test]

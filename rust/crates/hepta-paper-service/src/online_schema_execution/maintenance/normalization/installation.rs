@@ -484,6 +484,13 @@ pub fn resume_schema_installation_v1<T: MutationAuthorityTransportV1>(
     clock: &mut dyn MutationClockV1,
     checkpoint: &mut dyn SchemaInstallationCheckpointV1,
 ) -> Result<InstalledSchemaMaintenanceV1> {
+    // Match normalization recovery: an absent/malformed independent pin is
+    // not a selected recovery operation. Reject before observing sources,
+    // competing for the real maintenance lock, or sampling a caller clock.
+    ensure(
+        crate::sqlite_mutation_coordinator::sha(&json!(options.expected_plan_hash)),
+        "autonomous_research_online_schema_transition_installation_plan_pin_invalid",
+    )?;
     let inventory =
         inspect_state_database_inventory_v1(options.runtime_root, options.state_database_manifest)?;
     let first = inventory["instances"]

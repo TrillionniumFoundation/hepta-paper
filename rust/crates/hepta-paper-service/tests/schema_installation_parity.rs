@@ -681,3 +681,64 @@ fn installation_lock_probe_child() {
         assert!(database.is_autocommit());
     }
 }
+
+#[test]
+fn installation_recovery_requires_plan_pin_before_inventory_lock_or_clock() {
+    let fixture = Fixture::new(false);
+    let mut authority = fixture.authority();
+    let token = normalized(&fixture, &mut authority);
+    let plan = token.plan().clone();
+    let installed = install_schema_maintenance_v1(
+        token,
+        &authority,
+        &mut || Ok(BASE),
+        SchemaInstallationOptionsV1::default(),
+        &mut NoSchemaInstallationCheckpointV1,
+    )
+    .unwrap();
+    let original_journal = fs::read(fixture.journal()).unwrap();
+    let original_databases = plan_bytes(&fixture, &plan);
+    let absent = fixture.root.join("absent-runtime");
+    for missing_runtime in [false, true] {
+        for pin in ["", "sha256:short", "sha256:GGGG", "not-a-plan"] {
+            let mut options = resume_installation(&fixture, &plan);
+            options.expected_plan_hash = pin;
+            if missing_runtime {
+                options.runtime_root = &absent;
+            }
+            let code = fail(resume_schema_installation_v1(
+                options,
+                &authority,
+                &mut || panic!("invalid selection must not sample the clock"),
+                &mut NoSchemaInstallationCheckpointV1,
+            ));
+            assert_eq!(
+                code, "autonomous_research_online_schema_transition_installation_plan_pin_invalid",
+                "malformed selection must precede a busy real root or absent source"
+            );
+        }
+    }
+    assert!(!absent.exists());
+    assert_eq!(fs::read(fixture.journal()).unwrap(), original_journal);
+    assert_eq!(plan_bytes(&fixture, &plan), original_databases);
+    assert_eq!(
+        fail(resume_schema_installation_v1(
+            resume_installation(&fixture, &plan),
+            &authority,
+            &mut || Ok(BASE),
+            &mut NoSchemaInstallationCheckpointV1,
+        )),
+        "autonomous_research_online_schema_transition_maintenance_busy"
+    );
+    drop(installed);
+    let recovered = resume_schema_installation_v1(
+        resume_installation(&fixture, &plan),
+        &authority,
+        &mut || Ok(BASE),
+        &mut NoSchemaInstallationCheckpointV1,
+    )
+    .unwrap();
+    assert_eq!(recovered.plan(), &plan);
+    drop(recovered);
+    assert_eq!(plan_bytes(&fixture, &plan), original_databases);
+}

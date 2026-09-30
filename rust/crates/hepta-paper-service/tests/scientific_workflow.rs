@@ -1,3 +1,6 @@
+#[path = "support/installed_rscript.rs"]
+mod installed_rscript;
+
 use hepta_campaign_writer::WriterLeaseV1;
 use hepta_control_plane::{
     ControlPlaneSnapshotV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1,
@@ -509,7 +512,7 @@ fn actual_r_autonomous_cli_reopens_the_same_workflow_without_reexecution() {
         &temp,
         job,
         ScientificRuntimeKindV1::REmpirical,
-        Path::new("/usr/bin/Rscript"),
+        &installed_rscript::selected_rscript(),
     );
     let now = u64::try_from(
         SystemTime::now()

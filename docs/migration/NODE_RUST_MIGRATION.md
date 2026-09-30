@@ -112,6 +112,23 @@ activation or Node retirement. The map is checked by
 inventory coverage plus the declared Rust function and executable-test symbols.
 Source symbol existence is not call-graph verification or evidence that tests passed.
 
+Current-subject behavior acceptance is consumed separately by
+`docs/tools/node-rust-route-acceptance.mjs`. It rebuilds the Rust binary and
+executes the ordinary `operator workspace` and `verify repository-assets`
+adapters against the registered Node commands, including every supported flag,
+parse refusal, source effect and interrupted-result retry. Incoming JSON, a
+self hash or a successful source check cannot create acceptance. The consumer
+requires a clean exact commit/tree, the current registry/argument contract and
+independent replay, then brands its result in memory. The auditor and generated
+report accept only that branded result. The committed ledger remains the sole
+route inventory; acceptance changes the derived open behavior count without
+rewriting source-candidate words or granting installed authority. A prospective
+merge requires its own replay. The default checked-in report has no external
+acceptance input.
+
+The native development suite is described in
+[NATIVE_DEVELOPMENT_VERIFICATION_HANDOFF](../modules/NATIVE_DEVELOPMENT_VERIFICATION_HANDOFF.md).
+
 Encoding version 2 stores each canonical source path and `(path, symbol)` binding
 once in sorted index tables; route and argument-mode rows refer to those indexes.
 The auditor fail-closes on missing, duplicate, out-of-range, unsorted, or unused

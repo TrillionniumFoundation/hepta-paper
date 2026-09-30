@@ -1,5 +1,7 @@
 use super::super::source_rows::read_source_rows;
 use super::*;
+use crate::sqlite_mutation_coordinator::contracts::online_mutation_signed_payload_v1;
+use base64ct::{Base64, Encoding};
 use ed25519_dalek::{
     Signer, SigningKey,
     pkcs8::{DecodePrivateKey, DecodePublicKey},

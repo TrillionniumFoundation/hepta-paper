@@ -100,6 +100,47 @@ pub(super) fn inspect_source_schema(db: &Connection) -> Result<SourceProfile> {
     })
 }
 
+/// Separate installed observation of an already native journal. The closed
+/// full catalog and actual singleton key identity are checked; this never
+/// widens the public legacy source inspector or produces activation authority.
+pub(super) fn inspect_native_schema(db: &Connection, key_hash: &str) -> Result<SourceProfile> {
+    let before = held_main_state(db)?;
+    let changes = db.total_changes();
+    if integer(db, "PRAGMA ignore_check_constraints")? != 0
+        || integer(db, "PRAGMA writable_schema")? != 0
+        || integer(db, "PRAGMA main.user_version")? != 1
+    {
+        return Err(error("local_authority_native_snapshot_invalid"));
+    }
+    crate::local_state_authority::storage::assert_schema(db)?;
+    let reference = Connection::open_in_memory()?;
+    reference.execute_batch(include_str!("../schema.sql"))?;
+    reference.pragma_update(None, "user_version", 1)?;
+    let expected = observe_structure(&reference, None)?;
+    let actual = observe_structure(db, Some(&[&expected["catalog"]]))?;
+    if actual != expected
+        || rows(db, "PRAGMA main.quick_check", [])? != vec![json!(["ok"])]
+        || rows(
+            db,
+            "SELECT singleton,key_hash FROM main.authority_native_identity ORDER BY singleton",
+            [],
+        )? != vec![json!([1, key_hash])]
+        || held_main_state(db)? != before
+        || db.total_changes() != changes
+    {
+        return Err(error("local_authority_native_snapshot_invalid"));
+    }
+    Ok(SourceProfile {
+        schema_hash: hash(
+            "HeptaLocalStateAuthorityNativeJournalSourceSchemaV1",
+            &actual,
+        )?,
+        schema: actual,
+        profile_id: "native_authority_journal_v1",
+        schema_rebind_present: true,
+    })
+}
+
 fn held_main_state(db: &Connection) -> Result<TransactionState> {
     let state = db.transaction_state(Some("main"))?;
     if db.is_autocommit() || !matches!(state, TransactionState::Read | TransactionState::Write) {

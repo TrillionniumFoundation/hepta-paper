@@ -7,7 +7,10 @@ use super::{
 use crate::local_state_authority::storage;
 use crate::sqlite_mutation_coordinator::{
     Result,
-    authority::{MutationAuthorityTransportV1, PinnedMutationAuthorityV1, files::Snapshot},
+    authority::{
+        MutationAuthorityTransportV1, PinnedMutationAuthorityV1,
+        ProcessMutationAuthorityTransportV1, files::Snapshot,
+    },
     error, hash, hash_bytes, text,
 };
 use rusqlite::{Connection, TransactionState};
@@ -42,6 +45,13 @@ pub struct LegacyAuthorityJournalVerifierV1 {
     configuration_file_hash: String,
     configuration_file: Snapshot,
     authority: PinnedMutationAuthorityV1<NoTransport>,
+    process: Option<ProcessMutationAuthorityTransportV1>,
+}
+/// Both detached representations come from one exact public-key-verified read
+/// snapshot. Construction conveys no stop, publication or migration authority.
+pub(crate) struct PendingFinalizedAuthorityImagesV1 {
+    pub(crate) native: offline_image::OfflineNativeAuthorityImageV1,
+    pub(crate) legacy: archive::OfflineLegacyAuthorityArchiveV1,
 }
 impl LegacyAuthorityJournalVerifierV1 {
     pub fn load(
@@ -89,16 +99,52 @@ impl LegacyAuthorityJournalVerifierV1 {
             configuration_file_hash: expected_daemon_configuration_file_hash.to_owned(),
             configuration_file,
             authority,
+            process: None,
         };
         result.current()?;
         Ok(result)
     }
-    pub(super) fn current(&self) -> Result<()> {
+    pub(crate) fn current(&self) -> Result<()> {
         self.configuration_file.assert_current()?;
-        self.authority.current()
+        self.authority.current()?;
+        if let Some(process) = &self.process {
+            process.current()?;
+        }
+        Ok(())
     }
-    pub(super) fn source_database_path(&self) -> Result<&Path> {
+    /// Retain the real process/public configuration loader without invoking RPC.
+    /// Neither a process configuration hash nor its command is a public trust
+    /// configuration; the separately pinned public file is loaded explicitly.
+    pub(crate) fn load_process(
+        daemon_configuration_path: &Path,
+        expected_daemon_configuration_file_hash: &str,
+        process_configuration_path: &Path,
+        expected_process_configuration_file_hash: &str,
+    ) -> Result<Self> {
+        let process = ProcessMutationAuthorityTransportV1::load(
+            process_configuration_path,
+            expected_process_configuration_file_hash,
+        )?;
+        process.current()?;
+        let (path, pin) = process.public_configuration_pin();
+        let mut result = Self::load(
+            daemon_configuration_path,
+            expected_daemon_configuration_file_hash,
+            path,
+            pin,
+        )?;
+        result.process = Some(process);
+        result.current()?;
+        Ok(result)
+    }
+    pub(crate) fn source_database_path(&self) -> Result<&Path> {
         Ok(Path::new(text(&self.configuration, "stateDatabasePath")?))
+    }
+    pub(crate) fn daemon_configuration(&self) -> &Value {
+        &self.configuration
+    }
+    pub(crate) fn public_key_sha256(&self) -> String {
+        hash_bytes(self.authority.verification_key().as_bytes())
     }
     pub(super) fn protected_input_paths(&self) -> Result<Vec<std::path::PathBuf>> {
         let source = self.source_database_path()?;
@@ -187,22 +233,107 @@ impl LegacyAuthorityJournalVerifierV1 {
         }
         Ok(image)
     }
+    /// Distinct from ordinary settled inspection: validate exactly one signed
+    /// finalized successor against the prepared target observation, preserving
+    /// its still-reserved source epoch for the existing native activation owner.
+    /// The caller owns the read transaction and every source-file lifetime.
+    pub(crate) fn build_pending_target_restart_images(
+        &self,
+        database: &Connection,
+        target_observation: &Value,
+        target_configuration_hash: &str,
+    ) -> Result<PendingFinalizedAuthorityImagesV1> {
+        archive::require_read_snapshot(database)?;
+        let expected = Some((target_observation, target_configuration_hash));
+        let source = self.observe_snapshot_for_restart(database, expected, false)?;
+        let native = offline_image::build_image(
+            &source.rows,
+            self.authority.verification_key(),
+            &source.report,
+        )?;
+        let copied = archive::copy_snapshot(database)?;
+        copied.execute_batch("BEGIN DEFERRED")?;
+        copied.query_row("SELECT count(*) FROM main.sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+        let copied_history = self
+            .observe_snapshot_for_restart(&copied, expected, false)?
+            .report;
+        if copied_history != source.report {
+            return Err(error("local_authority_archive_copied_history_mismatch"));
+        }
+        copied.execute_batch("ROLLBACK")?;
+        let legacy = archive::seal(copied, &source.report)?;
+        self.current()?;
+        if database.total_changes() != source.changes
+            || database.transaction_state(Some("main"))? != source.transaction
+        {
+            return Err(error("local_authority_history_transaction_changed"));
+        }
+        Ok(PendingFinalizedAuthorityImagesV1 { native, legacy })
+    }
     fn observe_snapshot(&self, database: &Connection) -> Result<ObservedSnapshot> {
+        self.observe_snapshot_for_restart(database, None, false)
+    }
+    pub(crate) fn inspect_native_journal_snapshot(
+        &self,
+        database: &Connection,
+        pending: Option<(&Value, &str)>,
+    ) -> Result<Value> {
+        Ok(self
+            .observe_snapshot_for_restart(database, pending, true)?
+            .report)
+    }
+    fn observe_snapshot_for_restart(
+        &self,
+        database: &Connection,
+        pending: Option<(&Value, &str)>,
+        native: bool,
+    ) -> Result<ObservedSnapshot> {
         self.current()?;
         let transaction = database.transaction_state(Some("main"))?;
         let changes = database.total_changes();
-        let profile = source_profile::inspect_source_schema(database)?;
+        let profile = if native {
+            source_profile::inspect_native_schema(database, &self.public_key_sha256())?
+        } else {
+            source_profile::inspect_source_schema(database)?
+        };
         let rows =
             source_rows::read_source_rows_for_profile(database, profile.schema_rebind_present())?;
-        let schema = schema_history::verify_schema_history_v1(
-            &rows,
-            &self.configuration,
-            self.authority.verification_key(),
-        )?;
+        let schema = match pending {
+            Some((observation, target_hash)) => {
+                schema_history::verify_pending_finalized_history_v1(
+                    &rows,
+                    &self.configuration,
+                    self.authority.verification_key(),
+                    observation,
+                    target_hash,
+                )?
+            }
+            None => schema_history::verify_schema_history_v1(
+                &rows,
+                &self.configuration,
+                self.authority.verification_key(),
+            )?,
+        };
         if schema.trust() != self.authority.trust() {
             return Err(error("local_authority_history_terminal_trust_mismatch"));
         }
-        let (head, mutation_report) = if schema.initialized() {
+        let (head, mutation_report) = if pending.is_some() {
+            // The separate pending schema composition admits only a pristine
+            // zero-mutation source. Its metadata is intentionally reserved;
+            // the ordinary settled mutation replay must remain finalized-only.
+            if !rows.mutations().is_empty() {
+                return Err(error("local_authority_history_pending_mutations_invalid"));
+            }
+            (
+                schema.genesis().clone(),
+                json!({"version":1,
+                "kind":"HeptaLegacyAuthorityMutationHistoryObservationV1",
+                "evidenceScope":"empty_mutation_set_in_signed_pending_source_epoch_no_migration_authority",
+                "mutationRows":0,"finalizedMutations":0,"abortedTailMutations":0}),
+            )
+        } else if schema.initialized() {
             let observation = mutation_history::verify_mutation_history_v1(
                 &rows,
                 schema.genesis(),
@@ -219,7 +350,7 @@ impl LegacyAuthorityJournalVerifierV1 {
                 json!({"finalizedCount":0,"abortedCount":0}),
             )
         };
-        self.assert_terminal(&rows, &head, schema.initialized())?;
+        self.assert_terminal(&rows, &head, schema.initialized(), pending.is_some())?;
         let backup_report = backup_history::verify_backup_history_v1(
             &rows,
             &head,
@@ -235,7 +366,7 @@ impl LegacyAuthorityJournalVerifierV1 {
         let report = json!({
             "version":1,"kind":"HeptaLocalStateAuthorityLegacyHistoryInspectionV1",
             "evidenceScope":"signed_history_observation_no_migration_authority",
-            "historyState":if schema.initialized() {"settled_signed_history"} else {"uninitialized_no_signed_history"},
+            "historyState":if pending.is_some() {"signed_finalized_rebind_source_epoch_preserved"} else if schema.initialized() {"settled_signed_history"} else {"uninitialized_no_signed_history"},
             "sourceSchemaHash":profile.schema_hash(),"sourceSchemaProfile":profile.profile_id(),
             "sourceLogicalHash":rows.logical_hash(),
             "logicalHashProfile":"HeptaLocalStateAuthorityLegacySqlRowsV1",
@@ -259,6 +390,7 @@ impl LegacyAuthorityJournalVerifierV1 {
         rows: &source_rows::JournalRows,
         head: &Value,
         initialized: bool,
+        pending: bool,
     ) -> Result<()> {
         let code = "local_authority_history_terminal_state_mismatch";
         let [metadata] = rows.metadata() else {
@@ -271,7 +403,9 @@ impl LegacyAuthorityJournalVerifierV1 {
             || metadata[8] != head["globalSequence"]
             || metadata[9] != head["globalHash"]
             || metadata[10]
-                != if initialized {
+                != if pending {
+                    "reserved"
+                } else if initialized {
                     "finalized"
                 } else {
                     "uninitialized"

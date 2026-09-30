@@ -1,6 +1,7 @@
 //! Ordinary CLI composition over the existing ten-database schema planner.
-//! No new mutation/recovery kernel, authority transport invocation or state write.
-mod arguments;
+//! Installed execution requires the separate physical owner; planning is read-only.
+pub(in crate::online_schema_execution) mod arguments;
+pub(crate) mod node_history;
 use super::plan::{
     SchemaTransitionPlanOptionsV1, build_schema_transition_plan_v1,
     inspect_schema_transition_pristine_preimage_v1,
@@ -34,10 +35,9 @@ const STATE_MANIFEST: &str =
 const PREFIX: &str = "autonomous_research_online_schema_transition_";
 const MAX_CONTROL_BYTES: u64 = 16 * 1024 * 1024;
 
-struct FinalizedPredecessor {
+pub(in crate::online_schema_execution) struct FinalizedPredecessor {
     control: PathBuf,
     control_directory: PublicationDirectory,
-    active: Option<Snapshot>,
     journal: Option<Snapshot>,
     artifacts: Vec<Snapshot>,
     locks: Vec<ObservedEmptyLock>,
@@ -46,33 +46,31 @@ struct FinalizedPredecessor {
     expected_entries: Vec<String>,
     final_receipt_file_sha256: String,
 }
-enum ControlGuard {
+pub(in crate::online_schema_execution) enum ControlGuard {
     Absent(PathBuf),
+    Node(Box<node_history::ObservedNodeControlV1>),
     Finalized(Box<FinalizedPredecessor>),
 }
 impl ControlGuard {
-    fn final_receipt_file_sha256(&self) -> Option<&str> {
+    pub(in crate::online_schema_execution) fn final_receipt_file_sha256(&self) -> Option<&str> {
         match self {
             Self::Absent(_) => None,
+            Self::Node(value) => Some(value.final_receipt_file_sha256()),
             Self::Finalized(value) => Some(&value.final_receipt_file_sha256),
         }
     }
-    fn assert_current(&self) -> Result<(), String> {
+    pub(in crate::online_schema_execution) fn assert_current(&self) -> Result<(), String> {
         match self {
             Self::Absent(path) => match fs::symlink_metadata(path) {
                 Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => Ok(()),
                 _ => Err(format!("{PREFIX}control_state_changed_during_observation")),
             },
+            Self::Node(value) => value.assert_current(),
             Self::Finalized(value) => {
                 value
                     .control_directory
                     .assert_current()
                     .map_err(|_| format!("{PREFIX}previous_finalized_control_shape_invalid"))?;
-                if let Some(active) = &value.active {
-                    active
-                        .assert_current()
-                        .map_err(|_| format!("{PREFIX}previous_final_receipt_changed"))?;
-                }
                 if let Some(journal) = &value.journal {
                     journal
                         .assert_current()
@@ -104,6 +102,13 @@ impl ControlGuard {
             }
         }
     }
+    pub(in crate::online_schema_execution) fn path(&self) -> &Path {
+        match self {
+            Self::Absent(path) => path,
+            Self::Node(value) => value.control_path(),
+            Self::Finalized(value) => &value.control,
+        }
+    }
 }
 fn validate_runtime_root(root: &Path) -> Result<PathBuf, String> {
     if !root.is_absolute()
@@ -122,21 +127,18 @@ fn control_entries(path: &Path) -> Result<Vec<String>, String> {
     if !metadata.is_dir() || metadata.is_symlink() {
         return Err(format!("{PREFIX}control_path_unsafe"));
     }
-    let mut entries = fs::read_dir(path)
-        .map_err(|_| format!("{PREFIX}control_path_unsafe"))?
-        .map(|entry| {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(path).map_err(|_| format!("{PREFIX}control_path_unsafe"))? {
+        if entries.len() == 4096 {
+            return Err(format!("{PREFIX}previous_finalized_control_shape_invalid"));
+        }
+        entries.push(
             entry
-                .map_err(|_| format!("{PREFIX}control_path_unsafe"))
-                .and_then(|entry| {
-                    entry
-                        .file_name()
-                        .into_string()
-                        .map_err(|_| format!("{PREFIX}control_path_unsafe"))
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if entries.len() > 4096 {
-        return Err(format!("{PREFIX}previous_finalized_control_shape_invalid"));
+                .map_err(|_| format!("{PREFIX}control_path_unsafe"))?
+                .file_name()
+                .into_string()
+                .map_err(|_| format!("{PREFIX}control_path_unsafe"))?,
+        );
     }
     entries.sort();
     Ok(entries)
@@ -309,54 +311,6 @@ fn validate_native_journal<T: MutationAuthorityTransportV1>(
     }
     Ok(())
 }
-fn validate_node_active(active: &Value, final_value: &Value) -> Result<(), String> {
-    let keys = active
-        .as_object()
-        .ok_or_else(|| format!("{PREFIX}previous_active_state_invalid"))?
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let expected_keys = [
-        "finalReceiptHash",
-        "installations",
-        "kind",
-        "phase",
-        "plan",
-        "reservation",
-        "reserveRequest",
-        "version",
-    ]
-    .into_iter()
-    .collect::<BTreeSet<_>>();
-    validate_schema_transition_plan_identity_v1(&active["plan"])
-        .map_err(|_| format!("{PREFIX}previous_active_state_invalid"))?;
-    if keys != expected_keys
-        || active["version"] != 1
-        || active["kind"] != "AutonomousResearchOnlineSchemaTransitionState"
-        || active["phase"] != "finalized"
-        || active["finalReceiptHash"] != final_value["schemaTransitionReceiptHash"]
-        || active["reserveRequest"] != final_value["reserveRequest"]
-        || active["reservation"] != final_value["reservation"]
-        || active["installations"] != final_value["installations"]
-        || !same_fields(
-            &active["plan"],
-            final_value,
-            &[
-                "version",
-                "protocol",
-                "transitionId",
-                "planHash",
-                "databaseScopeHash",
-                "writerManifestHash",
-                "transitionInventoryHash",
-                "schemaBundleHash",
-            ],
-        )
-    {
-        return Err(format!("{PREFIX}previous_finalized_control_invalid"));
-    }
-    Ok(())
-}
 fn exact_lower_hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
@@ -364,7 +318,7 @@ fn exact_lower_hex(value: &str, length: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn finalized_predecessor<T: MutationAuthorityTransportV1>(
+pub(in crate::online_schema_execution) fn finalized_predecessor<T: MutationAuthorityTransportV1>(
     root: &Path,
     expected: Option<&str>,
     authority: &PinnedMutationAuthorityV1<T>,
@@ -388,7 +342,8 @@ fn finalized_predecessor<T: MutationAuthorityTransportV1>(
         Ok(_) => {}
     }
     let entries = control_entries(&control)?;
-    let node_shape = entries == ["ACTIVE.json", "FINAL.json"];
+    let node_shape = entries == ["ACTIVE.json", "FINAL.json"]
+        || entries == ["ACTIVE.json", "FINAL.json", "history"];
     let native_shape = entries.iter().any(|entry| entry == "FINAL.json")
         && entries
             .iter()
@@ -396,6 +351,15 @@ fn finalized_predecessor<T: MutationAuthorityTransportV1>(
         && !entries.iter().any(|entry| entry == "ACTIVE.json");
     if !node_shape && !native_shape {
         return Err(format!("{PREFIX}previous_finalized_control_shape_invalid"));
+    }
+    if node_shape {
+        return node_history::observe_node_control_v1(
+            &control,
+            expected.ok_or_else(|| format!("{PREFIX}previous_final_receipt_pin_required"))?,
+            authority,
+            historical_source,
+        )
+        .map(|value| ControlGuard::Node(Box::new(value)));
     }
     let control_directory = PublicationDirectory::open_or_create(&control, false)
         .map_err(|_| format!("{PREFIX}previous_finalized_control_shape_invalid"))?;
@@ -413,27 +377,7 @@ fn finalized_predecessor<T: MutationAuthorityTransportV1>(
         &format!("{PREFIX}previous_final_receipt_invalid"),
     )
     .map_err(|error| error.code)?;
-    let (active, journal, artifacts, locks, preimages) = if node_shape {
-        if historical_source.is_some() {
-            return Err(format!("{PREFIX}historical_source_authority_forbidden"));
-        }
-        let path = control.join("ACTIVE.json");
-        let pin = provisional_pin(&path)?;
-        let snapshot = Snapshot::load(
-            &path,
-            &pin,
-            MAX_CONTROL_BYTES,
-            &format!("{PREFIX}previous_active_state_invalid"),
-        )
-        .map_err(|error| error.code)?;
-        let value = parse(
-            snapshot.bytes(),
-            &format!("{PREFIX}previous_active_state_invalid"),
-        )
-        .map_err(|error| error.code)?;
-        validate_node_active(&value, &final_value)?;
-        (Some(snapshot), None, Vec::new(), Vec::new(), None)
-    } else {
+    let (journal, artifacts, locks, preimages) = {
         let path = control.join("NORMALIZATION.native.v1.json");
         let pin = provisional_pin(&path)?;
         let snapshot = Snapshot::load(
@@ -526,7 +470,7 @@ fn finalized_predecessor<T: MutationAuthorityTransportV1>(
                     error.code
                 )
             })?;
-        (None, Some(snapshot), artifacts, locks, Some(preimages))
+        (Some(snapshot), artifacts, locks, Some(preimages))
     };
     let historical_inventory = json!({
         "databaseScopeHash": final_value["databaseScopeHash"],
@@ -543,7 +487,6 @@ fn finalized_predecessor<T: MutationAuthorityTransportV1>(
     let result = ControlGuard::Finalized(Box::new(FinalizedPredecessor {
         control,
         control_directory,
-        active,
         journal,
         artifacts,
         locks,
@@ -583,18 +526,28 @@ pub fn schema_transition_plan_cli_v1(
             "kind": "NativeSchemaTransitionPlanUsage",
             "mutation": "none",
             "usage": "hepta-paper-rust autonomous-online-schema-transition --action plan|inspect-pristine --runtime-root ABSOLUTE_PATH --authority-process-config ABSOLUTE_PATH --authority-process-config-sha256 sha256:HASH [--expected-previous-final-receipt-sha256 sha256:HASH] [--historical-source-authority-process-config ABSOLUTE_PATH --historical-source-authority-process-config-sha256 sha256:HASH] [--requested-lease-ms N] [--required-execution-window-ms N] [--expected-pre-rebind-pristine-runtime-state-hash sha256:HASH]",
-            "scope": "native_source_plan_and_review_preimage_only",
+            "installedUsage":"hepta-paper-rust autonomous-online-schema-transition --action execute|recover --execute --runtime-root ABSOLUTE_PATH --authority-process-config ABSOLUTE_PATH --authority-process-config-sha256 sha256:HASH --transition-id sha256:HASH --expected-plan-hash sha256:HASH --planned-at ORIGINAL_PLAN_INSTANT --installed-maintenance-profile ABSOLUTE_PATH --installed-maintenance-profile-sha256 sha256:HASH [--expected-previous-final-receipt-sha256 sha256:HASH] [--expected-pre-rebind-pristine-runtime-state-hash sha256:HASH] [--requested-lease-ms N] [--required-execution-window-ms N] [--commit-safety-margin-ms N]",
+            "profileInspectionUsage":"hepta-paper-rust autonomous-online-schema-transition --action inspect-installed-profile --runtime-root ABSOLUTE_PATH --authority-process-config ABSOLUTE_PATH --authority-process-config-sha256 sha256:HASH --installed-maintenance-profile ABSOLUTE_PATH --installed-maintenance-profile-sha256 sha256:HASH",
+            "scope": "native_source_planning_and_separate_pinned_installed_maintenance",
             "executionAuthority": false
         }));
+    }
+    if args.action == "inspect-installed-profile" {
+        return crate::online_schema_execution::installed_owner::installation::observe_installed_schema_profile_v1(
+            args.installed_profile.as_deref().ok_or_else(||format!("{PREFIX}installed_maintenance_profile_pin_required"))?,
+            args.installed_profile_hash.as_deref().ok_or_else(||format!("{PREFIX}installed_maintenance_profile_pin_required"))?,
+            &args.runtime,
+        ).map(|profile|profile.report()).map_err(|error|error.code);
     }
     let manifest: Value = serde_json::from_str(STATE_MANIFEST)
         .map_err(|_| format!("{PREFIX}compiled_manifest_invalid"))?;
     let writer = state_backup_writer_manifest_v1().map_err(|error| error.code)?;
-    let authority = PinnedMutationAuthorityV1::<ProcessMutationAuthorityTransportV1>::load_process(
-        &args.process,
-        &args.process_hash,
-    )
-    .map_err(|error| error.code)?;
+    let mut authority =
+        PinnedMutationAuthorityV1::<ProcessMutationAuthorityTransportV1>::load_process(
+            &args.process,
+            &args.process_hash,
+        )
+        .map_err(|error| error.code)?;
     authority
         .assert_process_current_v1()
         .map_err(|error| error.code)?;
@@ -620,12 +573,6 @@ pub fn schema_transition_plan_cli_v1(
             ));
         }
     };
-    let control = finalized_predecessor(
-        &args.runtime,
-        args.expected_previous_final.as_deref(),
-        &authority,
-        historical_source.as_ref(),
-    )?;
     let mut previous = None;
     let mut observed_clock = || {
         let now = clock.now_millis()?;
@@ -635,6 +582,36 @@ pub fn schema_transition_plan_cli_v1(
         previous = Some(now);
         Ok(now)
     };
+    if args.action == "recover" {
+        return crate::online_schema_execution::installed_owner::execution::run(
+            &args,
+            &manifest,
+            &writer,
+            &mut authority,
+            &mut observed_clock,
+            None,
+            historical_source.as_ref(),
+        )
+        .map_err(|error| error.code);
+    }
+    let control = finalized_predecessor(
+        &args.runtime,
+        args.expected_previous_final.as_deref(),
+        &authority,
+        historical_source.as_ref(),
+    )?;
+    if args.action == "execute" {
+        return crate::online_schema_execution::installed_owner::execution::run(
+            &args,
+            &manifest,
+            &writer,
+            &mut authority,
+            &mut observed_clock,
+            Some(&control),
+            historical_source.as_ref(),
+        )
+        .map_err(|error| error.code);
+    }
     if args.action == "inspect-pristine" {
         let observed = inspect_schema_transition_pristine_preimage_v1(
             options(&args, &manifest, &writer),

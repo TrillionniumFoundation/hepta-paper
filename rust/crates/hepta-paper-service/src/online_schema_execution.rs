@@ -1,6 +1,7 @@
 //! Real migration-source projections. These local observations do not establish
 //! maintenance authority, writer quiescence, a ready inventory or runtime activation.
 pub mod cli;
+pub mod installed_owner;
 pub mod maintenance;
 pub mod plan;
 use crate::{

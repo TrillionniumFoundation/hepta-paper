@@ -6,13 +6,10 @@ use super::source_rows::JournalRows;
 use crate::sqlite_mutation_coordinator::{
     Result,
     authority::files,
-    contracts::{
-        assert_authority_trust_v1, online_mutation_signed_payload_v1, schema_transition::*,
-    },
+    contracts::{assert_authority_trust_v1, schema_transition::*},
     error, hash, hash_bytes, keys, safe, sha, timestamp,
 };
-use base64ct::{Base64, Encoding};
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -47,37 +44,7 @@ impl VerifiedLegacySchemaHistoryV1 {
 /// The actual Ed25519 key is supplied by the independently pinned public-key
 /// loader. No caller-provided signature predicate or signing key is accepted.
 pub(super) fn verify_online_signature_v1(receipt: &Value, key: &VerifyingKey) -> bool {
-    let Some(encoded) = receipt["signature"].as_str() else {
-        return false;
-    };
-    // Match the existing pinned verifier's Node base64 grammar, including
-    // optional padding and ignored low bits of the last 64-byte sextet.
-    let raw = encoded.trim_end_matches('=');
-    if raw.len() != 86
-        || encoded.len() - raw.len() > 2
-        || !raw
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
-    {
-        return false;
-    }
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let Some(last) = ALPHABET.iter().position(|v| *v == raw.as_bytes()[85]) else {
-        return false;
-    };
-    let mut normalized = raw.as_bytes().to_vec();
-    normalized[85] = ALPHABET[last & 0b110000];
-    normalized.extend_from_slice(b"==");
-    let Ok(bytes) = Base64::decode_vec(std::str::from_utf8(&normalized).unwrap_or("")) else {
-        return false;
-    };
-    let Ok(signature) = Signature::from_slice(&bytes) else {
-        return false;
-    };
-    let Ok(payload) = online_mutation_signed_payload_v1(receipt) else {
-        return false;
-    };
-    key.verify_strict(payload.as_bytes(), &signature).is_ok()
+    crate::sqlite_mutation_coordinator::authority::verify_public_payload_signature_v1(receipt, key)
 }
 
 fn configuration(value: &Value) -> Result<Value> {
@@ -196,6 +163,15 @@ impl Transition {
     }
     fn verify(&self, config: &Value, public_key: &VerifyingKey) -> Result<()> {
         let trust = trust(config)?;
+        if self.target.is_none() && crate::online_schema_execution::cli::node_history::legacy_v021::is_legacy_schema_reserve_v021(&self.request) {
+            // Only the retained initial historical epoch uses this explicit old
+            // wire profile. Current v1/v2 and all native activation retain their
+            // existing validators; old records never confer current authority.
+            crate::online_schema_execution::cli::node_history::legacy_v021::verify_legacy_schema_records_v021(
+                &trust, public_key, &self.request, &self.reservation, &self.finalize, &self.finalization,
+            ).map_err(|_| error(INVALID))?;
+            return Ok(());
+        }
         let issued = timestamp(&self.reservation["issuedAt"]).ok_or_else(|| error(INVALID))?;
         let finalized =
             timestamp(&self.finalization["finalizedAt"]).ok_or_else(|| error(INVALID))?;
@@ -256,10 +232,136 @@ pub(super) fn verify_schema_history_v1(
     current_configuration: &Value,
     public_key: &VerifyingKey,
 ) -> Result<VerifiedLegacySchemaHistoryV1> {
+    verify_activated_history(
+        rows,
+        rows.schema_rebind(),
+        current_configuration,
+        public_key,
+    )
+}
+
+// This distinct composition admits one fully signed, finalized successor while
+// retaining the source epoch. Ordinary inspection above remains settled-only.
+// The prepared target observation is checked against the actual retained row;
+// no metadata, heads, SQL values or signed TEXT are changed here.
+pub(super) fn verify_pending_finalized_history_v1(
+    rows: &JournalRows,
+    current_configuration: &Value,
+    public_key: &VerifyingKey,
+    target_observation: &Value,
+    target_configuration_hash: &str,
+) -> Result<VerifiedLegacySchemaHistoryV1> {
+    let current = configuration(current_configuration)?;
+    let observation = normalize_schema_numbers_v1(target_observation)?;
+    let matches = rows
+        .schema_rebind()
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.get(1) == observation.get("transitionId"))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if matches.len() != 1 || !rows.mutations().is_empty() {
+        return Err(error(INVALID));
+    }
+    let index = matches[0];
+    let row = Transition::from_row(&rows.schema_rebind()[index], true)?;
+    if rows
+        .schema_rebind()
+        .iter()
+        .any(|other| other[0].as_i64().is_none_or(|id| id > row.rowid))
+    {
+        return Err(error(INVALID));
+    }
+    let activated = rows
+        .schema_rebind()
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != index)
+        .map(|(_, row)| row.clone())
+        .collect::<Vec<_>>();
+    let mut source = verify_activated_history(rows, &activated, &current, public_key)?;
+    if !source.initialized || source.genesis["globalSequence"] != 0 {
+        return Err(error(INVALID));
+    }
+    row.verify(&current, public_key)?;
+    let source_heads = Value::Array(
+        source.genesis["databaseHeads"]
+            .as_array()
+            .ok_or_else(|| error(INVALID))?
+            .iter()
+            .map(|head| {
+                let mut value = head.clone();
+                if let Some(fields) = value.as_object_mut() {
+                    fields.remove("schemaContractId");
+                }
+                value
+            })
+            .collect(),
+    );
+    if row.request["sourceWriterManifestHash"] != current["writerManifestHash"]
+        || row.reservation["previousGlobalSequence"] != 0
+        || row.reservation["previousGlobalHash"] != source.genesis["globalHash"]
+        || row.reservation["previousDatabaseHeads"] != source_heads
+    {
+        return Err(error(INVALID));
+    }
+    let target_genesis = build_pristine_schema_rebind_genesis_v2(
+        &row.request,
+        &source.genesis["globalHash"],
+        &source_heads,
+    )?;
+    if row.reservation["databaseGenesis"] != target_genesis {
+        return Err(error(INVALID));
+    }
+    row.assert_terminal(&target_genesis[0]["globalHash"])?;
+    let mut target = current.clone();
+    target["writerManifestHash"] = row.request["writerManifestHash"].clone();
+    let target_hash = hash(CONFIG_DOMAIN, &target)?;
+    if target_hash != target_configuration_hash
+        || row.target.as_deref() != Some(target_configuration_hash)
+        || row.reservation["targetAuthorityConfigurationHash"] != target_hash
+    {
+        return Err(error(INVALID));
+    }
+    assert_schema_transition_observe_request_v1(&observation, &trust(&target)?)?;
+    for field in [
+        "transitionId",
+        "transitionInventoryHash",
+        "schemaBundleHash",
+        "postInventoryHash",
+        "postPristineRuntimeStateHash",
+        "transitionMode",
+        "sourceWriterManifestHash",
+        "writerManifestHash",
+        "databaseScopeHash",
+        "scopeId",
+    ] {
+        if observation[field] != row.finalization[field] {
+            return Err(error(INVALID));
+        }
+    }
+    let receipt_hash = schema_transition_receipt_hash_v1(&row.finalization)?;
+    if observation["finalizationReceiptHash"] != receipt_hash {
+        return Err(error(INVALID));
+    }
+    source.report["pendingFinalizedRebind"] = json!({
+        "transitionId":row.request["transitionId"],
+        "targetAuthorityConfigurationHash":target_hash,
+        "finalizationReceiptHash":receipt_hash,
+        "targetObservationRequestHash":hash("AutonomousResearchOnlineSchemaTransitionObserveRequest", &observation)?,
+        "sourceEpochPreserved":true,"activationRequired":true});
+    Ok(source)
+}
+
+fn verify_activated_history(
+    rows: &JournalRows,
+    rebind_rows: &[Vec<Value>],
+    current_configuration: &Value,
+    public_key: &VerifyingKey,
+) -> Result<VerifiedLegacySchemaHistoryV1> {
     let current = configuration(current_configuration)?;
     let final_trust = trust(&current)?;
     let initial_rows = rows.schema_transition();
-    let rebind_rows = rows.schema_rebind();
     if initial_rows.len() > 1 || rebind_rows.len() > 64 {
         return Err(error(INVALID));
     }

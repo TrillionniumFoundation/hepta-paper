@@ -23,6 +23,7 @@ pub mod autonomous_submission_dispatcher_challenge;
 pub mod broker_prepared;
 pub mod campaign_policy;
 pub mod campaign_slo;
+pub mod canonical_cli;
 pub mod cli_commands;
 pub mod command_surface;
 mod control_error;

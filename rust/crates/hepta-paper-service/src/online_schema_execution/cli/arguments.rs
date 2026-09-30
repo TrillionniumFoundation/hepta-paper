@@ -1,6 +1,6 @@
-//! Strict grammar for the explicitly pinned, read-only native planning profile.
+//! Strict grammar for separate read-only planning and pinned installed execution.
 use std::{collections::BTreeMap, path::PathBuf};
-pub(super) struct Arguments {
+pub(in crate::online_schema_execution) struct Arguments {
     pub help: bool,
     pub action: String,
     pub runtime: PathBuf,
@@ -12,6 +12,12 @@ pub(super) struct Arguments {
     pub expected_previous_final: Option<String>,
     pub historical_source_process: Option<PathBuf>,
     pub historical_source_process_hash: Option<String>,
+    pub installed_profile: Option<PathBuf>,
+    pub installed_profile_hash: Option<String>,
+    pub expected_transition_id: Option<String>,
+    pub expected_plan_hash: Option<String>,
+    pub planned_at: Option<String>,
+    pub commit_safety_margin_ms: i64,
 }
 fn invalid(name: &str) -> String {
     format!("autonomous_research_online_schema_transition_{name}")
@@ -72,6 +78,10 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
             | "required-execution-window-ms"
             | "commit-safety-margin-ms"
             | "transition-id"
+            | "expected-plan-hash"
+            | "planned-at"
+            | "installed-maintenance-profile"
+            | "installed-maintenance-profile-sha256"
             | "expected-pre-rebind-pristine-runtime-state-hash"
             | "expected-previous-final-receipt-sha256" => {
                 let value = match inline {
@@ -109,29 +119,53 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
         expected_previous_final: None,
         historical_source_process: None,
         historical_source_process_hash: None,
+        installed_profile: None,
+        installed_profile_hash: None,
+        expected_transition_id: None,
+        expected_plan_hash: None,
+        planned_at: None,
+        commit_safety_margin_ms: 1000,
     };
     if help {
         return Ok(defaults);
     }
     let action = values.get("action").map(String::as_str).unwrap_or("plan");
-    if !matches!(action, "plan" | "inspect-pristine" | "execute") {
+    if !matches!(
+        action,
+        "plan" | "inspect-pristine" | "inspect-installed-profile" | "execute" | "recover"
+    ) {
         return Err(invalid(&format!("action_invalid:{action}")));
     }
-    if action == "execute" {
+    let mutating = matches!(action, "execute" | "recover");
+    if mutating {
         if !values.contains_key("execute") {
             return Err(invalid("execute_confirmation_required"));
         }
         if !values.get("transition-id").is_some_and(|v| hash(v)) {
             return Err(invalid("transition_id_required"));
         }
-        // This entry cannot enter the live executor, even with apparent pins or
-        // confirmation flags. Installed recovery/activation is a separate owner.
-        return Err(invalid("native_execute_requires_installed_owner"));
-    }
-    if values.contains_key("execute") {
+        if !values.get("expected-plan-hash").is_some_and(|v| hash(v)) {
+            return Err(invalid("execution_plan_pin_required"));
+        }
+        if !values.get("planned-at").is_some_and(|v| {
+            crate::sqlite_mutation_coordinator::timestamp(&serde_json::Value::from(v.clone()))
+                .is_some()
+        }) {
+            return Err(invalid("execution_planned_at_required"));
+        }
+    } else if values.contains_key("execute") {
         return Err(invalid("execute_action_required"));
     }
-    if values.contains_key("transition-id") || values.contains_key("commit-safety-margin-ms") {
+    if !mutating
+        && [
+            "transition-id",
+            "commit-safety-margin-ms",
+            "expected-plan-hash",
+            "planned-at",
+        ]
+        .iter()
+        .any(|key| values.contains_key(*key))
+    {
         return Err(invalid("execute_option_forbidden_in_plan"));
     }
     if action == "inspect-pristine"
@@ -182,6 +216,23 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
     {
         return Err(invalid("historical_source_authority_process_pin_required"));
     }
+    let installed_profile = values
+        .get("installed-maintenance-profile")
+        .map(PathBuf::from);
+    let installed_profile_hash = values.get("installed-maintenance-profile-sha256").cloned();
+    if installed_profile.is_some() != installed_profile_hash.is_some()
+        || installed_profile_hash.as_ref().is_some_and(|v| !hash(v))
+        || ((mutating || action == "inspect-installed-profile") && installed_profile.is_none())
+    {
+        return Err(invalid("installed_maintenance_profile_pin_required"));
+    }
+    if !mutating && action != "inspect-installed-profile" && installed_profile.is_some() {
+        return Err(invalid("installed_profile_option_forbidden_in_plan"));
+    }
+    let margin = positive(&values, "commit-safety-margin-ms", 1000, 1)?;
+    if margin >= window {
+        return Err(invalid("commit_safety_margin_invalid"));
+    }
     Ok(Arguments {
         help: false,
         action: action.into(),
@@ -194,5 +245,11 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
         expected_previous_final,
         historical_source_process,
         historical_source_process_hash,
+        installed_profile,
+        installed_profile_hash,
+        expected_transition_id: values.get("transition-id").cloned(),
+        expected_plan_hash: values.get("expected-plan-hash").cloned(),
+        planned_at: values.get("planned-at").cloned(),
+        commit_safety_margin_ms: margin,
     })
 }

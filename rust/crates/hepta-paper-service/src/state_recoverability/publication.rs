@@ -24,6 +24,21 @@ fn same(a: &fs::Metadata, b: &fs::Metadata) -> bool {
         && a.mode() == b.mode()
         && a.nlink() == b.nlink()
 }
+fn same_regular(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    a.is_file()
+        && b.is_file()
+        && a.dev() == b.dev()
+        && a.ino() == b.ino()
+        && a.uid() == b.uid()
+        && a.gid() == b.gid()
+        && a.mode() == b.mode()
+        && a.nlink() == b.nlink()
+        && a.len() == b.len()
+        && a.mtime() == b.mtime()
+        && a.mtime_nsec() == b.mtime_nsec()
+        && a.ctime() == b.ctime()
+        && a.ctime_nsec() == b.ctime_nsec()
+}
 fn same_directory(a: &fs::Metadata, b: &fs::Metadata) -> bool {
     // Directory link counts change when unrelated children are added/removed.
     // They are not inode identity. Regular-file hardlink checks keep `same`.
@@ -36,13 +51,29 @@ fn same_directory(a: &fs::Metadata, b: &fs::Metadata) -> bool {
         && a.mode() == b.mode()
 }
 
-pub(super) struct Directory {
+pub(crate) struct ObservedEmptyLock {
+    path: PathBuf,
+    file: File,
+    metadata: fs::Metadata,
+}
+impl ObservedEmptyLock {
+    pub(crate) fn assert_current(&self) -> Result<()> {
+        let held = self.file.metadata().map_err(|_| failure())?;
+        let named = fs::symlink_metadata(&self.path).map_err(|_| failure())?;
+        ensure(
+            same_regular(&self.metadata, &held) && same_regular(&held, &named),
+            "autonomous_research_state_backup_publication_path_changed_or_unsafe",
+        )
+    }
+}
+
+pub(crate) struct Directory {
     pub path: PathBuf,
     pub held: File,
     parents: Vec<(PathBuf, File)>,
 }
 impl Directory {
-    pub fn open_or_create(path: &Path, create: bool) -> Result<Self> {
+    pub(crate) fn open_or_create(path: &Path, create: bool) -> Result<Self> {
         ensure(
             path.is_absolute()
                 && path
@@ -99,7 +130,7 @@ impl Directory {
         dir.assert_current()?;
         Ok(dir)
     }
-    pub fn assert_current(&self) -> Result<()> {
+    pub(crate) fn assert_current(&self) -> Result<()> {
         for (path, held) in self
             .parents
             .iter()
@@ -118,6 +149,40 @@ impl Directory {
             "autonomous_research_state_backup_publication_path_changed_or_unsafe",
         )
     }
+    pub(crate) fn observe_empty_lock(&self, name: &str) -> Result<ObservedEmptyLock> {
+        self.assert_current()?;
+        ensure(
+            valid_name(name),
+            "autonomous_research_state_backup_publication_name_invalid",
+        )?;
+        let file = File::from(
+            openat(
+                self.held.as_fd(),
+                Path::new(name),
+                OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
+                Mode::empty(),
+            )
+            .map_err(|_| failure())?,
+        );
+        let metadata = file.metadata().map_err(|_| failure())?;
+        ensure(
+            metadata.is_file()
+                && metadata.nlink() == 1
+                && metadata.uid() == nix::unistd::getuid().as_raw()
+                && metadata.mode() & 0o077 == 0
+                && metadata.len() == 0,
+            "autonomous_research_state_backup_publication_path_changed_or_unsafe",
+        )?;
+        let result = ObservedEmptyLock {
+            path: self.path.join(name),
+            file,
+            metadata,
+        };
+        result.assert_current()?;
+        self.assert_current()?;
+        Ok(result)
+    }
+
     pub fn child(&self, name: &str) -> Result<Self> {
         self.assert_current()?;
         ensure(
@@ -202,6 +267,24 @@ pub(super) fn publish_receipt(
     receipt: &Value,
     expected: Option<&str>,
 ) -> Result<()> {
+    let bytes = serde_json::to_vec(receipt).map_err(|e| error(e.to_string()))?;
+    publish_receipt_bytes(directory, name, receipt, &bytes, expected)
+}
+
+/// Publish selected deterministic JSON bytes through the same lock/CAS owner.
+/// Parsed bytes must equal the supplied receipt, so wire ordering cannot change
+/// the record's meaning or bypass the existing path and conflict checks.
+pub(super) fn publish_receipt_bytes(
+    directory: &Directory,
+    name: &str,
+    receipt: &Value,
+    bytes: &[u8],
+    expected: Option<&str>,
+) -> Result<()> {
+    ensure(
+        serde_json::from_slice::<Value>(bytes).map_err(|e| error(e.to_string()))? == *receipt,
+        "autonomous_research_state_backup_receipt_publication_bytes_mismatch",
+    )?;
     directory.assert_current()?;
     ensure(
         valid_name(name),
@@ -238,7 +321,7 @@ pub(super) fn publish_receipt(
         directory.assert_current()
     };
     check_lock()?;
-    let result = publish_locked(directory, name, receipt, expected);
+    let result = publish_locked(directory, name, bytes, expected);
     check_lock()?;
     // Do not unlink: doing so permits two writers to lock different inodes.
     result
@@ -247,7 +330,7 @@ pub(super) fn publish_receipt(
 fn publish_locked(
     directory: &Directory,
     name: &str,
-    receipt: &Value,
+    bytes: &[u8],
     expected: Option<&str>,
 ) -> Result<()> {
     let conflict = || error("autonomous_research_state_backup_receipt_publication_conflict");
@@ -267,8 +350,7 @@ fn publish_locked(
         return Err(conflict());
     }
     let temporary = format!(".pending-{}", nonce()?);
-    let bytes = serde_json::to_vec(receipt).map_err(|e| error(e.to_string()))?;
-    directory.write_new(&temporary, &bytes)?;
+    directory.write_new(&temporary, bytes)?;
     let new =
         super::files::ObservedFile::open(&directory.path.join(&temporary), 256 * 1024 * 1024)?;
     directory.assert_current()?;

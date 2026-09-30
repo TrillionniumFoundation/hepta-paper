@@ -109,6 +109,17 @@ impl Fixture {
         )
         .unwrap()
     }
+    fn target_authority(&self) -> PinnedMutationAuthorityV1<Signing> {
+        PinnedMutationAuthorityV1::load(
+            Path::new(self.setup["targetConfigurationPath"].as_str().unwrap()),
+            self.setup["targetConfigurationFileHash"].as_str().unwrap(),
+            Signing {
+                root: self.root.clone(),
+                oracle: self.oracle.clone(),
+            },
+        )
+        .unwrap()
+    }
     fn options(&self) -> SchemaTransitionPlanOptionsV1<'_> {
         options(&self.setup)
     }
@@ -154,8 +165,8 @@ impl MutationAuthorityTransportV1 for Signing {
             .oracle
             .borrow_mut()
             .call(json!({"operation":operation,"root":self.root,"request":request,"mode":"valid"}));
-        assert_eq!(v["ok"], true, "{v}");
-        assert_eq!(v["value"]["accepted"], true);
+        assert_eq!(v["ok"], true, "{operation}: {v}; request={request}");
+        assert_eq!(v["value"]["accepted"], true, "{operation}: {v}");
         fn float_spelling(value: &mut Value) {
             match value {
                 Value::Number(n) if n.is_i64() || n.is_u64() => {

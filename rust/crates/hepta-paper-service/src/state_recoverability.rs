@@ -7,7 +7,7 @@ pub mod controller;
 mod drill;
 mod files;
 pub mod observation;
-mod publication;
+pub(crate) mod publication;
 mod reconciliation;
 pub mod resident;
 pub mod safety_inspection;

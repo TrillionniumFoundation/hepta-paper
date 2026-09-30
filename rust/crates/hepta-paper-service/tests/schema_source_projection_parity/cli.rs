@@ -219,6 +219,75 @@ fn ordinary_schema_plan_matches_node_initial_and_rebind_without_source_writes() 
     }
 }
 #[test]
+fn ordinary_v2_pristine_review_precedes_the_independently_pinned_plan() {
+    let mut oracle = Oracle::new();
+    let fixture = CliFixture::new(&mut oracle, 2);
+    let before = snapshot(&fixture.owner.root);
+    let mut args = fixture.native_args();
+    let action = args.iter().position(|v| v == "--action").unwrap();
+    args[action + 1] = "inspect-pristine".into();
+    if let Some(index) = args
+        .iter()
+        .position(|v| v == "--expected-pre-rebind-pristine-runtime-state-hash")
+    {
+        args.drain(index..=index + 1);
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("autonomous-online-schema-transition")
+        .args(&args)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["kind"],
+        "AutonomousResearchPristineSchemaRebindPreimageObservation"
+    );
+    assert_eq!(report["instanceCount"], 10);
+    assert_eq!(
+        report["prePristineRuntimeStateHash"],
+        fixture.setup["expectedPreRebindPristineRuntimeStateHash"]
+    );
+    assert_eq!(report["mutationPerformed"], false);
+    assert_eq!(report["authorityInvoked"], false);
+    assert_eq!(snapshot(&fixture.owner.root), before);
+
+    let planned = fixture.native().output().unwrap();
+    assert_eq!(
+        planned.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let planned: Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(
+        planned["plan"]["prePristineRuntimeStateHash"],
+        report["prePristineRuntimeStateHash"]
+    );
+    assert_eq!(snapshot(&fixture.owner.root), before);
+
+    let mut forbidden = fixture.native_args();
+    let action = forbidden.iter().position(|v| v == "--action").unwrap();
+    forbidden[action + 1] = "inspect-pristine".into();
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("autonomous-online-schema-transition")
+        .args(forbidden)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("expected_pre_rebind_state_forbidden_in_inspection")
+    );
+    assert_eq!(snapshot(&fixture.owner.root), before);
+}
+
+#[test]
 fn ordinary_schema_plan_refuses_existing_control_and_pinned_input_substitution() {
     let mut oracle = Oracle::new();
     let fixture = CliFixture::new(&mut oracle, 1);

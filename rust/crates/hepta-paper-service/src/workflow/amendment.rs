@@ -182,7 +182,9 @@ pub(super) fn validate_transition(
         serde_json::from_str(&c.definition_json).map_err(|_| WorkflowError::History)?;
     next.validate()?;
     let count = usize::try_from(c.committed_steps).map_err(|_| WorkflowError::History)?;
-    if hash(old)? != c.previous_definition_hash
+    if next.version != old.version
+        || next.research_profile != old.research_profile
+        || hash(old)? != c.previous_definition_hash
         || hash(&next)? != c.definition_hash
         || next.template.snapshot.campaign_id != record.campaign_id
         || old.template.writer_lease != c.previous_lease

@@ -4,6 +4,27 @@ fn open_private(location: &str, immutable: bool) -> Result<Connection> {
     // SQLite canonicalizes filenames, including /proc descriptor paths. Never
     // use that mechanism to claim a pinned source inode: open only our private
     // copy, and use immutable mode only when no effective WAL is present.
+    let immutable = if immutable {
+        true
+    } else {
+        // An absent or zero-byte private WAL cannot carry any committed frames.
+        // Reading the private main copy immutably also avoids SQLite's root-only
+        // fchown of an unchanged copied WAL, which changes its retained ctime.
+        // The snapshot owner still checks every original source/sidecar and all
+        // copied bytes and identities before and after this read.
+        let wal = PathBuf::from(format!("{location}-wal"));
+        match std::fs::symlink_metadata(wal) {
+            Ok(metadata) => {
+                ensure(
+                    metadata.is_file() && !metadata.file_type().is_symlink(),
+                    "autonomous_research_state_database_private_snapshot_changed",
+                )?;
+                metadata.len() == 0
+            }
+            Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => return Err(files::changed()),
+        }
+    };
     let location = if immutable {
         let escaped = location
             .bytes()

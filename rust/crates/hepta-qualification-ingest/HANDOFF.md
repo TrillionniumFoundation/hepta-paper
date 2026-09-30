@@ -46,7 +46,7 @@ owned by the effective consumer UID, mode `0400` or `0600`, under its private
 `0700` directory. Its declared consumer UID must match the actual Linux process.
 Request and trust documents are limited to 1 MiB each. Exactly six declared
 envelope/payload pairs are required for current V2, seven for historical V1,
-and five for restricted-research V3, with distinct paths that do not alias the
+five for restricted-research V3 and four for restricted-research V4, with distinct paths that do not alias the
 declared trust-store or ledger path.
 
 Trust, envelope and payload files must be owned by the declared external UID,
@@ -83,13 +83,14 @@ bytes, not total process RSS: parsed JSON and signature structures add overhead.
    inner authority-receipt expiries. The payload-derived bound is returned only
    after payload validation and every required nested signature succeeds.
 4. Require cgroup and storage packages to agree on `hostIdentityHash`; storage
-   and cutover/soak packages must agree on `databaseIdentityHash`. The factory
+   and cutover/soak packages must agree on `databaseIdentityHash` in V1–V3. V4
+   retains the signed storage database identity without a transfer package. The factory
    also derives service identity, Codex runtime identity and writer-transfer
    receipt identity from the verified payloads.
-5. For a profile-bound V3 workflow, compare repository/commit/tree, opaque
+5. For a profile-bound V3/V4 workflow, compare repository/commit/tree, opaque
    qualification hash, trust generation, exclusive expiry and qualified runtime
    identity with the durable workflow profile. Then build the versioned V1, V2
-   or V3 report from records obtained through opaque `package()` accessors.
+   V3 or V4 report from records obtained through opaque `package()` accessors.
    Joint verification or profile mismatch occurs before opening, creating or
    advancing the replay ledger.
 6. Acquire `BEGIN IMMEDIATE`, which may wait behind another writer. Before any
@@ -265,3 +266,38 @@ credential, release permission or submission authority.
 acceptance, missing/extra package denial, cross-host/signature rejection,
 cross-profile replay and the type boundary; the same suite preserves full V1/V2
 fixtures and real SQLite lock-wait currentness tests.
+
+## Restricted research qualification V4
+
+Explicit request version 4 selects
+[request V4](../../../docs/rust/qualification/research-qualification-request-v4.schema.json)
+and [receipt V4](../../../docs/rust/qualification/research-qualification-receipt-v4.schema.json).
+Its fixed package set is `QualificationPackageIdV1::RESEARCH_V4_REQUIRED`:
+signed host containment, storage recovery, capability-key lifecycle and isolated
+Codex roles. It requires three separate operational control groups. Governance,
+writer cutover/soak and publication/submission packages are rejected even when
+their signatures are valid. The existing storage package still requires its
+complete fault/recovery matrix, 10,000 operations and 72-hour soak; this is state
+safety qualification, not an irreversible-action permission.
+
+`verify_research_qualification_v4` retains the exact signed database/service,
+runtime and role UID/GID facts. It omits writer-transfer evidence instead of
+inventing a receipt. Distinct V4 binding, verification and receipt domains
+prevent a V3/full-profile receipt from standing in for this evidence set. V1–V3
+serialized bodies and their explicit package scopes remain unchanged.
+
+The version-neutral `verify_and_commit_research_qualification_request` and
+`verify_and_commit_expected_research_qualification_request` accept only V3/V4
+through the original file, retained-trust and replay owner. The ordinary
+autonomous research command uses the expected-profile form; legacy `_v3`
+functions still require version 3. The opaque Rust research types retain their
+V3 names for API compatibility, and `qualification().profile()` identifies the
+actual version. Neither version can be borrowed as a full production closure.
+
+Signed V4 tests cover durable replay, cross-profile/clock refusal, every missing
+safety package, correctly signed forbidden packages, storage-fault/soak/host
+substitution, expiry and signature failure. The existing retained-trust tests
+continue to check revocation, alias/source mutation and sticky invalidation.
+Research admission additionally checks each broker role against its retained
+canary UID/GID before any service effect. No fixture issues installed evidence,
+and actual external qualification remains required before research activation.

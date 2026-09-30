@@ -619,5 +619,6 @@
 "rust/oracle/runtime-image-reproducibility-v2.mjs",
 "rust/oracle/runtime-publication-read-v1.mjs",
 "rust/oracle/runtime-r-source-cas-v1.mjs",
+"rust/oracle/schema-installation-v1.mjs",
 "rust/oracle/state-provision-v1.mjs"
 ]

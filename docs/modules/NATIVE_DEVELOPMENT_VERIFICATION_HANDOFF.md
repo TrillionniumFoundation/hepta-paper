@@ -15,7 +15,11 @@ The development profile requires qualified Cargo/Rust 1.98 and a clean source
 commit. An explicit `--cargo ABSOLUTE_PATH` selects the actual tool, not a caller
 success claim. The adjacent actual rustc version and tool hashes are checked.
 The owner binds Git head/tree and all bounded tracked source bytes before and
-after execution. `--expected-head SHA --expected-tree SHA` optionally pins the
+after execution. Hidden index flags are refused, the actual index must match the
+selected tree entry for entry, and a bounded no-filter Git batch verifies every
+regular file's actual blob and executable mode. Git replacement objects are
+disabled. Gitlinks and tracked symlinks are outside this source profile and
+refuse execution. `--expected-head SHA --expected-tree SHA` optionally pins the
 independently selected subject. These are cooperative before/after consistency
 observations; no immutable filesystem snapshot or hostile same-UID containment
 is claimed.
@@ -47,5 +51,7 @@ Implementation is `full_suite_verification` and its `execution` owner in
 workspace, run all five development commands, check stripped credential
 inheritance, retry the same subject, refuse dirty/wrong source subjects, and
 interrupt a real sleeping Rust test with both SIGTERM and a deadline. The
+same tests refuse hidden index flags, ignored executable-mode changes and actual
+changed bytes that a deliberately weakened Git stat cache reports as clean. The
 process group must be reaped and the actual failure receipt retained.
 Results belong to exact-head/prospective-merge receipts for the current bytes.

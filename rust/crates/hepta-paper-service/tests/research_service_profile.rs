@@ -302,6 +302,7 @@ fn research_broker_requires_current_signed_cost_owner_without_release_authority(
     let acknowledgement_key = SigningKey::from_bytes(&[75; 32]);
     let module = config.service.workers.keys().next().unwrap().clone();
     let mut source = BrokerPreparedSourceV1 {
+        operation_publisher: None,
         socket_path: temp.0.join("broker.sock"),
         broker_uid: owner.uid(),
         broker_gid: owner.gid(),
@@ -568,6 +569,7 @@ fn research_policy_rejects_source_process_activation_and_runtime_substitution() 
         module,
         WorkerBindingV1::BrokerPrepared {
             source: hepta_paper_service::broker_prepared::BrokerPreparedSourceV1 {
+                operation_publisher: None,
                 socket_path: temp.0.join("broker.sock"),
                 broker_uid: 1,
                 broker_gid: 1,

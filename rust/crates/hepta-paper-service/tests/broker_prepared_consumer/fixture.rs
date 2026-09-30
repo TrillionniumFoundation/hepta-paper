@@ -131,6 +131,7 @@ impl Fixture {
         let billing_key = SigningKey::from_bytes(&[73; 32]);
         let acknowledgement_key = SigningKey::from_bytes(&[75; 32]);
         let source = BrokerPreparedSourceV1 {
+            operation_publisher: None,
             socket_path: root.join("broker.sock"),
             broker_uid: owner.uid(),
             broker_gid: owner.gid(),

@@ -335,7 +335,7 @@ fn ordinary_schema_plan_refuses_existing_control_and_pinned_input_substitution()
     assert_eq!(snapshot(&fixture.owner.root), before);
 }
 #[test]
-fn ordinary_schema_execute_is_rejected_before_reading_runtime_or_authority() {
+fn ordinary_schema_execute_requires_independent_plan_pin_before_reading_inputs() {
     let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
         .args([
             "autonomous-online-schema-transition",
@@ -357,9 +357,51 @@ fn ordinary_schema_execute_is_rejected_before_reading_runtime_or_authority() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("native_execute_requires_installed_owner")
-    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("execution_plan_pin_required"));
+}
+
+#[test]
+fn ordinary_execute_and_recover_refuse_missing_physical_profile_without_runtime_changes() {
+    let mut oracle = Oracle::new();
+    let fixture = CliFixture::new(&mut oracle, 1);
+    for action in ["execute", "recover"] {
+        let mut args = fixture.native_args();
+        args[1] = action.into();
+        args.extend([
+            "--execute".into(),
+            "--transition-id".into(),
+            digest(b"selected-transition"),
+            "--expected-plan-hash".into(),
+            digest(b"selected-plan"),
+            "--planned-at".into(),
+            NOW.into(),
+            "--installed-maintenance-profile".into(),
+            fixture
+                .owner
+                .root
+                .join("missing-physical-owner-profile.json")
+                .to_str()
+                .unwrap()
+                .into(),
+            "--installed-maintenance-profile-sha256".into(),
+            digest(b"independent-profile"),
+        ]);
+        let before = snapshot(&fixture.owner.root);
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("autonomous-online-schema-transition")
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("installed_schema_owner_requires_root")
+                || error.contains("installed_schema_profile_invalid_or_changed"),
+            "{action}: {error}"
+        );
+        assert_eq!(snapshot(&fixture.owner.root), before, "{action}");
+    }
 }
 
 #[test]

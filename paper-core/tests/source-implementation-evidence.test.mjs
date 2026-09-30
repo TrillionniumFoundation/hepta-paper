@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   parseStrictJson,
+  validateCommand,
   verifyRepositorySourceEvidence,
 } from '../bin/verify-source-implementation-evidence.mjs';
 
@@ -194,6 +195,48 @@ test('exact source evidence executes a typed owner test and emits no authority',
   assert.deepEqual(receipt.authorityClaims, authorityClaims());
 });
 
+test('cold-build owner commands accept the schema timeout ceiling and reject out-of-bound budgets', () => {
+  const schema = JSON.parse(fs.readFileSync(new URL(
+    '../../docs/system/schemas/source-implementation-evidence-v1.schema.json',
+    import.meta.url,
+  ), 'utf8'));
+  const timeout = schema.$defs.command.properties.timeoutSeconds;
+  assert.equal(timeout.minimum, 1);
+  assert.equal(timeout.maximum, 1200);
+  const command = {
+    program: 'cargo',
+    args: ['test', '--locked', '-p', 'hepta-paper-service', '--test',
+      'schema_installation_parity', 'finalization_recovery::lost_observation_response',
+      '--', '--exact', '--nocapture'],
+    workdir: 'rust',
+    expectedExitCode: 0,
+    timeoutSeconds: timeout.maximum,
+    expectedTargets: ['rust/crates/hepta-paper-service/tests/schema_installation_parity.rs'],
+  };
+  const paths = new Set(command.expectedTargets);
+  for (const timeoutSeconds of [timeout.minimum, 600, timeout.maximum]) {
+    assert.doesNotThrow(() => validateCommand(
+      { ...command, timeoutSeconds }, 'cold-build-owner', paths,
+    ));
+  }
+  for (const timeoutSeconds of [0, timeout.maximum + 1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => validateCommand(
+      { ...command, timeoutSeconds }, 'cold-build-owner', paths,
+    ), /integer_domain_invalid: cold-build-owner.timeoutSeconds/u);
+  }
+  const fixture = createFixture((evidence) => {
+    evidence.bundles['example-source'].verificationCommands[0].timeoutSeconds = timeout.maximum;
+  });
+  const receipt = verifyRepositorySourceEvidence({
+    root: fixture.root,
+    execute: true,
+    expectedHead: fixture.head,
+    expectedTree: fixture.tree,
+  });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+});
+
 test('failed owner command preserves a bounded exact transcript diagnostic', () => {
   const fixture = createFixture((evidence, root) => {
     write(root, 'test/feature.test.mjs', [
@@ -350,6 +393,93 @@ test('work-item keys, modules, capabilities and source state are closed-world', 
   assertRejected((evidence) => {
     evidence.records['TEST-001'].capabilityIds = ['CAP-UNKNOWN'];
   }, /unknown_capability/u);
+});
+
+function inlineRustOwnerFixture(t, { declareTest = true, testSource } = {}) {
+  const expectedTarget = 'rust/crates/fixture/src/lib.rs';
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'rust/Cargo.toml', '[workspace]\nmembers = ["crates/fixture"]\nresolver = "3"\n');
+    write(root, 'rust/crates/fixture/Cargo.toml', '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n');
+    write(root, 'rust/Cargo.lock', 'version = 4\n\n[[package]]\nname = "fixture"\nversion = "0.1.0"\n');
+    write(root, expectedTarget, [
+      'pub fn inline_feature() -> u32 { 1 }',
+      '#[cfg(test)]',
+      'mod tests {',
+      testSource ?? '#[test]\nfn selected_owner_test() { assert_eq!(super::inline_feature(), 1); }',
+      '}',
+      '',
+    ].join('\n'));
+    const bundle = evidence.bundles['example-source'];
+    bundle.files.push({
+      path: expectedTarget, role: 'implementation', mode: '100644', language: 'rust',
+      gitBlob: command(root, 'git', 'hash-object', expectedTarget),
+      symbols: [{ kind: 'function', name: 'inline_feature' },
+        ...(declareTest ? [{ kind: 'test', name: 'selected_owner_test' }] : [])],
+    });
+    bundle.verificationCommands = [{
+      program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 30,
+      args: ['test', '--locked', '-p', 'fixture', '--lib', 'tests::selected_owner_test',
+        '--', '--exact', '--nocapture'],
+      expectedTargets: [expectedTarget],
+    }];
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  return fixture;
+}
+
+test('Rust implementation files with explicit inline test symbols execute their real exact Cargo owner', (t) => {
+  const fixture = inlineRustOwnerFixture(t);
+  const cargo = command(fixture.root, 'rustup', 'which', '--toolchain', '1.98.0', 'cargo');
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-inline-rust-owner-target-'));
+  const oldPath = process.env.PATH;
+  const oldTarget = process.env.CARGO_TARGET_DIR;
+  process.env.PATH = `${path.dirname(cargo)}${path.delimiter}${oldPath ?? ''}`;
+  process.env.CARGO_TARGET_DIR = target;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    if (oldTarget === undefined) delete process.env.CARGO_TARGET_DIR;
+    else process.env.CARGO_TARGET_DIR = oldTarget;
+    fs.rmSync(target, { recursive: true, force: true });
+  });
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.verificationCommandsExecuted, true);
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+  assert.deepEqual(receipt.commandObservations[0].args, [
+    'test', '--locked', '-p', 'fixture', '--lib', 'tests::selected_owner_test',
+    '--', '--exact', '--nocapture',
+  ]);
+});
+
+test('inline Rust tests without explicit test symbols cannot become command owners', (t) => {
+  const fixture = inlineRustOwnerFixture(t, { declareTest: false });
+  assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+    /command_target_not_declared_test/u);
+});
+
+test('a Rust implementation function or inert test spelling cannot pretend to be an inline test owner', (t) => {
+  for (const testSource of [
+    'fn selected_owner_test() {}',
+    '// #[test]\nfn selected_owner_test() {}',
+    'const DECOY: &str = "#[test] fn selected_owner_test() {}";\nfn selected_owner_test() {}',
+  ]) {
+    const fixture = inlineRustOwnerFixture(t, { testSource });
+    assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+      /source_symbol_missing: .*:test:selected_owner_test/u);
+  }
+});
+
+test('inline ownership does not grant JavaScript implementation-role files a test role', () => {
+  assertRejected((evidence, _root, blobs) => {
+    const bundle = evidence.bundles['example-source'];
+    bundle.files[1].role = 'implementation';
+    bundle.files.push({
+      path: 'test/orphan.test.mjs', role: 'test', mode: '100644', language: 'javascript',
+      gitBlob: blobs.orphanTestBlob,
+      symbols: [{ kind: 'test', name: 'orphan_test' }],
+    });
+  }, /command_target_not_declared_test/u);
 });
 
 // These exercise the actual verifier process boundary. The synthetic Cargo

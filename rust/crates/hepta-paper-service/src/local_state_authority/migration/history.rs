@@ -1,7 +1,8 @@
 //! Public-key-only observation of one exact legacy SQL snapshot. Neither this
 //! owner nor its serializable report can authorize source mutation or shutdown.
 use super::{
-    archive, mutation_history, offline_image, schema_history, source_profile, source_rows,
+    archive, backup_history, mutation_history, offline_image, schema_history, source_profile,
+    source_rows,
 };
 use crate::local_state_authority::storage;
 use crate::sqlite_mutation_coordinator::{
@@ -122,9 +123,10 @@ impl LegacyAuthorityJournalVerifierV1 {
     /// opens no file, clones no descriptor, invokes no transport, changes no
     /// PRAGMA and neither begins nor ends the caller's transaction.
     ///
-    /// First-version admission is deliberately bounded and refuses all backup
-    /// rows and pending operations. Limits are rejection conditions, never
-    /// permission to omit historical rows. See the migration history handoff.
+    /// Admission is deliberately bounded and refuses pending operations. Finalized
+    /// backup rows are admitted only when their complete signatures bind the exact
+    /// zero-mutation terminal head; their fencing booleans are never trusted as
+    /// authority. Limits are rejection conditions, never permission to omit rows.
     pub fn inspect(&self, database: &Connection) -> Result<Value> {
         Ok(self.observe_snapshot(database)?.report)
     }
@@ -190,12 +192,8 @@ impl LegacyAuthorityJournalVerifierV1 {
         let transaction = database.transaction_state(Some("main"))?;
         let changes = database.total_changes();
         let profile = source_profile::inspect_source_schema(database)?;
-        let rows = source_rows::read_source_rows(database)?;
-        if !rows.backups().is_empty() {
-            return Err(error(
-                "local_authority_history_backup_provenance_unsupported",
-            ));
-        }
+        let rows =
+            source_rows::read_source_rows_for_profile(database, profile.schema_rebind_present())?;
         let schema = schema_history::verify_schema_history_v1(
             &rows,
             &self.configuration,
@@ -222,6 +220,12 @@ impl LegacyAuthorityJournalVerifierV1 {
             )
         };
         self.assert_terminal(&rows, &head, schema.initialized())?;
+        let backup_report = backup_history::verify_backup_history_v1(
+            &rows,
+            &head,
+            &self.configuration,
+            self.authority.verification_key(),
+        )?;
         self.current()?;
         if database.total_changes() != changes
             || database.transaction_state(Some("main"))? != transaction
@@ -232,7 +236,8 @@ impl LegacyAuthorityJournalVerifierV1 {
             "version":1,"kind":"HeptaLocalStateAuthorityLegacyHistoryInspectionV1",
             "evidenceScope":"signed_history_observation_no_migration_authority",
             "historyState":if schema.initialized() {"settled_signed_history"} else {"uninitialized_no_signed_history"},
-            "sourceSchemaHash":profile.schema_hash(),"sourceLogicalHash":rows.logical_hash(),
+            "sourceSchemaHash":profile.schema_hash(),"sourceSchemaProfile":profile.profile_id(),
+            "sourceLogicalHash":rows.logical_hash(),
             "logicalHashProfile":"HeptaLocalStateAuthorityLegacySqlRowsV1",
             "configurationHash":self.configuration_hash,
             "configurationFileSha256":self.configuration_file_hash,
@@ -240,6 +245,7 @@ impl LegacyAuthorityJournalVerifierV1 {
             "publicKeySha256":hash_bytes(self.authority.verification_key().as_bytes()),
             "rowCounts":rows.counts(),"head":head,
             "schemaHistory":schema.report(),"mutationHistory":mutation_report,
+            "backupHistory":backup_report,
         });
         Ok(ObservedSnapshot {
             rows,

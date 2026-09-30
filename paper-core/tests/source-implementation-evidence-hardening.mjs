@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { validateCommand } from '../bin/verify-source-implementation-evidence.mjs';
+import { declaresTestOwner, validateCommand } from '../bin/verify-source-implementation-evidence.mjs';
 import { stripRustInertText, rustSymbolMatches, rustSymbolCfgGated } from '../src/source-evidence-rust-symbols.mjs';
 
 export { stripRustInertText };
@@ -287,14 +287,15 @@ function assertRustSymbolOwnership(root, entry) {
 function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (command.program !== 'cargo') return;
   const testPaths = new Set(bundle.files
-    .filter((entry) => entry.role === 'test')
+    .filter(declaresTestOwner)
     .map((entry) => entry.path));
   const { selector, discoveryPrefix } = validateCommand(
     command,
     `bundle.${bundleId}`,
     testPaths,
   ).ownerBinding;
-  const targetEntries = bundle.files.filter((entry) => command.expectedTargets.includes(entry.path) && entry.role === 'test');
+  const targetEntries = bundle.files.filter((entry) => command.expectedTargets.includes(entry.path)
+    && declaresTestOwner(entry));
   if (targetEntries.length !== command.expectedTargets.length || targetEntries.length < 1) fail('cargo_target_cardinality', bundleId);
   const symbolName = selector.split('::').at(-1);
   const owners = [];

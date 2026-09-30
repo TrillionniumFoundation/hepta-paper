@@ -26,6 +26,8 @@ const supportSchemas = [
   'external-qualification-closure-receipt-v2.schema.json',
   'research-qualification-request-v3.schema.json',
   'research-qualification-receipt-v3.schema.json',
+  'research-qualification-request-v4.schema.json',
+  'research-qualification-receipt-v4.schema.json',
 ];
 
 function read(relativePath) {
@@ -79,7 +81,7 @@ function assertStrictSchema(name, schema) {
   assert.equal(schema.type, 'object', name);
   assert.equal(schema.additionalProperties, false, name);
   const version = schema.properties.schemaVersion || schema.properties.version;
-  const versionMatch = /-v([123])\.schema\.json$/u.exec(name);
+  const versionMatch = /-v([1234])\.schema\.json$/u.exec(name);
   assert.ok(versionMatch, `unsupported versioned schema ${name}`);
   assert.equal(version?.const, Number(versionMatch[1]), name);
   assert.ok(Array.isArray(schema.required) && schema.required.length > 0, name);
@@ -379,4 +381,45 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
   assert.deepEqual(new Set(report.failures.map((failure) => failure.name)),
     new Set(['missing', 'duplicate', 'publication', 'full-profile', 'extra-authority',
       'receipt-stage', 'receipt-release', 'receipt-submission', 'receipt-missing-profile']));
+});
+
+test('research V4 requires four safety packages and rejects cutover or publication authority', () => {
+  const request = readSchema('research-qualification-request-v4.schema.json');
+  const receipt = readSchema('research-qualification-receipt-v4.schema.json');
+  const ids = Object.keys(expectedPackages).filter((id) =>
+    id !== 'EXT-AUTHORITY-SET-001' && id !== 'EXT-CUTOVER-SOAK-001');
+  assert.deepEqual(new Set(request.$defs.packageId.enum), new Set(ids));
+  assert.deepEqual(receipt.$defs.packageId, request.$defs.packageId);
+  assert.equal(receipt.properties.kind.const, 'ResearchQualificationReceiptV4');
+  assert.deepEqual(new Set(receipt.properties.authorityGroups.required),
+    new Set(['target_host', 'key_owner', 'codex_account']));
+  const valid = {
+    version: 4, repository: 'TrillionniumFoundation/hepta-paper',
+    commit: 'a'.repeat(40), tree: 'b'.repeat(40), consumerUid: 1000,
+    trustStore: { path: '/authority/trust.json', ownerUid: 0 },
+    replayLedger: { path: '/consumer/replay.sqlite', ownerUid: 1000 },
+    envelopes: ids.map((packageId, index) => ({ packageId,
+      path: `/authority/envelope-${index}.json`, ownerUid: 0,
+      payloadPath: `/authority/payload-${index}.json`, payloadOwnerUid: 0 })),
+  };
+  const rows = [{ name: 'valid', schema: JSON.stringify(request), instance: JSON.stringify(valid) }];
+  for (const [name, mutate] of [
+    ...ids.map((id, index) => [`missing-${id}`, (value) => value.envelopes.splice(index, 1)]),
+    ['cutover', (value) => { value.envelopes[0].packageId = 'EXT-CUTOVER-SOAK-001'; }],
+    ['publication', (value) => { value.envelopes[0].packageId = 'EXT-AUTHORITY-SET-001'; }],
+    ['governance', (value) => { value.envelopes[0].packageId = 'EXT-GOV-MAIN-001'; }],
+    ['old-profile', (value) => { value.version = 3; }],
+    ['grant', (value) => { value.releaseAuthority = true; }],
+  ]) {
+    const value = structuredClone(valid);
+    mutate(value);
+    rows.push({ name, schema: JSON.stringify(request), instance: JSON.stringify(value) });
+  }
+  const result = spawnSync('python3', ['docs/rust/tools/strict_json_schema.py', '--batch-stdin'], {
+    cwd: repositoryRoot, input: JSON.stringify(rows), encoding: 'utf8', timeout: 30_000,
+  });
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(new Set(report.failures.map((failure) => failure.name)),
+    new Set([...ids.map((id) => `missing-${id}`), 'cutover', 'publication', 'governance', 'old-profile', 'grant']));
 });

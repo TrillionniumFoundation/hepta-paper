@@ -7,6 +7,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 mod archive;
+mod backup_history;
 mod cli;
 mod history;
 mod mutation_history;
@@ -34,5 +35,6 @@ pub fn inspect_legacy_authority_journal_schema_v1(database: &Connection) -> Resu
         "evidenceScope": "schema_only_no_migration_authority",
         "sourceSchema": profile.schema(),
         "sourceSchemaHash": profile.schema_hash(),
+        "sourceSchemaProfile": profile.profile_id(),
     }))
 }

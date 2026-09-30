@@ -9,7 +9,7 @@ use crate::workflow::{
 };
 use crate::{WorkerBindingV1, operate_research_local_workflow_with_clock_and_cancellation_v1};
 use hepta_control_plane::canonical_hash_v1;
-use hepta_qualification_ingest::qualification_closure::verify_and_commit_expected_research_qualification_request_v3;
+use hepta_qualification_ingest::qualification_closure::verify_and_commit_expected_research_qualification_request;
 use nix::fcntl::OFlag;
 use serde_json::{Value, json};
 use std::{
@@ -281,7 +281,7 @@ pub(super) fn run(
         }
         // Reject absent, foreign or stale local state before consuming an external
         // qualification nonce. A fresh launch remains uninitialized until the
-        // matching opaque V3 authority has passed its own durable admission.
+        // matching opaque V3/V4 research authority has passed its own durable admission.
         let needs_initialization = if options.action == "launch" {
             match fs::symlink_metadata(root) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
@@ -301,9 +301,14 @@ pub(super) fn run(
                 options.research_qualification_request.as_deref(),
             ) {
                 (Some(profile), Some(request_path)) => {
-                    let admission = verify_and_commit_expected_research_qualification_request_v3(
+                    let admission = verify_and_commit_expected_research_qualification_request(
                         request_path,
                         &profile.qualification_expectation(),
+                    )
+                    .map_err(|_| WorkflowError::Qualification)?;
+                    crate::research::validate_research_workflow_broker_principals_v1(
+                        &definition.template,
+                        &admission,
                     )
                     .map_err(|_| WorkflowError::Qualification)?;
                     report["qualificationReceipt"] = admission.receipt().clone();

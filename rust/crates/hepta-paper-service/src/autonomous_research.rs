@@ -31,7 +31,7 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
     "naturalLanguageToLeanEquivalenceMachineProven": false,
     "automaticBudgetExpansionEnabled": false
   },
-  "rustBoundary": "explicit local workflow reuses the existing durable owner; a persisted research profile requires a matching authority-owned V3 request for every new dispatch; no production, release or submission authority"
+  "rustBoundary": "explicit local workflow reuses the existing durable owner; a persisted research profile requires a matching authority-owned V3/V4 research request for every new dispatch; no production, release or submission authority"
 }"#;
 
 #[derive(Clone, Debug)]
@@ -232,7 +232,7 @@ pub fn autonomous_research_help_json_v1() -> Value {
               "naturalLanguageToLeanEquivalenceMachineProven": false,
               "automaticBudgetExpansionEnabled": false
           },
-          "rustBoundary": "explicit local workflow reuses the existing durable owner; a persisted research profile requires a matching authority-owned V3 request for every new dispatch; no production, release or submission authority"
+          "rustBoundary": "explicit local workflow reuses the existing durable owner; a persisted research profile requires a matching authority-owned V3/V4 research request for every new dispatch; no production, release or submission authority"
       })
 }
 

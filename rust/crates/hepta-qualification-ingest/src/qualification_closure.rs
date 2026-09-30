@@ -29,6 +29,7 @@ use crate::{
     load_external_qualification_file_v1, validate_external_package_payload_v1,
     verify_external_qualification_closure_v1, verify_external_qualification_closure_v2,
     verify_external_qualification_v1, verify_research_qualification_v3,
+    verify_research_qualification_v4,
 };
 use base64ct::{Base64UrlUnpadded, Encoding};
 use ed25519_dalek::VerifyingKey;
@@ -104,7 +105,7 @@ struct AuthorityFileV1 {
     owner_uid: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EnvelopeFileV1 {
     package_id: QualificationPackageIdV1,
@@ -153,7 +154,7 @@ struct ClosurePackageReceiptV1 {
 }
 
 /// Directly reusable, non-authorizing canary profile emitted only by a genuine
-/// V3 verification. Persisting this object never substitutes for the opaque
+/// V3/V4 research verification. Persisting this object never substitutes for the opaque
 /// qualification, which must be presented and revalidated before every new
 /// research dispatch.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -446,20 +447,10 @@ pub fn verify_and_commit_research_qualification_request_v3(
 ) -> Result<VerifiedResearchQualificationRequestV3, ClosureError> {
     let accepted = verify_and_commit_request_file_v1(
         request_path,
-        Some(QualificationClosureProfile::RestrictedResearchV3),
+        Some(&[QualificationClosureProfile::RestrictedResearchV3]),
         None,
     )?;
-    let receipt = serde_json::to_value(&accepted.receipt)?;
-    match accepted.verified {
-        AcceptedClosure::Research(qualification) => Ok(VerifiedResearchQualificationRequestV3 {
-            qualification,
-            receipt,
-            trust_source: accepted
-                .trust_source
-                .ok_or(ClosureError::ResearchAuthorityNotCurrent)?,
-        }),
-        AcceptedClosure::Full(_) => Err(ClosureError::RequestInvalid),
-    }
+    research_request(accepted)
 }
 
 /// Verify and durably admit a V3 request only when the fully verified opaque
@@ -471,9 +462,49 @@ pub fn verify_and_commit_expected_research_qualification_request_v3(
 ) -> Result<VerifiedResearchQualificationRequestV3, ClosureError> {
     let accepted = verify_and_commit_request_file_v1(
         request_path,
-        Some(QualificationClosureProfile::RestrictedResearchV3),
+        Some(&[QualificationClosureProfile::RestrictedResearchV3]),
         Some(expected),
     )?;
+    research_request(accepted)
+}
+
+/// Verify V3 or V4 research-only evidence through the same authority-file,
+/// retained-trust and durable replay owner. Full profiles fail before authority
+/// file reads, and the exact version selects its fixed package set.
+pub fn verify_and_commit_research_qualification_request(
+    request_path: &Path,
+) -> Result<VerifiedResearchQualificationRequestV3, ClosureError> {
+    verify_and_commit_research_request(request_path, None)
+}
+
+/// Verify V3 or V4 only when its opaque binding matches the persisted workflow
+/// profile. Evidence versions cannot substitute for one another or consume
+/// replay nonces on a profile mismatch.
+pub fn verify_and_commit_expected_research_qualification_request(
+    request_path: &Path,
+    expected: &ResearchQualificationExpectationV3,
+) -> Result<VerifiedResearchQualificationRequestV3, ClosureError> {
+    verify_and_commit_research_request(request_path, Some(expected))
+}
+
+fn verify_and_commit_research_request(
+    request_path: &Path,
+    expected: Option<&ResearchQualificationExpectationV3>,
+) -> Result<VerifiedResearchQualificationRequestV3, ClosureError> {
+    let accepted = verify_and_commit_request_file_v1(
+        request_path,
+        Some(&[
+            QualificationClosureProfile::RestrictedResearchV3,
+            QualificationClosureProfile::RestrictedResearchV4,
+        ]),
+        expected,
+    )?;
+    research_request(accepted)
+}
+
+fn research_request(
+    accepted: AcceptedClosureResult,
+) -> Result<VerifiedResearchQualificationRequestV3, ClosureError> {
     let receipt = serde_json::to_value(&accepted.receipt)?;
     match accepted.verified {
         AcceptedClosure::Research(qualification) => Ok(VerifiedResearchQualificationRequestV3 {
@@ -489,14 +520,18 @@ pub fn verify_and_commit_expected_research_qualification_request_v3(
 
 fn verify_and_commit_request_file_v1(
     request_path: &Path,
-    expected_profile: Option<QualificationClosureProfile>,
+    expected_profiles: Option<&[QualificationClosureProfile]>,
     expected_research: Option<&ResearchQualificationExpectationV3>,
 ) -> Result<AcceptedClosureResult, ClosureError> {
     let effective_uid = effective_uid()?;
     let request_bytes = read_private_request_file(request_path, effective_uid)?;
     let request: ClosureRequestV1 = serde_json::from_slice(&request_bytes)?;
     validate_request(&request)?;
-    if expected_profile.is_some_and(|profile| profile.version() != request.version) {
+    if expected_profiles.is_some_and(|profiles| {
+        !profiles
+            .iter()
+            .any(|profile| profile.version() == request.version)
+    }) {
         return Err(ClosureError::RequestInvalid);
     }
     if request.consumer_uid != effective_uid {
@@ -763,6 +798,15 @@ fn verify_and_commit_closure_with_clock_and_expectation(
                 trust.store,
             )?)
         }
+        QualificationClosureProfile::RestrictedResearchV4 => {
+            AcceptedClosure::Research(verify_research_qualification_v4(
+                candidates,
+                &subject,
+                verified_at_unix_ms,
+                trust.generation,
+                trust.store,
+            )?)
+        }
     };
     if let Some(expected) = expected_research {
         match &verified {
@@ -947,8 +991,9 @@ fn assemble_receipt(
                 "ExternalQualificationClosureReceiptV2"
             }
             QualificationClosureProfile::RestrictedResearchV3 => "ResearchQualificationReceiptV3",
+            QualificationClosureProfile::RestrictedResearchV4 => "ResearchQualificationReceiptV4",
         },
-        status: if profile == QualificationClosureProfile::RestrictedResearchV3 {
+        status: if profile.is_research() {
             "research_only_qualification_set_verified"
         } else {
             "external_qualification_set_verified"
@@ -2125,6 +2170,10 @@ mod tests {
             verify_and_commit_research_qualification_request_v3(&request_path),
             Err(ClosureError::RequestInvalid)
         ));
+        assert!(matches!(
+            verify_and_commit_research_qualification_request(&request_path),
+            Err(ClosureError::RequestInvalid)
+        ));
         assert!(!ledger.path.exists());
 
         fs::write(
@@ -2134,6 +2183,21 @@ mod tests {
         .unwrap();
         let error = verify_and_commit_research_qualification_request_v3(&request_path)
             .expect_err("the correctly scoped request must continue to authority-file intake");
+        assert!(!matches!(error, ClosureError::RequestInvalid));
+        assert!(!ledger.path.exists());
+
+        fs::write(
+            &request_path,
+            serde_json::to_vec(&request(4, &QualificationPackageIdV1::RESEARCH_V4_REQUIRED))
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_and_commit_research_qualification_request_v3(&request_path),
+            Err(ClosureError::RequestInvalid)
+        ));
+        let error = verify_and_commit_research_qualification_request(&request_path)
+            .expect_err("V4 continues to the unchanged external authority-file intake");
         assert!(!matches!(error, ClosureError::RequestInvalid));
         assert!(!ledger.path.exists());
         fs::remove_dir_all(directory).unwrap();

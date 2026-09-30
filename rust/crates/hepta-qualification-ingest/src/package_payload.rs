@@ -651,10 +651,16 @@ fn validate_codex_role(
             ],
         )?;
         let name = string(role, "role")?;
+        let uid = unsigned(role, "uid")?;
+        let gid = unsigned(role, "gid")?;
         if !matches!(name, "author" | "reviewer" | "formal_reviewer" | "repairer")
             || !names.insert(name)
-            || !uids.insert(unsigned(role, "uid")?)
-            || !gids.insert(unsigned(role, "gid")?)
+            || uid == 0
+            || gid == 0
+            || u32::try_from(uid).is_err()
+            || u32::try_from(gid).is_err()
+            || !uids.insert(uid)
+            || !gids.insert(gid)
         {
             return Err(QualificationPayloadError::SemanticInvalid);
         }
@@ -1844,6 +1850,25 @@ mod tests {
                 .unwrap_or_else(|error| {
                     panic!("valid payload rejected for {}: {error}", package.as_str())
                 });
+        }
+    }
+
+    #[test]
+    fn qualified_codex_role_principals_require_nonzero_u32_identity() {
+        for field in ["uid", "gid"] {
+            for invalid in [0, u64::from(u32::MAX) + 1] {
+                let mut payload = codex_role();
+                payload["roles"][0][field] = json!(invalid);
+                assert!(matches!(
+                    validate_payload(
+                        &encoded(payload),
+                        &subject(QualificationPackageIdV1::ExtCodexRole001),
+                        REVIEWER,
+                        REVIEWER_KEY,
+                    ),
+                    Err(QualificationPayloadError::SemanticInvalid)
+                ));
+            }
         }
     }
 

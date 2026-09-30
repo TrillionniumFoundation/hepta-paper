@@ -14,7 +14,7 @@ pub use closure::{
     ExternalQualificationRuntimeFactsV1, QualificationClosureError, QualificationClosureProfile,
     VerifiedExternalQualificationClosureV1, VerifiedResearchQualificationV3,
     verify_external_qualification_closure_v1, verify_external_qualification_closure_v2,
-    verify_research_qualification_v3,
+    verify_research_qualification_v3, verify_research_qualification_v4,
 };
 
 pub use package_payload::{
@@ -95,6 +95,15 @@ impl QualificationPackageIdV1 {
         Self::ExtKeyOwner001,
         Self::ExtCodexRole001,
         Self::ExtCutoverSoak001,
+    ];
+
+    /// Restricted research V4 retains signed containment, storage recovery,
+    /// capability-key and isolated role evidence without a writer transfer.
+    pub const RESEARCH_V4_REQUIRED: [Self; 4] = [
+        Self::ExtHostCgroup001,
+        Self::ExtHostStorage001,
+        Self::ExtKeyOwner001,
+        Self::ExtCodexRole001,
     ];
 
     /// Canonical externally visible package identifier.

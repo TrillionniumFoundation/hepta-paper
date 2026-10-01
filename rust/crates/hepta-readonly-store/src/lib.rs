@@ -5,6 +5,19 @@
 /// Additive diagnostic compatibility for a preserved earlier Rust wire format.
 pub mod logical_store_compat_v1;
 
+mod inventory_projection;
+mod node_receipts;
+mod node_snapshot;
+mod ordinary;
+pub use inventory_projection::{
+    FixedInventoryBudgetV1, FixedInventoryProjectionV1, FixedInventoryQueryV1, InventoryPaperRowV1,
+    InventoryVenueRowV1,
+};
+pub use ordinary::{
+    OrdinaryCoordinationObservationV1, OrdinaryNodeLogicalIntegrityReportV1,
+    OrdinaryReadOnlyStoreV1,
+};
+
 use std::{
     fs::{self, File},
     io::Read,
@@ -14,7 +27,6 @@ use std::{
 };
 
 use hepta_codex_protocol::Sha256Digest;
-use hepta_legacy_compatibility::production_hash_record_v1;
 use hepta_readonly_control::{DatabaseFormatV1, DatabaseSchemaV1, validate_database_schema_v1};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
@@ -24,6 +36,11 @@ use thiserror::Error;
 const MAXIMUM_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const MAXIMUM_TABLES: usize = 4096;
 const MAXIMUM_ROWS_PER_TABLE: usize = 2_000_000;
+
+// Ordinary readers guard ancestor timestamps. All crate-owned /dev/shm
+// fixtures must retain this test-only lock through their directory cleanup.
+#[cfg(test)]
+static READ_ONLY_FIXTURE_DIRECTORY_LIFECYCLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FileIdentityV1 {
@@ -138,107 +155,12 @@ impl ReadOnlyStoreV1 {
         if self.schema.format != DatabaseFormatV1::NodeMigrationLedger {
             return Err(ReadOnlyStoreError::NodeFormatRequired);
         }
-        let objects = self
-            .schema_objects()?
-            .into_iter()
-            .filter(|object| !object.name.starts_with("sqlite_"))
-            .collect::<Vec<_>>();
-        let schema_rows = objects
-            .iter()
-            .map(|object| {
-                serde_json::json!({
-                    "type": object.object_type, "name": object.name,
-                    "tbl_name": object.table_name, "sql": object.sql,
-                })
-            })
-            .collect::<Vec<_>>();
-        let mut tables = Vec::new();
-        for object in objects
-            .iter()
-            .filter(|object| object.object_type == "table")
-        {
-            let mut columns_query = self
-                .connection
-                .prepare("SELECT name,pk FROM pragma_table_info(?1) ORDER BY cid")?;
-            let columns = columns_query
-                .query_map([&object.name], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut keys = columns.iter().filter(|(_, pk)| *pk > 0).collect::<Vec<_>>();
-            keys.sort_by_key(|(_, pk)| *pk);
-            let primary_key = keys
-                .iter()
-                .map(|(name, _)| name.clone())
-                .collect::<Vec<_>>();
-            let order = if primary_key.is_empty() {
-                columns
-                    .iter()
-                    .map(|(name, _)| name.clone())
-                    .collect::<Vec<_>>()
-            } else {
-                primary_key.clone()
-            };
-            let sql = format!(
-                "SELECT * FROM {} ORDER BY {}",
-                quote_identifier(&object.name),
-                order
-                    .iter()
-                    .map(|column| quote_identifier(column))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-            let mut query = self.connection.prepare(&sql)?;
-            let mut rows = query.query([])?;
-            let mut row_count = 0_u64;
-            let mut hash = Sha256::new();
-            hash.update(b"{\"kind\":\"SqliteCanonicalRows\",\"value\":[");
-            while let Some(row) = rows.next()? {
-                if row_count >= MAXIMUM_ROWS_PER_TABLE as u64 {
-                    return Err(ReadOnlyStoreError::RowLimitExceeded(object.name.clone()));
-                }
-                let mut value = serde_json::Map::new();
-                for (index, (name, _)) in columns.iter().enumerate() {
-                    value.insert(name.clone(), node_sql_value(row.get_ref(index)?)?);
-                }
-                if row_count != 0 {
-                    hash.update(b",");
-                }
-                hash.update(hepta_legacy_compatibility::production_stable_json_v1(
-                    &serde_json::Value::Object(value),
-                )?);
-                row_count += 1;
-            }
-            hash.update(b"]}");
-            tables.push(NodeLogicalTableV1 {
-                name: object.name.clone(),
-                row_count,
-                primary_key,
-                canonical_rows_hash: digest(hash)?,
-            });
-        }
-        let schema_value = serde_json::Value::Array(schema_rows);
-        let schema_hash =
-            hepta_legacy_compatibility::production_hash_record_v1("SqliteSchema", &schema_value)?
-                .as_str()
-                .parse()
-                .map_err(|_| ReadOnlyStoreError::DigestConstruction)?;
-        let logical_hash = hepta_legacy_compatibility::production_hash_record_v1(
-            "SqliteLogicalDatabase",
-            &serde_json::json!({"schemaRows": schema_value, "tables": tables}),
-        )?
-        .as_str()
-        .parse()
-        .map_err(|_| ReadOnlyStoreError::DigestConstruction)?;
+        let snapshot =
+            node_snapshot::capture(&self.connection, self.schema.schema_version, false, &|| {
+                Ok(())
+            })?;
         self.verify_unchanged()?;
-        Ok(NodeLogicalSnapshotV1 {
-            schema_version: self.schema.schema_version,
-            table_count: tables.len(),
-            total_row_count: tables.iter().map(|table| table.row_count).sum(),
-            schema_hash,
-            logical_database_hash: logical_hash,
-            tables,
-        })
+        Ok(snapshot)
     }
 
     /// Builds the complete read-only report emitted by Node's
@@ -331,41 +253,19 @@ impl ReadOnlyStoreV1 {
             row_count = row_count
                 .checked_add(1)
                 .ok_or(ReadOnlyStoreError::NumericOverflow)?;
-            let receipt_id: String = row.get(0)?;
-            let receipt_json: String = row.get(1)?;
-            let actual: String = row.get(2)?;
-            let invalid = match serde_json::from_str::<serde_json::Value>(&receipt_json) {
-                Ok(receipt) => match select_receipt_hash(&receipt) {
-                    Ok(expected) => {
-                        let expected_text = js_string(&expected);
-                        if expected != serde_json::Value::String(actual.clone())
-                            || !receipt_id.ends_with(&format!(":{expected_text}"))
-                        {
-                            Some(serde_json::json!({
-                                "receiptId": receipt_id,
-                                "expected": expected,
-                                "actual": actual,
-                            }))
-                        } else {
-                            None
-                        }
-                    }
-                    Err(error) => Some(serde_json::json!({
-                        "receiptId": receipt_id,
-                        "error": error.to_string(),
-                    })),
-                },
-                Err(_) => Some(serde_json::json!({
-                    "receiptId": receipt_id,
-                    "error": "SyntaxError",
-                })),
-            };
+            let receipt_id = node_receipts::NodeValue::from_sql(row.get_ref(0)?, false)?;
+            let receipt_json = node_receipts::NodeValue::from_sql(row.get_ref(1)?, false)?;
+            let actual = node_receipts::NodeValue::from_sql(row.get_ref(2)?, false)?;
+            let invalid = node_receipts::inspect_row(&receipt_id, &receipt_json, &actual)?;
             if let Some(invalid) = invalid {
                 invalid_count = invalid_count
                     .checked_add(1)
                     .ok_or(ReadOnlyStoreError::NumericOverflow)?;
                 if invalid_rows.len() < 20 {
-                    invalid_rows.push(invalid);
+                    invalid_rows.push(
+                        serde_json::from_str(invalid.get())
+                            .map_err(|_| ReadOnlyStoreError::Serialization)?,
+                    );
                 }
             }
         }
@@ -485,53 +385,6 @@ pub struct NodeLogicalIntegrityReportV1 {
     pub blockers: Vec<String>,
 }
 
-fn select_receipt_hash(value: &serde_json::Value) -> Result<serde_json::Value, ReadOnlyStoreError> {
-    let object = value
-        .as_object()
-        .ok_or(ReadOnlyStoreError::ReceiptJsonNotObject)?;
-    for key in ["receiptHash", "writeReceiptHash", "jobReceiptHash"] {
-        if let Some(candidate) = object.get(key)
-            && javascript_truthy(candidate)
-        {
-            return Ok(candidate.clone());
-        }
-    }
-    for (key, candidate) in object.iter().rev() {
-        if key.ends_with("ReceiptHash") && javascript_truthy(candidate) {
-            return Ok(candidate.clone());
-        }
-    }
-    let kind = object
-        .get("kind")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("Receipt");
-    let hash = production_hash_record_v1(kind, value)?;
-    Ok(serde_json::Value::String(hash.as_str().to_owned()))
-}
-
-fn javascript_truthy(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Null => false,
-        serde_json::Value::Bool(value) => *value,
-        serde_json::Value::Number(value) => value.as_f64().is_some_and(|number| number != 0.0),
-        serde_json::Value::String(value) => !value.is_empty(),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => true,
-    }
-}
-
-fn js_string(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::Null => "null".to_owned(),
-        serde_json::Value::Bool(value) => value.to_string(),
-        serde_json::Value::Number(value) => value.to_string(),
-        serde_json::Value::String(value) => value.clone(),
-        serde_json::Value::Array(values) => {
-            values.iter().map(js_string).collect::<Vec<_>>().join(",")
-        }
-        serde_json::Value::Object(_) => "[object Object]".to_owned(),
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NodeLogicalTableV1 {
@@ -539,33 +392,6 @@ pub struct NodeLogicalTableV1 {
     pub row_count: u64,
     pub primary_key: Vec<String>,
     pub canonical_rows_hash: Sha256Digest,
-}
-
-fn node_sql_value(value: ValueRef<'_>) -> Result<serde_json::Value, ReadOnlyStoreError> {
-    Ok(match value {
-        ValueRef::Null => serde_json::Value::Null,
-        ValueRef::Integer(value) => {
-            if !(-9_007_199_254_740_991..=9_007_199_254_740_991).contains(&value) {
-                return Err(ReadOnlyStoreError::NodeIntegerOutOfRange);
-            }
-            serde_json::json!(value)
-        }
-        ValueRef::Real(value) => serde_json::json!(value),
-        ValueRef::Text(value) => serde_json::Value::String(
-            std::str::from_utf8(value)
-                .map_err(|_| ReadOnlyStoreError::NonUtf8Text)?
-                .to_owned(),
-        ),
-        // node:sqlite exposes BLOB as Uint8Array. Production stable() enumerates its
-        // indices into an object, so bytes are NOT encoded as base64 or an array.
-        ValueRef::Blob(value) => serde_json::Value::Object(
-            value
-                .iter()
-                .enumerate()
-                .map(|(index, value)| (index.to_string(), serde_json::json!(value)))
-                .collect(),
-        ),
-    })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -790,6 +616,12 @@ pub enum ReadOnlyStoreError {
     SchemaObjectLimitExceeded,
     #[error("table row limit exceeded: {0}")]
     RowLimitExceeded(String),
+    #[error("ordinary read cancelled")]
+    OrdinaryCancelled,
+    #[error("ordinary read deadline exceeded")]
+    OrdinaryDeadlineExceeded,
+    #[error("ordinary bounded read profile limit exceeded: {0}")]
+    OrdinaryBudgetExceeded(&'static str),
     #[error("table name is invalid")]
     InvalidTableName,
     #[error("SQLite real value is not finite")]

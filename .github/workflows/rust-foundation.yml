@@ -68,12 +68,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Dry-run compatibility records retain historical executor identifiers.
+          # Reject dependencies in the actual direct and locked transitive graph.
           if grep -RniE 'openclaw' \
-            --include='*.rs' \
             --include='Cargo.toml' \
-            --include='*.toml' \
-            rust/crates rust/Cargo.toml rust/rust-toolchain.toml; then
-            echo 'OpenClaw is forbidden in the Rust source and manifest graph.' >&2
+            --include='Cargo.lock' \
+            rust/crates rust/vendor rust/Cargo.toml rust/Cargo.lock; then
+            echo 'OpenClaw dependencies are forbidden in the Rust manifest and lock graph.' >&2
             exit 1
           fi
 

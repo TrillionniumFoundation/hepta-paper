@@ -277,13 +277,30 @@ A rejected independent review causes a bounded ordinary amendment and another
 author/reviewer pair; accepted review closes the campaign. Every role result
 still needs actual signed cost settlement and commit-bound ACK.
 
-First-use `--objective` and `--revision-rounds` select the effective business
-request. The immutable initial CAS subject binds that request and the original
-configuration hash separately. Reopening verifies the existing owner/history and
-retained CAS bytes, so callers need not repeat those overrides. An explicit
-replacement, changed configuration, missing/corrupt initial request or expanded
-budget refuses instead of silently selecting a new plan. Status/replay preserve
-committed results; unknown provider results query the original issued request.
+First-use `--objective`, `--revision-rounds`, `--max-cost-usd` and
+`--max-wall-ms` select the effective business request. Cost/wall inputs use the
+incumbent Number-string owner and local golden ceilings (100 USD and 7200000
+milliseconds), then narrow the valid configured request ceilings. The durable
+owner represents whole microUSD and milliseconds. Cost conversion admits only
+an exact inverse Number round trip, including 123/249 microUSD binary tails;
+fractional units explicitly refuse, and invalid/nonfinite/negative numbers do
+not become permits. The original request must remain valid before narrowing.
+Prepare does not persist a campaign; a zero or insufficient effective dispatch
+budget fails the existing provider/whole-workflow admission.
+
+The immutable initial CAS subject binds the effective request and original
+configuration hash separately. Reopening verifies the existing owner/history
+and retained CAS bytes, so callers need not repeat first-use overrides. A
+repeated budget whose normalized value matches the first effective request is
+accepted; a different effective budget, changed configuration, missing/corrupt
+initial request or expanded ceiling refuses. Equivalent Number spellings do not
+silently amend a budget. Status/replay preserve committed results; unknown
+provider results query the original issued request with no second dispatch.
+The ordinary source tests drive actual launch/converge, signed settlement,
+commit-bound ACK and held-child TERM/KILL recovery through the existing owners.
+Their bounded local protocol peers are not independently authenticated installed
+provider accounts. Remaining Node budget/resource modes, independent route
+acceptance and target-host/provider qualification remain partial.
 
 Each role may carry an installed `operationPublisher` policy. The core authority
 publishes the actual protected input, prompt, output schema, original signed

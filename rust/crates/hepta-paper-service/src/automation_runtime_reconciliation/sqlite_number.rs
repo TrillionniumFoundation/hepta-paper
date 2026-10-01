@@ -56,7 +56,7 @@ fn radix(value: &str, base: u32, width: u32) -> Option<f64> {
     }
     Some(leading as f64 * 2f64.powi((bits - 53) as i32))
 }
-fn string_number(value: &str) -> Option<f64> {
+pub(crate) fn string_number(value: &str) -> Option<f64> {
     let value = trim(value);
     if value.is_empty() {
         return Some(0.);

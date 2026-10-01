@@ -254,26 +254,16 @@ pub fn parse_autonomous_state_partial_root_maintenance_arguments(
     {
         return Err(error("autonomous_state_partial_root_plan_id_required"));
     }
-    let default_runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .join("runtime");
     Ok(Some(AutonomousStatePartialRootMaintenanceOptions {
         action,
         execute,
         expected_maintenance_plan_id: values.get("maintenance-plan-id").cloned(),
-        runtime_root: values
-            .get("runtime-root")
-            .map(|value| absolute_path(value))
-            .transpose()?
-            .unwrap_or_else(|| {
-                if default_runtime.is_absolute() {
-                    default_runtime.clone()
-                } else {
-                    std::env::current_dir()
-                        .map(|root| root.join(&default_runtime))
-                        .unwrap_or(default_runtime)
-                }
-            }),
+        runtime_root: match values.get("runtime-root") {
+            Some(selected) => absolute_path(selected)?,
+            None => crate::native_workspace::current_native_command_workspace_root_v1(None)
+                .map_err(error)?
+                .join("runtime"),
+        },
         rescue_root: absolute_path(rescue_root)?,
         writer_quiescence_receipt: absolute_path(writer_quiescence_receipt)?,
         machine_intake_config: absolute_path(machine_intake_config)?,

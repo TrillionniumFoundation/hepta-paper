@@ -1,11 +1,15 @@
 //! Core-owned operation publication for the installed product dispatcher.
-//! A descriptor is published last; incomplete or foreign files are retained and
-//! rejected. Recovery reads the same descriptor and never changes provider intent.
+//! A descriptor is published last. Each file crosses an atomic no-replace
+//! transition; a crash leaves only a private staging file which the same owner
+//! may discard before dispatch. Published or foreign files are never replaced.
+//! Recovery reads the same descriptor and never changes provider intent.
 use super::*;
 use nix::{
-    fcntl::{Flock, FlockArg},
-    unistd::{Gid, fchown},
+    fcntl::{Flock, FlockArg, OFlag, RenameFlags, openat, renameat2},
+    sys::stat::{Mode, fstatat},
+    unistd::{Gid, UnlinkatFlags, fchown, unlinkat},
 };
+use std::os::fd::AsFd;
 
 /// Installed operation authority policy. It cannot be widened by a business job.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -265,6 +269,7 @@ pub fn recover_product_codex_prompt_hash_v1(
 }
 fn retain_file(
     source: &ProductCodexOperationPublisherV1,
+    directory: &Flock<File>,
     path: &Path,
     bytes: &[u8],
     max: u64,
@@ -292,15 +297,25 @@ fn retain_file(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(ProductCodexError::Filesystem(error.kind())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
-        .open(path)
-        .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
-    // fchown/fchmod operate on the created FD. A crash before the immutable mode
-    // or final descriptor leaves a rejected object, never an implicit overwrite.
+    let filename = path.file_name().ok_or(ProductCodexError::AuthorityFile)?;
+    let temporary = format!(
+        ".{}.publication-pending",
+        filename.to_str().ok_or(ProductCodexError::AuthorityFile)?
+    );
+    discard_staging_file(source, directory, &temporary, max)?;
+    let mut file = File::from(
+        openat(
+            directory.as_fd(),
+            temporary.as_str(),
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::from_bits_truncate(0o600),
+        )
+        .map_err(|_| ProductCodexError::AuthorityFile)?,
+    );
+    #[cfg(test)]
+    publication_test_boundary("created", path);
+    // Only the private stage is writable. The broker sees the fixed final name
+    // after fchown/fchmod/fsync and RENAME_NOREPLACE have all succeeded.
     fchown(&file, None, Some(Gid::from_raw(source.broker_gid)))
         .map_err(|_| ProductCodexError::FileMetadata)?;
     file.write_all(bytes)
@@ -309,7 +324,39 @@ fn retain_file(
         .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
     file.sync_all()
         .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
-    sync_parent(&source.operation_directory)?;
+    #[cfg(test)]
+    publication_test_boundary("staged", path);
+    let metadata = file
+        .metadata()
+        .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
+    validate_regular_metadata(
+        &metadata,
+        source.authority_uid,
+        source.broker_gid,
+        0o440,
+        max,
+    )?;
+    if metadata.len() != bytes.len() as u64 {
+        return Err(ProductCodexError::DescriptorChanged);
+    }
+    match renameat2(
+        directory.as_fd(),
+        temporary.as_str(),
+        directory.as_fd(),
+        filename,
+        RenameFlags::RENAME_NOREPLACE,
+    ) {
+        Ok(()) => {}
+        Err(nix::errno::Errno::EEXIST) => {
+            discard_staging_file(source, directory, &temporary, max)?;
+        }
+        Err(_) => return Err(ProductCodexError::AuthorityFile),
+    }
+    directory
+        .sync_all()
+        .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
+    #[cfg(test)]
+    publication_test_boundary("published", path);
     let (actual, _) =
         read_stable_regular_file(path, source.authority_uid, source.broker_gid, 0o440, max)?;
     if actual != bytes {
@@ -317,9 +364,62 @@ fn retain_file(
     }
     Ok(())
 }
+
+fn discard_staging_file(
+    source: &ProductCodexOperationPublisherV1,
+    directory: &Flock<File>,
+    name: &str,
+    maximum_bytes: u64,
+) -> Result<(), ProductCodexError> {
+    let file = match openat(
+        directory.as_fd(),
+        name,
+        OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(file) => File::from(file),
+        Err(nix::errno::Errno::ENOENT) => return Ok(()),
+        Err(_) => return Err(ProductCodexError::AuthorityFile),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
+    let named = fstatat(
+        directory.as_fd(),
+        name,
+        nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW,
+    )
+    .map_err(|_| ProductCodexError::AuthorityFile)?;
+    if !metadata.is_file()
+        || metadata.uid() != source.authority_uid
+        || ![source.broker_gid, nix::unistd::getegid().as_raw()].contains(&metadata.gid())
+        || ![0o600, 0o440].contains(&(metadata.mode() & 0o7777))
+        || metadata.nlink() != 1
+        || metadata.len() > maximum_bytes
+        || named.st_dev != metadata.dev()
+        || named.st_ino != metadata.ino()
+        || named.st_mode != metadata.mode()
+        || named.st_nlink != 1
+        || named.st_uid != metadata.uid()
+        || named.st_gid != metadata.gid()
+        || u64::try_from(named.st_size).ok() != Some(metadata.len())
+        || named.st_mtime != metadata.mtime()
+        || named.st_mtime_nsec != metadata.mtime_nsec()
+        || named.st_ctime != metadata.ctime()
+        || named.st_ctime_nsec != metadata.ctime_nsec()
+    {
+        return Err(ProductCodexError::AuthorityFile);
+    }
+    unlinkat(directory.as_fd(), name, UnlinkatFlags::NoRemoveDir)
+        .map_err(|_| ProductCodexError::AuthorityFile)?;
+    directory
+        .sync_all()
+        .map_err(|e| ProductCodexError::Filesystem(e.kind()))
+}
 /// Publish the existing V1 operation contract and exact prompt/manifest before
-/// IPC dispatch. An exact retry retains inode and bytes; any partial or changed
-/// object is rejected. This function never starts a provider or writes its journal.
+/// IPC dispatch. An exact retry retains published inode and bytes. A private
+/// staging file may be removed under the owner lock; a changed final object is
+/// rejected. This function never starts a provider or writes its journal.
 pub fn publish_product_codex_operation_v1(
     source: &ProductCodexOperationPublisherV1,
     request: &CodexExecutionRequestV1,
@@ -331,10 +431,25 @@ pub fn publish_product_codex_operation_v1(
         .validate()
         .map_err(|_| ProductCodexError::Configuration)?;
     let descriptor = operation_descriptor_path(&source.operation_directory, &request.operation_id)?;
-    let directory = File::open(&source.operation_directory)
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(&source.operation_directory)
         .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
     let _lock = Flock::lock(directory, FlockArg::LockExclusiveNonblock)
         .map_err(|_| ProductCodexError::OperationDirectory)?;
+    let opened = _lock
+        .metadata()
+        .map_err(|e| ProductCodexError::Filesystem(e.kind()))?;
+    if opened.dev() != identity.device
+        || opened.ino() != identity.inode
+        || !opened.is_dir()
+        || opened.mode() & 0o7777 != identity.mode
+        || opened.uid() != identity.uid
+        || opened.gid() != identity.gid
+    {
+        return Err(ProductCodexError::OperationDirectory);
+    }
     assert_operation_directory_current(&identity)?;
     let manifest = manifest_bytes(manifest)?;
     match fs::symlink_metadata(&descriptor) {
@@ -424,24 +539,28 @@ pub fn publish_product_codex_operation_v1(
     .map_err(|_| ProductCodexError::Configuration)?;
     retain_file(
         source,
+        &_lock,
         &operation.input_manifest_path,
         &manifest,
         MAXIMUM_INPUT_MANIFEST_BYTES,
     )?;
     retain_file(
         source,
+        &_lock,
         &operation.prompt_path,
         &prompt,
         MAXIMUM_PROMPT_BYTES,
     )?;
     retain_file(
         source,
+        &_lock,
         &published_request_path(source, &request.operation_id),
         &request_bytes(request)?,
         MAXIMUM_DESCRIPTOR_BYTES,
     )?;
     retain_file(
         source,
+        &_lock,
         &descriptor,
         &serde_json::to_vec(&operation).map_err(|_| ProductCodexError::DescriptorJson)?,
         MAXIMUM_DESCRIPTOR_BYTES,
@@ -505,4 +624,241 @@ pub fn inspect_product_codex_operation_prompt_v1(
     assert_operation_source_current(&loaded, source.broker_uid, source.broker_gid)?;
     assert_operation_directory_current(&identity)?;
     Ok(prompt)
+}
+
+#[cfg(test)]
+fn publication_test_boundary(point: &str, path: &Path) {
+    if std::env::var("HEPTA_PUBLICATION_TEST_BOUNDARY")
+        .ok()
+        .as_deref()
+        == Some(point)
+    {
+        fs::write(path.with_extension("test-boundary"), point).unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        collections::BTreeSet,
+        process::{Command, Stdio},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
+
+    struct Fixture {
+        root: PathBuf,
+        source: ProductCodexOperationPublisherV1,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "hepta-publication-crash-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&root).unwrap();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            let operations = root.join("operations");
+            fs::create_dir(&operations).unwrap();
+            fs::set_permissions(&operations, fs::Permissions::from_mode(0o750)).unwrap();
+            let source = ProductCodexOperationPublisherV1 {
+                version: 1,
+                role: AgentRole::Author,
+                operation_directory: operations,
+                authority_uid: nix::unistd::geteuid().as_raw(),
+                broker_uid: nix::unistd::geteuid().as_raw().checked_add(1).unwrap(),
+                broker_gid: nix::unistd::getegid().as_raw(),
+                workspace_path: root.join("workspace"),
+                prompt_prefix_path: root.join("prefix"),
+                prompt_prefix_hash: digest(b"prefix").unwrap(),
+                output_schema_path: root.join("schema"),
+                output_schema_hash: digest(b"schema").unwrap(),
+                mutation_policy: MutationPolicyV1 {
+                    version: 1,
+                    read_only: false,
+                    allowed_path_prefixes: vec!["draft.md".into()],
+                    allowed_extensions: BTreeSet::from(["md".into()]),
+                    maximum_changed_entries: 1,
+                    maximum_changed_file_bytes: 1024,
+                },
+            };
+            fs::write(
+                root.join("source.json"),
+                serde_json::to_vec(&source).unwrap(),
+            )
+            .unwrap();
+            Self { root, source }
+        }
+        fn retain(&self, path: &Path, bytes: &[u8]) -> Result<(), ProductCodexError> {
+            let directory = Flock::lock(
+                File::open(&self.source.operation_directory).unwrap(),
+                FlockArg::LockExclusiveNonblock,
+            )
+            .unwrap();
+            retain_file(
+                &self.source,
+                &directory,
+                path,
+                bytes,
+                MAXIMUM_DESCRIPTOR_BYTES,
+            )
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "private subprocess crash fixture; the parent kills it at a selected actual publication boundary"]
+    fn publication_child() {
+        let config = std::env::var_os("HEPTA_PUBLICATION_TEST_SOURCE").unwrap();
+        let source: ProductCodexOperationPublisherV1 =
+            serde_json::from_slice(&fs::read(config).unwrap()).unwrap();
+        let path = source
+            .operation_directory
+            .join(std::env::var_os("HEPTA_PUBLICATION_TEST_NAME").unwrap());
+        let directory = Flock::lock(
+            File::open(&source.operation_directory).unwrap(),
+            FlockArg::LockExclusiveNonblock,
+        )
+        .unwrap();
+        retain_file(
+            &source,
+            &directory,
+            &path,
+            b"exact original signed operation bytes",
+            MAXIMUM_DESCRIPTOR_BYTES,
+        )
+        .unwrap();
+        panic!("child must be killed at the actual selected publication boundary");
+    }
+
+    #[test]
+    fn publication_crashes_recover_private_stages_and_preserve_published_inode() {
+        for name in [
+            "operation.input.json",
+            "operation.prompt.txt",
+            "operation.signed-request.v1",
+            "operation.json",
+        ] {
+            for boundary in ["created", "staged", "published"] {
+                let fixture = Fixture::new();
+                let path = fixture.source.operation_directory.join(name);
+                let marker = path.with_extension("test-boundary");
+                let temporary = fixture
+                    .source
+                    .operation_directory
+                    .join(format!(".{name}.publication-pending"));
+                let mut child = Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "product::publisher::tests::publication_child",
+                        "--ignored",
+                        "--nocapture",
+                    ])
+                    .env(
+                        "HEPTA_PUBLICATION_TEST_SOURCE",
+                        fixture.root.join("source.json"),
+                    )
+                    .env("HEPTA_PUBLICATION_TEST_NAME", name)
+                    .env("HEPTA_PUBLICATION_TEST_BOUNDARY", boundary)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !marker.exists() && Instant::now() < deadline {
+                    if child.try_wait().unwrap().is_some() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                if !marker.exists() {
+                    let _ = child.kill();
+                    let output = child.wait_with_output().unwrap();
+                    panic!(
+                        "actual boundary {name}/{boundary} was not reached: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                child.kill().unwrap();
+                let status = child.wait().unwrap();
+                assert!(!status.success());
+                assert_eq!(path.exists(), boundary == "published");
+                assert_eq!(temporary.exists(), boundary != "published");
+                let published_inode = path.exists().then(|| fs::metadata(&path).unwrap().ino());
+                fixture
+                    .retain(&path, b"exact original signed operation bytes")
+                    .unwrap();
+                assert!(!temporary.exists());
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    b"exact original signed operation bytes"
+                );
+                let inode = fs::metadata(&path).unwrap().ino();
+                if let Some(previous) = published_inode {
+                    assert_eq!(inode, previous);
+                }
+                fixture
+                    .retain(&path, b"exact original signed operation bytes")
+                    .unwrap();
+                assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+                assert!(
+                    fixture
+                        .retain(&path, b"replacement request must be rejected")
+                        .is_err()
+                );
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    b"exact original signed operation bytes"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn publication_rejects_foreign_stages_and_torn_final_objects() {
+        use std::os::unix::fs::symlink;
+        let fixture = Fixture::new();
+        let path = fixture.source.operation_directory.join("operation.json");
+        let temporary = fixture
+            .source
+            .operation_directory
+            .join(".operation.json.publication-pending");
+        let foreign = fixture.root.join("foreign");
+        fs::write(&foreign, b"foreign").unwrap();
+        symlink(&foreign, &temporary).unwrap();
+        assert!(fixture.retain(&path, b"original").is_err());
+        assert!(
+            fs::symlink_metadata(&temporary)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(&foreign).unwrap(), b"foreign");
+        fs::remove_file(&temporary).unwrap();
+        fs::hard_link(&foreign, &temporary).unwrap();
+        assert!(fixture.retain(&path, b"original").is_err());
+        assert_eq!(fs::metadata(&foreign).unwrap().nlink(), 2);
+        fs::remove_file(&temporary).unwrap();
+        fs::write(&temporary, b"unexpected writable object").unwrap();
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(fixture.retain(&path, b"original").is_err());
+        assert_eq!(fs::read(&temporary).unwrap(), b"unexpected writable object");
+        fs::remove_file(&temporary).unwrap();
+        fs::write(&path, b"old torn final").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(fixture.retain(&path, b"original").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"old torn final");
+    }
 }

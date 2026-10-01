@@ -20,7 +20,7 @@ mod offline_execution;
 #[allow(dead_code)]
 mod online_execution;
 mod scoped_execution;
-mod sqlite_number;
+pub(crate) mod sqlite_number;
 pub(crate) use online_execution::{OnlineReconciliationBindingV1, OnlineReconciliationRequestV1};
 pub use scoped_execution::*;
 

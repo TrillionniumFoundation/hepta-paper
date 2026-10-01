@@ -5,6 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { deflateSync, inflateSync } from 'node:zlib';
+import { captureCommittedSourceSubject } from '../src/source-evidence-git-inputs.mjs';
 import {
   parseStrictJson,
   validateCommand,
@@ -745,4 +747,236 @@ test('ordinary source-verifier CLI refuses a successful test that changes its so
   assert.match(result.stderr, /source_subject_changed/u);
   assert.equal(fs.existsSync(receipt), false);
   assert.doesNotMatch(result.stdout, /repository_source_evidence_verified/u);
+});
+
+test('committed CLI replay subject binds the whole real Git tree and retains plain dirty diagnostics', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  assert.deepEqual(captureCommittedSourceSubject(fixture.root),
+    {commit: fixture.head, tree: fixture.tree, committedClean: true});
+  write(fixture.root, 'untracked-input.mjs', 'export const changed = true;');
+  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+});
+
+function addUnmaterializedReference(fixture) {
+  const commit = fixture.head;
+  write(fixture.root, '.gitmodules', '[submodule "reference"]\n\tpath = references/immutable\n\turl = https://example.invalid/reference.git\n');
+  fs.mkdirSync(path.join(fixture.root, 'references'), { recursive: true });
+  command(fixture.root, 'git', 'add', '.gitmodules');
+  command(fixture.root, 'git', 'update-index', '--add', '--cacheinfo', `160000,${commit},references/immutable`);
+  command(fixture.root, 'git', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Unmaterialized immutable reference');
+  fixture.head = command(fixture.root, 'git', 'rev-parse', 'HEAD');
+  fixture.tree = command(fixture.root, 'git', 'rev-parse', 'HEAD^{tree}');
+  return commit;
+}
+
+test('committed source captures exact empty gitlink references and retains absent dirty diagnostics without parent Git fallback', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const commit = addUnmaterializedReference(fixture);
+  const absent = captureCommittedSourceSubject(fixture.root);
+  assert.equal(absent.committedClean, false);
+  assert.equal(absent.gitlinkReferenceProfile, undefined);
+  const leaf = path.join(fixture.root, 'references/immutable');
+  fs.mkdirSync(leaf);
+  assert.notEqual(command(leaf, 'git', 'rev-parse', 'HEAD'), commit);
+  const empty = captureCommittedSourceSubject(fixture.root);
+  assert.equal(empty.gitlinkReferenceProfile.version, 1);
+  assert.equal(empty.gitlinkReferenceProfile.references[0].commit, commit);
+  assert.equal(empty.gitlinkReferenceProfile.references[0].state, 'empty_directory');
+  assert.deepEqual(captureCommittedSourceSubject(fixture.root), empty);
+  fs.renameSync(leaf, path.join(fixture.root, '.git/old-empty-reference'));
+  fs.mkdirSync(leaf);
+  assert.notDeepEqual(captureCommittedSourceSubject(fixture.root), empty);
+  command(fixture.root, 'git', 'update-index', '--cacheinfo', `160000,${'a'.repeat(40)},references/immutable`);
+  // Dirty sources remain diagnostic subjects and cannot claim acceptance.
+  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+});
+
+test('committed gitlink reference profile rejects hidden files materialized repositories and aliases', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const commit = addUnmaterializedReference(fixture);
+  const leaf = path.join(fixture.root, 'references/immutable');
+  fs.mkdirSync(leaf);
+  fs.writeFileSync(path.join(leaf, '.hidden'), 'nested bytes are not accepted');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_gitlink_materialized/u);
+  fs.rmSync(path.join(leaf, '.hidden'));
+  fs.rmSync(leaf, { recursive: true });
+  command(fixture.root, 'git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', fixture.root, leaf);
+  command(leaf, 'git', 'checkout', '--quiet', '--detach', commit);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_gitlink_materialized/u);
+  fs.rmSync(leaf, { recursive: true });
+  fs.mkdirSync(path.join(fixture.root, '.git/other-empty'));
+  fs.symlinkSync(path.join(fixture.root, '.git/other-empty'), leaf);
+  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+  fs.rmSync(leaf);
+  fs.rmdirSync(path.join(fixture.root, 'references'));
+  fs.symlinkSync(path.join(fixture.root, '.git/other-empty'), path.join(fixture.root, 'references'));
+  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+});
+
+test('held empty gitlink reference rejects actual named replacement during directory observation', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  addUnmaterializedReference(fixture);
+  const leaf = path.join(fixture.root, 'references/immutable');
+  fs.mkdirSync(leaf);
+  const original = fs.opendirSync;
+  let changed = false;
+  fs.opendirSync = function observedDirectory(named, ...args) {
+    if (!changed && fs.readlinkSync(named) === leaf) {
+      changed = true;
+      fs.renameSync(leaf, path.join(fixture.root, '.git/replaced-empty'));
+      fs.mkdirSync(leaf);
+    }
+    return original.call(this, named, ...args);
+  };
+  try { assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_gitlink_changed/u); }
+  finally { fs.opendirSync = original; }
+  assert.equal(changed, true);
+});
+
+test('actual owner child receives producer pinned Node and strips spoofed oracle and secret environment', (t) => {
+  const expectedNode = fs.realpathSync(process.execPath);
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', [
+      "import assert from 'node:assert/strict';",
+      "import fs from 'node:fs';",
+      "import test from 'node:test';",
+      "import { spawnSync } from 'node:child_process';",
+      `test('feature_test', () => { assert.equal(process.env.HEPTA_TEST_NODE, ${JSON.stringify(expectedNode)});`,
+      "for (const key of ['OPENAI_API_KEY', 'HEPTA_AUTHORITY_PRIVATE_KEY', 'NODE_OPTIONS']) assert.equal(process.env[key], undefined);",
+      `const child=spawnSync(process.env.HEPTA_TEST_NODE,['--version'],{encoding:'utf8',env:{}}); assert.equal(child.status,0); assert.equal(child.stdout.trim(),${JSON.stringify(process.version)}); });`,
+      '',
+    ].join('\n'));
+    evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');
+  });
+  const replacements = { HEPTA_TEST_NODE: '/definitely/spoofed/ambient-node', OPENAI_API_KEY: 'fixture-secret', HEPTA_AUTHORITY_PRIVATE_KEY: 'fixture-private-key', NODE_OPTIONS: '--require=/definitely/ambient-injection' };
+  const prior = Object.fromEntries(Object.keys(replacements).map(key => [key, process.env[key]]));
+  t.after(() => {
+    for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  });
+  Object.assign(process.env, replacements);
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+});
+
+test('actual strict route schema bounds captured gitlink profile and refuses authority or nested source projections', (t) => {
+  const fixture = createFixture();
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gitlink-schema-'));
+  t.after(() => { fs.rmSync(fixture.root, { recursive: true, force: true }); fs.rmSync(output, { recursive: true, force: true }); });
+  addUnmaterializedReference(fixture);
+  fs.mkdirSync(path.join(fixture.root, 'references/immutable'));
+  const subject = captureCommittedSourceSubject(fixture.root);
+  const hash = `sha256:${'a'.repeat(64)}`;
+  const outcome = { outcome: 'report', exitCode: 0, stdout: {}, diagnostic: null };
+  const record = { version: 1, kind: 'NodeRustRouteAcceptanceRecordV1', scope: 'local-readonly-command-behavior-no-external-authority', subject,
+    runtime: { node: { version: 'v22.23.1', sha256: hash }, cargoVersion: 'cargo 1.98.0', buildArgs: ['build'], nativeOwners: { 'hepta-paper-rust': { sha256: hash } } },
+    authority: { productionActivation: false, targetHostQualification: false, releaseAuthority: false, submissionAuthority: false, writerCutover: false, nodeRetirement: false },
+    rows: [{ routeId: 'operator/workspace', argumentContractSha256: hash, behaviorContractSha256: hash, cases: [{ caseId: 'schema-fixture', inputSha256: hash, nodeArgv: ['workspace'], nativeArgv: ['workspace'], environment: {}, node: outcome, native: outcome, retry: null, effectsUnchanged: true, passed: true }] }], recordSha256: hash };
+  const schema = fileURLToPath(new URL('../../docs/migration/node-rust-route-acceptance.v1.schema.json', import.meta.url));
+  const checker = fileURLToPath(new URL('../../docs/rust/tools/strict_json_schema.py', import.meta.url));
+  const input = path.join(output, 'instance.json');
+  const validate = value => {
+    fs.writeFileSync(input, JSON.stringify(value));
+    const result = spawnSync('python3', [checker, '--schema', schema, '--instance', input], { encoding: 'utf8', timeout: 30_000 });
+    assert.ifError(result.error);
+    return result;
+  };
+  assert.equal(validate(record).status, 0);
+  const legacy = structuredClone(record); delete legacy.subject.gitlinkReferenceProfile;
+  assert.equal(validate(legacy).status, 0);
+  for (const mutate of [
+    value => { value.subject.gitlinkReferenceProfile.version = 2; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].state = 'absent'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].mode = '100644'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].commit = 'wrong'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].path = '../escape'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].parents = []; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].parents = Array(4097).fill(value.subject.gitlinkReferenceProfile.references[0].parents[0]); },
+    value => { value.subject.gitlinkReferenceProfile.references = Array(16385).fill(value.subject.gitlinkReferenceProfile.references[0]); },
+    value => { value.subject.gitlinkReferenceProfile.references[0].leaf = null; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].leaf.ino = 'unbound'; },
+    value => { value.subject.gitlinkReferenceProfile.nestedSourceBytesAccepted = true; },
+    value => { value.subject.gitlinkReferenceProfile.releaseAuthority = true; },
+    value => { value.authority.releaseAuthority = true; },
+  ]) {
+    const changed = structuredClone(record); mutate(changed);
+    const result = validate(changed);
+    assert.notEqual(result.status, 0, 'malformed profile or authority projection passed actual strict validator');
+  }
+  // Structural schema success above grants no route acceptance; the ordinary
+  // consumer still independently executes and compares current actual inputs.
+});
+
+for (const flag of ['--assume-unchanged', '--skip-worktree']) {
+  test(`committed CLI replay rejects real Git ${flag} before native building`, (t) => {
+    const fixture = createFixture();
+    t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+    command(fixture.root, 'git', 'update-index', flag, 'src/feature.mjs');
+    fs.appendFileSync(path.join(fixture.root, 'src/feature.mjs'), '// hidden replay input\n');
+    assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+    assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_index_hidden_input_flag/u);
+  });
+}
+
+test('committed CLI replay rejects unchanged Git stat-cache with changed same-length bytes', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  const file = path.join(fixture.root, 'src/feature.mjs');
+  command(fixture.root, 'git', 'config', 'core.trustctime', 'false');
+  command(fixture.root, 'git', 'config', 'core.checkStat', 'minimal');
+  const stamp = new Date('2020-01-01T00:00:00.000Z');
+  fs.utimesSync(file, stamp, stamp);
+  command(fixture.root, 'git', 'update-index', '--refresh');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('return 1', 'return 9'));
+  fs.utimesSync(file, stamp, stamp);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_worktree_blob_mismatch/u);
+});
+
+test('committed CLI replay rejects executable-mode and redirected-worktree substitutions', (t) => {
+  const fixture = createFixture(), other = createFixture();
+  t.after(() => { fs.rmSync(fixture.root, {recursive: true, force: true}); fs.rmSync(other.root, {recursive: true, force: true}); });
+  command(fixture.root, 'git', 'config', 'core.filemode', 'false');
+  fs.chmodSync(path.join(fixture.root, 'src/feature.mjs'), 0o755);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_worktree_blob_mismatch/u);
+  fs.chmodSync(path.join(fixture.root, 'src/feature.mjs'), 0o644);
+  write(fixture.root, 'hidden-worktree-input', 'never a current clean subject');
+  command(fixture.root, 'git', 'config', 'core.worktree', other.root);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_git_worktree_root_mismatch/u);
+});
+
+test('committed CLI replay rejects a readable corrupt Git blob with unchanged working bytes', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  const blob = command(fixture.root, 'git', 'rev-parse', 'HEAD:src/feature.mjs');
+  const file = path.join(fixture.root, '.git/objects', blob.slice(0, 2), blob.slice(2));
+  const original = inflateSync(fs.readFileSync(file));
+  const corrupted = Buffer.from(original.toString('utf8').replace('return 1', 'return 9'));
+  assert.equal(corrupted.length, original.length);
+  fs.chmodSync(file, 0o600); fs.writeFileSync(file, deflateSync(corrupted));
+  assert.match(command(fixture.root, 'git', 'cat-file', 'blob', blob), /return 9/u);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /git_command_failed: fsck/u);
+});
+
+test('committed CLI replay refuses Git configuration which can skip object integrity or fetch implicitly', (t) => {
+  for (const [key, value] of [['fsck.hashMismatch', 'ignore'], ['remote.origin.promisor', 'true'], ['include.path', '/dev/null']]) {
+    const fixture = createFixture();
+    t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+    command(fixture.root, 'git', 'config', key, value);
+    assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_git_integrity_bypass_configuration/u);
+  }
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  command(fixture.root, 'git', 'config', 'extensions.worktreeConfig', 'true');
+  command(fixture.root, 'git', 'config', '--worktree', 'fsck.hashMismatch', 'ignore');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_git_integrity_bypass_configuration/u);
 });

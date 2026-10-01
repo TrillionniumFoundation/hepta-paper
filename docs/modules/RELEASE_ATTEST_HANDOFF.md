@@ -15,6 +15,14 @@ and release trust-layer counts. The command validates the release subject,
 evaluates the native release-state and trust gate implementations, and reuses
 the native archive identity and legacy freeze inspection.
 
+Request files use the frontend's shared `read_bounded` reader: no-follow,
+nonblocking regular-file reads with a finite byte cap and held/named metadata
+checks before and after reading. FIFO, directory, symlink and oversized inputs
+refuse before replay or signing inspection. The same reader preserves empty
+and binary CAS payloads, and `put` reads its payload before creating writable
+state. `frontend_request_bounds` executes these public commands and a fresh
+valid retry under the existing bounded process owner.
+
 ## Local boundary
 
 The report includes the release-state result, trust-layer result, drill report,
@@ -109,6 +117,7 @@ and test with:
 rustup run 1.98.0 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
 rustup run 1.98.0 cargo clippy --manifest-path rust/Cargo.toml -p hepta-paper-service --all-targets --locked -- -D warnings
 rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --test release_attest_source_capture --test release_attest --test release_replay --test release_replay_referee --test release_replay_execution --test release_replay_policy
+rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --test frontend_request_bounds
 ```
 
 The V2 tests inspect actual private Git repositories and replay the qualified

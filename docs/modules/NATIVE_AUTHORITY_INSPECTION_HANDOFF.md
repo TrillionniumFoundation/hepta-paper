@@ -16,8 +16,8 @@ cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --bi
 
 | Binary | Arguments | Public implementation |
 |---|---|---|
-| `hepta-operational-proof-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH --asset-root ABSOLUTE_PATH`; omitted roots use `HEPTA_WORKSPACE_ROOT`, `HEPTA_PAPER_RUNTIME_ROOT`, `HEPTA_PAPER_ASSET_ROOT`, then the compiled workspace's sibling defaults. | `operational_status::capability_operational_proof_status_v1` |
-| `hepta-owner-acceptance-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH`; omitted roots use `HEPTA_WORKSPACE_ROOT`, `HEPTA_PAPER_RUNTIME_ROOT`, then the compiled workspace's sibling runtime default. | `owner_status::inspect_owner_acceptance_status_v1` |
+| `hepta-operational-proof-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH --asset-root ABSOLUTE_PATH`; omitted roots use the selected environment and actual frontend workspace layout, then sibling runtime/assets defaults. | `operational_status::capability_operational_proof_status_v1` |
+| `hepta-owner-acceptance-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH`; omitted roots use the selected environment and actual frontend workspace layout, then the sibling runtime default. | `owner_status::inspect_owner_acceptance_status_v1` |
 | `hepta-nested-runtime-qualification` | the incumbent 18 flags/environment bindings, or `--request ABSOLUTE_JSON_PATH` | `nested_runtime_cli::nested_runtime_qualification_cli_v1` / `nested_runtime_qualification::verify_nested_runtime_platform_qualification_file_v1` |
 | `hepta-journal-connector-coverage` | discovery filters and readiness flags corresponding to `paper-core/bin/journal-connector-coverage.mjs` | `journal_connector_coverage::journal_connector_coverage_cli_v2` |
 
@@ -45,6 +45,16 @@ Missing or untrusted proof remains pending; replay success cannot substitute for
 an operational observation. Source provenance failure aborts inspection. Reads
 are bounded and check identity/permissions before and after use; no receipt,
 trust-store, source, asset or workspace mutation is part of this command.
+
+Ordinary provenance and imported-proof reads share the cooperative observation
+owner in [`operational_status/bounded.rs`](../../rust/crates/hepta-paper-service/src/operational_status/bounded.rs).
+That source declares the file, total-read, entry and deadline limits. Git is the
+fixed root-owned `/usr/bin/git` ELF; its retained descriptor, metadata and closed
+environment remain current through each invocation. Files use no-follow,
+nonblocking reads; cancelled work, deadline expiry, oversized output and
+unverified process cleanup abort inspection through the existing bounded runtime
+owner. Malformed evidence cannot turn these resource refusals into acceptance.
+These before/after guards observe cooperative stability and confer no authority.
 
 Differential tests cover valid evidence for all 16 capabilities, invalid signatures,
 reused subjects, local assurance, revoked keys, source/result drift, historical
@@ -151,6 +161,8 @@ cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
   --test operational_status_parity --test owner_status_parity \
   --test nested_runtime_qualification_parity --test nested_runtime_cli \
   --test journal_connector_coverage_parity --test journal_qualification_parity
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --lib operational_status::bounded::tests:: -- --test-threads=2
 cargo clippy --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
   --all-targets -- -D warnings
 node docs/tools/audit-node-rust-coverage.mjs

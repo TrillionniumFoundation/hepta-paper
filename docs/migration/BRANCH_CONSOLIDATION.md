@@ -14,19 +14,18 @@ operational owners or silently redirecting command routes.
 
 ## Current candidate and callable entrypoints
 
-The sole current continuation is PR #142,
+The sole current continuation is [PR #142](https://github.com/TrillionniumFoundation/hepta-paper/pull/142),
 `codex/native-product-recovery-20260924`, targeting
 `codex/full-rust-replacement-progress-20260916`. The #139/#141 source and the
 comparisons below are historical inputs, not competing completion candidates.
 Read the current PR head/base and exact workflow subject before integration;
 never copy a predecessor's green checks into the current candidate's status.
+The machine-owned branch roles are `qualificationCandidate` in
+[`current-status.v1.json`](../rust/current-status.v1.json); its candidate and
+integration branch are distinct. This record stores no mutable head/tree SHA or
+source qualification result. Query the live PR for those identities.
 
-`hepta-paper-rust autonomous-research` remains the bounded local workflow entry.
-`hepta-codex-broker <absolute-config.json>` is the separate installed
-broker entry, using the existing configuration loader, dispatcher and journal.
-A running broker is not a complete author/reviewer/revision workflow, and a
-local workflow receipt is not a provider execution receipt. Their remaining
-composition and command-mode gaps stay in the existing migration ledger.
+The normal `hepta-paper-rust autonomous-research` paper/campaign request now derives its workflow, runs independently bound broker roles and revisions through the existing durable owner, settles signed measured cost and binds ACK to the persisted commit. Its [workflow contract](../modules/LOCAL_WORKFLOW_HANDOFF.md) distinguishes that source composition from older explicit local-workflow modes and from genuine independently admitted installed accounts. `hepta-codex-broker <absolute-config.json>` remains the separate broker entry using the same configuration loader, dispatcher and journal. Running a broker or passing a private fixture does not qualify the real role chain; remaining command domains and target-host acceptance stay in the canonical migration ledger.
 
 The independent `rust-product-targets` workflow compiles every Rust workspace
 library, binary, example and test target on both exact-head and deterministic

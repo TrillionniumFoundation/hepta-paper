@@ -124,8 +124,18 @@ jobs:
             --shard-index "${{ matrix.shard }}" \
             --dry-run --json > "$evidence_root/impact-plan.json"
           cat "$evidence_root/impact-plan.json"
-          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n')" \
+          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n'+'native_route_acceptance='+p.shardTests.includes('paper-core/tests/node-rust-route-acceptance.test.mjs')+'\n')" \
             "$evidence_root/impact-plan.json" >> "$GITHUB_OUTPUT"
+
+      - name: Install qualified native route toolchain
+        if: steps.impact.outputs.native_route_acceptance == 'true'
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          native_route_cargo="$(rustup which --toolchain 1.98.0 cargo)"
+          test -x "$native_route_cargo"
+          test "$("$native_route_cargo" --version | cut -d ' ' -f 2)" = 1.98.0
+          dirname "$native_route_cargo" >> "$GITHUB_PATH"
 
       - name: Restore pinned Lean and formal runtime cache
         if: steps.impact.outputs.count != '0'

@@ -90,8 +90,17 @@ jobs:
             --shard-index "${{ matrix.shard }}" \
             --dry-run --json > "$RUNNER_TEMP/impact-plan.json"
           cat "$RUNNER_TEMP/impact-plan.json"
-          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n')" \
+          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n'+'native_route_acceptance='+p.shardTests.includes('paper-core/tests/node-rust-route-acceptance.test.mjs')+'\n')" \
             "$RUNNER_TEMP/impact-plan.json" >> "$GITHUB_OUTPUT"
+      - name: Install qualified native route toolchain
+        if: steps.impact.outputs.native_route_acceptance == 'true'
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          native_route_cargo="$(rustup which --toolchain 1.98.0 cargo)"
+          test -x "$native_route_cargo"
+          test "$("$native_route_cargo" --version | cut -d ' ' -f 2)" = 1.98.0
+          dirname "$native_route_cargo" >> "$GITHUB_PATH"
       - name: Restore pinned Lean and formal runtime cache
         if: steps.impact.outputs.count != '0'
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
@@ -183,6 +192,14 @@ jobs:
         with:
           node-version: '22.23.1'
           cache: npm
+      - name: Install qualified native route toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          native_route_cargo="$(rustup which --toolchain 1.98.0 cargo)"
+          test -x "$native_route_cargo"
+          test "$("$native_route_cargo" --version | cut -d ' ' -f 2)" = 1.98.0
+          dirname "$native_route_cargo" >> "$GITHUB_PATH"
       - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
           path: ~/.elan
@@ -301,6 +318,14 @@ jobs:
         with:
           node-version: '22.23.1'
           cache: npm
+      - name: Install qualified native route toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          native_route_cargo="$(rustup which --toolchain 1.98.0 cargo)"
+          test -x "$native_route_cargo"
+          test "$("$native_route_cargo" --version | cut -d ' ' -f 2)" = 1.98.0
+          dirname "$native_route_cargo" >> "$GITHUB_PATH"
       - name: Restore pinned Lean and formal runtime cache
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:

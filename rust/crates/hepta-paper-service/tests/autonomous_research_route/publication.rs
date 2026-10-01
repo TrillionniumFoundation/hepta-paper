@@ -402,13 +402,18 @@ pub(super) fn run_distinct_uid_campaign() {
     {
         let mut fault = Campaign::new();
         let publisher = PublicationFixture::new(&mut fault);
-        assert_eq!(fault.advance(Some(1))["ready"], false);
+        let preparation = fault.advance(Some(1));
+        assert_eq!(preparation["ready"], false);
         let manifest = fault.capture(0);
         let operation = &fault.author.request.operation_id;
         let descriptor = publisher
             .author
             .operation_directory
             .join(format!("{operation}.json"));
+        assert!(
+            descriptor.exists(),
+            "normal product operation was not published: {preparation}"
+        );
         let inode = fs::metadata(&descriptor).unwrap().ino();
         let signed = fs::read(&fault.author.request_path).unwrap();
         let signed_operation = publisher

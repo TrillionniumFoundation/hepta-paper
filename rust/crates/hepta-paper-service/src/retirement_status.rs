@@ -31,16 +31,15 @@ pub enum RetirementStatusError {
     RequestInvalid,
     #[error("retirement status package version is invalid")]
     PackageVersionInvalid,
+    #[error("{0}")]
+    WorkspaceRoot(String),
     #[error("retirement status filesystem operation failed")]
     Io(#[from] std::io::Error),
 }
 
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
+fn workspace_root() -> Result<PathBuf, RetirementStatusError> {
+    crate::native_workspace::current_native_command_workspace_root_v1(None)
+        .map_err(RetirementStatusError::WorkspaceRoot)
 }
 
 fn environment_path(name: &str) -> Option<PathBuf> {
@@ -53,8 +52,8 @@ fn environment_path(name: &str) -> Option<PathBuf> {
 /// incumbent `retire-legacy-archive.mjs` command. Environment overrides are
 /// still resolved from the caller's working directory; source defaults are
 /// resolved beside the checked-in workspace.
-fn default_roots() -> (PathBuf, PathBuf, PathBuf) {
-    let workspace = workspace_root();
+fn default_roots() -> Result<(PathBuf, PathBuf, PathBuf), RetirementStatusError> {
+    let workspace = workspace_root()?;
     let parent = workspace.parent().unwrap_or(&workspace);
     let legacy_parent = parent.file_name().and_then(|name| name.to_str()) == Some("paper_factory");
     let asset = environment_path("HEPTA_PAPER_ASSET_ROOT").unwrap_or_else(|| {
@@ -73,13 +72,12 @@ fn default_roots() -> (PathBuf, PathBuf, PathBuf) {
             parent.join("paper_factory")
         }
     });
-    (asset, runtime, legacy)
+    Ok((asset, runtime, legacy))
 }
 
 fn package_version() -> Result<String, RetirementStatusError> {
-    let package = fs::read_to_string(workspace_root().join("package.json"))?;
-    let value: Value =
-        serde_json::from_str(&package).map_err(|_| RetirementStatusError::PackageVersionInvalid)?;
+    let value = crate::native_workspace::read_native_workspace_package_v1(&workspace_root()?)
+        .map_err(RetirementStatusError::WorkspaceRoot)?;
     value
         .get("version")
         .and_then(Value::as_str)
@@ -303,13 +301,13 @@ pub fn inspect_retirement_status_v1(input: &Value) -> Result<Value, RetirementSt
         Some(Value::String(value)) => value.to_owned(),
         Some(_) => return Err(RetirementStatusError::RequestInvalid),
     };
-    let (default_asset_root, default_runtime_root, default_legacy_root) = default_roots();
+    let (default_asset_root, default_runtime_root, default_legacy_root) = default_roots()?;
     let legacy_root = resolved_path(&request_path(object, "legacyRoot", default_legacy_root)?);
     let runtime_root = resolved_path(&request_path(object, "runtimeRoot", default_runtime_root)?);
     let asset_root = resolved_path(&request_path(object, "assetRoot", default_asset_root)?);
     let working_directory = std::env::current_dir()?;
     let layout = resolve_workspace_layout_v1(
-        &workspace_root(),
+        &workspace_root()?,
         &working_directory,
         &BTreeMap::new(),
         &WorkspaceLayoutOptionsV1 {

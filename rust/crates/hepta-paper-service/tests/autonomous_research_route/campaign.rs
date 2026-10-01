@@ -82,7 +82,9 @@ impl Campaign {
     fn command(&self, action: &str) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"));
         cmd.args([
+            "operator",
             "autonomous-research",
+            "--",
             "--paper-id",
             "ordinary-paper",
             "--action",

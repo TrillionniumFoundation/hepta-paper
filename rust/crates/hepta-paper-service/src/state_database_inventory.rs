@@ -93,6 +93,31 @@ impl ObservedStateDatabaseInventoryV1 {
             "autonomous_research_state_database_inventory_changed",
         )
     }
+    /// Copy only one retained original main/WAL descriptor into a newly owned
+    /// private staging file. This grants no mutation or activation authority;
+    /// the schema checkpoint publisher checks the full signed original graph.
+    pub(crate) fn copy_schema_checkpoint_file_v1(
+        &self,
+        instance_id: &str,
+        wal: bool,
+        target: &std::fs::File,
+    ) -> Result<()> {
+        self.current_database_instance(instance_id)?;
+        let database = &self
+            .databases
+            .iter()
+            .find(|(id, _)| id == instance_id)
+            .ok_or_else(|| error("autonomous_research_state_database_instance_missing"))?
+            .1;
+        let source = if wal {
+            database.wal.as_ref().ok_or_else(files::changed)?
+        } else {
+            &database.source
+        };
+        source.copy_to(target)?;
+        self.current_database_instance(instance_id)?;
+        Ok(())
+    }
     /// Fixed local schema and integrity observations on a temporary private
     /// SQLite copy. This never opens the source through SQLite, so hot-journal
     /// recovery and SHM writes cannot affect the source. The result is local

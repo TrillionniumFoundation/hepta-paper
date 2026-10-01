@@ -1,39 +1,19 @@
-//! Immutable, read-only projection of the Node `hepta-store status` contract.
-//!
-//! This command is deliberately a diagnostic projection over one explicitly
-//! supplied SQLite file (and its colocated handoff database). It never opens a
-//! writable connection, provisions a handoff database, repairs rows, or grants
-//! production authority.
-
+//! Read-only observation of the incumbent `hepta-store status` contract.
+//! Neither a report nor `--require-trust-clean` grants mutation authority.
 #![forbid(unsafe_code)]
-
-use rusqlite::{Connection, OpenFlags, Row};
-use serde_json::{Map, Value, json};
+mod cli;
+mod date;
+mod handoff;
+mod sql;
+mod timezone;
+pub use cli::store_status_cli_v1;
+use rusqlite::{Connection, OpenFlags};
+use serde_json::{Value, json};
 use std::{
-    fs,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
+    time::Duration,
 };
 use thiserror::Error;
-
-const HANDOFF_CUTOVER_ID: &str = "autonomous-submission-handoff-cutover-v1";
-const TABLES: [&str; 15] = [
-    "papers",
-    "venues",
-    "submission_ledger",
-    "submissions",
-    "artifacts",
-    "referee_revision_requests",
-    "patch_queue",
-    "receipt_ledger",
-    "jobs",
-    "job_attempts",
-    "submission_outbox",
-    "submission_inbox",
-    "paper_campaigns",
-    "campaign_nodes",
-    "campaign_events",
-];
 
 #[derive(Debug, Error)]
 pub enum StoreStatusError {
@@ -41,10 +21,14 @@ pub enum StoreStatusError {
     Path,
     #[error("store status database identity is invalid")]
     Identity,
-    #[error("store status database operation failed")]
+    #[error("{0}")]
     Database(#[from] rusqlite::Error),
     #[error("store status database path is not valid UTF-8")]
     Utf8,
+    #[error("{0}")]
+    Projection(String),
+    #[error("{0}")]
+    Arguments(String),
 }
 
 fn percent_encode(path: &Path) -> Result<String, StoreStatusError> {
@@ -61,242 +45,21 @@ fn percent_encode(path: &Path) -> Result<String, StoreStatusError> {
     Ok(output)
 }
 
-fn canonical_database(path: &Path) -> Result<PathBuf, StoreStatusError> {
-    if !path.is_absolute()
-        || path.components().any(|part| {
-            matches!(
-                part,
-                std::path::Component::CurDir | std::path::Component::ParentDir
-            )
-        })
-    {
-        return Err(StoreStatusError::Path);
-    }
-    let canonical = fs::canonicalize(path).map_err(|_| StoreStatusError::Path)?;
-    if canonical != path {
-        return Err(StoreStatusError::Path);
-    }
-    let metadata = fs::symlink_metadata(path).map_err(|_| StoreStatusError::Path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.nlink() != 1 {
-        return Err(StoreStatusError::Identity);
-    }
-    Ok(canonical)
-}
-
 fn open_read_only(path: &Path) -> Result<Connection, StoreStatusError> {
     let uri = format!("file:{}?mode=ro", percent_encode(path)?);
     let connection = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_URI
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    connection.execute_batch(
-        "PRAGMA query_only=ON;
-         PRAGMA trusted_schema=OFF;
-         PRAGMA temp_store=MEMORY;",
-    )?;
+    connection.busy_timeout(Duration::from_secs(10))?;
+    connection
+        .execute_batch("PRAGMA query_only=ON; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;")?;
     Ok(connection)
 }
 
-fn has_table(connection: &Connection, table: &str) -> Result<bool, StoreStatusError> {
-    let found = connection.query_row(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1",
-        [table],
-        |_| Ok(()),
-    );
-    match found {
-        Ok(()) => Ok(true),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn count_table(connection: &Connection, table: &str) -> Result<u64, StoreStatusError> {
-    if !has_table(connection, table)? {
-        return Ok(0);
-    }
-    let query = format!("SELECT count(*) FROM \"{}\"", table.replace('"', "\"\""));
-    let count: i64 = connection.query_row(&query, [], |row| row.get(0))?;
-    u64::try_from(count).map_err(|_| StoreStatusError::Identity)
-}
-
-fn value_string(row: &Row<'_>, index: usize) -> Result<Value, rusqlite::Error> {
-    let value: Option<String> = row.get(index)?;
-    Ok(value.map_or(Value::Null, Value::String))
-}
-
-fn metadata(connection: &Connection) -> Result<Value, StoreStatusError> {
-    if !has_table(connection, "store_metadata")? {
-        return Ok(Value::Array(Vec::new()));
-    }
-    let mut statement =
-        connection.prepare("SELECT key,value,updated_at FROM store_metadata ORDER BY key")?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok(json!({
-                "key": row.get::<_, String>(0)?,
-                "value": row.get::<_, String>(1)?,
-                "updated_at": row.get::<_, String>(2)?,
-            }))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Value::Array(rows))
-}
-
-fn grouped(
-    connection: &Connection,
-    query: &str,
-    fields: &[&str],
-) -> Result<Value, StoreStatusError> {
-    let mut statement = connection.prepare(query)?;
-    let rows = statement
-        .query_map([], |row| {
-            let mut object = Map::new();
-            for (index, field) in fields.iter().enumerate() {
-                if *field == "count" {
-                    object.insert((*field).to_owned(), json!(row.get::<_, i64>(index)?));
-                } else {
-                    object.insert((*field).to_owned(), value_string(row, index)?);
-                }
-            }
-            Ok(Value::Object(object))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Value::Array(rows))
-}
-
-fn schema_version(connection: &Connection) -> Result<u32, StoreStatusError> {
-    if !has_table(connection, "schema_migrations")? {
-        return Ok(0);
-    }
-    let value: i64 = connection.query_row(
-        "SELECT coalesce(max(version),0) FROM schema_migrations",
-        [],
-        |row| row.get(0),
-    )?;
-    u32::try_from(value).map_err(|_| StoreStatusError::Identity)
-}
-
-fn quick_check(connection: &Connection) -> Result<String, StoreStatusError> {
-    let result: Option<String> = connection
-        .query_row("PRAGMA quick_check", [], |row| row.get(0))
-        .ok();
-    Ok(result.unwrap_or_else(|| "unknown".to_owned()))
-}
-
-fn contaminated_count(
-    connection: &Connection,
-    allow_isolated_verification_evidence: bool,
-) -> Result<u64, StoreStatusError> {
-    if !has_table(connection, "receipt_ledger")?
-        || !has_table(connection, "receipt_ledger_qualifications")?
-    {
-        return Ok(0);
-    }
-    let count: i64 = connection.query_row(
-        "SELECT count(*)
-           FROM receipt_ledger AS receipt
-          WHERE ((environment='verification' AND evidence_class='technical_conformance'
-                  AND ?1 = 0)
-             OR (environment='production' AND evidence_class='runtime_unclassified')
-             OR (environment='production' AND evidence_class='release_conformance_with_operational_binding'))
-            AND NOT EXISTS (
-                SELECT 1 FROM receipt_ledger_qualifications AS qualification
-                 WHERE qualification.receipt_id=receipt.receipt_id
-                   AND qualification.disposition IN
-                     ('administrative_exported','invalid','superseded','retention_tombstone')
-            )",
-        [i64::from(allow_isolated_verification_evidence)],
-        |row| row.get(0),
-    )?;
-    u64::try_from(count).map_err(|_| StoreStatusError::Identity)
-}
-
-fn handoff(connection: &Connection, runtime_root: &Path) -> Value {
-    let database_path =
-        runtime_root.join("autonomous-research/submission-handoff/submission-handoff.sqlite");
-    let path_text = database_path.to_string_lossy().into_owned();
-    if !database_path.exists() {
-        return json!({
-            "ready": false,
-            "databasePath": path_text,
-            "blockers": ["autonomous_submission_handoff_database_missing"],
-        });
-    }
-    let result = (|| -> Result<Value, StoreStatusError> {
-        let handoff = canonical_database(&database_path)?;
-        let handoff_connection = open_read_only(&handoff)?;
-        let native = if has_table(connection, "autonomous_submission_handoff_cutover")? {
-            connection
-                .query_row(
-                    "SELECT cutover_id,handoff_database_identity_hash
-                       FROM autonomous_submission_handoff_cutover
-                      WHERE singleton=1 LIMIT 1",
-                    [],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .ok()
-        } else {
-            None
-        };
-        let handoff_row = if has_table(&handoff_connection, "handoff_cutover")? {
-            handoff_connection
-                .query_row(
-                    "SELECT cutover_id,native_cutover_identity_hash,status
-                       FROM handoff_cutover WHERE singleton=1 LIMIT 1",
-                    [],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                        ))
-                    },
-                )
-                .ok()
-        } else {
-            None
-        };
-        let quick = quick_check(&handoff_connection)?;
-        let ready = native.as_ref().is_some_and(|native| {
-            handoff_row.as_ref().is_some_and(|handoff| {
-                native.0 == HANDOFF_CUTOVER_ID
-                    && handoff.0 == HANDOFF_CUTOVER_ID
-                    && native.1 == handoff.1
-                    && handoff.2 == "active"
-                    && quick == "ok"
-            })
-        });
-        Ok(json!({
-            "ready": ready,
-            "databasePath": path_text,
-            "quickCheck": quick,
-            "cutoverId": handoff_row.as_ref().map(|row| row.0.clone()),
-            "databaseIdentityHash": handoff_row.as_ref().map(|row| row.1.clone()),
-            "blockers": if ready { Vec::<String>::new() } else { vec!["autonomous_submission_handoff_cutover_not_active".to_owned()] },
-        }))
-    })();
-    result.unwrap_or_else(|error| {
-        let blocker = match error {
-            StoreStatusError::Database(_) => "autonomous_submission_handoff_schema_mismatch",
-            StoreStatusError::Path | StoreStatusError::Identity | StoreStatusError::Utf8 => {
-                "autonomous_submission_handoff_database_file_unsafe"
-            }
-        };
-        json!({
-            "ready": false,
-            "databasePath": path_text,
-            "blockers": [blocker],
-        })
-    })
-}
-
-/// Build the Node `hepta-store status` report over one explicitly supplied
-/// read-only database.
-/// `runtime_root` is explicit so the colocated submission-handoff store can be
-/// inspected without discovering or creating a production workspace.
+/// An explicit-path native extension over the same passive SQL owner.
 pub fn inspect_store_status_v1(
     database_path: &Path,
     runtime_root: Option<&Path>,
@@ -304,90 +67,113 @@ pub fn inspect_store_status_v1(
     inspect_store_status_with_options_v1(database_path, runtime_root, false)
 }
 
-/// Build the Node `hepta-store status` projection with its optional isolated
-/// verification-evidence policy. The flag only relaxes the diagnostic
-/// contamination gate for verification/technical-conformance rows; it never
-/// changes any persisted data or grants production authority.
+/// The optional policy relaxes only verification/technical-conformance
+/// contamination. Missing required schema is an SQL refusal, never a zero row.
 pub fn inspect_store_status_with_options_v1(
     database_path: &Path,
     runtime_root: Option<&Path>,
     allow_isolated_verification_evidence: bool,
 ) -> Result<Value, StoreStatusError> {
-    let database_path = canonical_database(database_path)?;
-    let connection = open_read_only(&database_path)?;
-    let runtime_root =
-        runtime_root.unwrap_or_else(|| database_path.parent().unwrap_or(Path::new("/")));
-    let runtime_root = runtime_root.to_path_buf();
-    let mut tables = Map::new();
-    for table in TABLES {
-        tables.insert(table.to_owned(), json!(count_table(&connection, table)?));
+    if !database_path.is_absolute() {
+        return Err(StoreStatusError::Path);
     }
-    let quick = quick_check(&connection)?;
-    let unresolved = contaminated_count(&connection, allow_isolated_verification_evidence)?;
-    let version = schema_version(&connection)?;
-    let handoff = handoff(&connection, &runtime_root);
-    let ready =
-        quick == "ok" && unresolved == 0 && version >= 25 && handoff["ready"] == Value::Bool(true);
-    let evidence = if has_table(&connection, "receipt_ledger")? {
-        grouped(
-            &connection,
-            "SELECT environment,evidence_class,count(*) AS count
-               FROM receipt_ledger
-              GROUP BY environment,evidence_class
-              ORDER BY environment,evidence_class",
-            &["environment", "evidence_class", "count"],
-        )?
-    } else {
-        Value::Array(Vec::new())
-    };
-    let qualifications = if has_table(&connection, "receipt_ledger_qualifications")? {
-        connection.query_row(
-            "SELECT count(*) AS row_count,count(DISTINCT receipt_id) AS qualified_receipt_count
-               FROM receipt_ledger_qualifications",
-            [],
-            |row| {
-                Ok(json!({
-                    "rowCount": row.get::<_, i64>(0)?,
-                    "qualifiedReceiptCount": row.get::<_, i64>(1)?,
-                    "unresolvedContaminatedReceiptCount": unresolved,
-                    "rawEvidenceClassificationsPreserved": true,
-                }))
-            },
-        )?
-    } else {
-        json!({
-            "rowCount": 0,
-            "qualifiedReceiptCount": 0,
-            "unresolvedContaminatedReceiptCount": unresolved,
-            "rawEvidenceClassificationsPreserved": true,
+    if !database_path.exists() {
+        return Err(StoreStatusError::Projection(format!(
+            "Read-only paper store missing: {}",
+            database_path.display()
+        )));
+    }
+    // Main-store aliases are observations in the incumbent. The dedicated
+    // handoff owner separately enforces its existing containment/identity gates.
+    let connection = sql::inspect(database_path)?;
+    let runtime = runtime_root.map(PathBuf::from).unwrap_or_else(|| {
+        database_path
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .to_path_buf()
+    });
+    let rows = sql::query(
+        &connection,
+        "SELECT 'papers' AS name,count(*) AS count FROM papers
+UNION ALL SELECT 'venues',count(*) FROM venues
+UNION ALL SELECT 'submission_ledger',count(*) FROM submission_ledger
+UNION ALL SELECT 'submissions',count(*) FROM submissions
+UNION ALL SELECT 'artifacts',count(*) FROM artifacts
+UNION ALL SELECT 'referee_revision_requests',count(*) FROM referee_revision_requests
+UNION ALL SELECT 'patch_queue',count(*) FROM patch_queue
+UNION ALL SELECT 'receipt_ledger',count(*) FROM receipt_ledger
+UNION ALL SELECT 'jobs',count(*) FROM jobs
+UNION ALL SELECT 'job_attempts',count(*) FROM job_attempts
+UNION ALL SELECT 'submission_outbox',count(*) FROM submission_outbox
+UNION ALL SELECT 'submission_inbox',count(*) FROM submission_inbox
+UNION ALL SELECT 'paper_campaigns',count(*) FROM paper_campaigns
+UNION ALL SELECT 'campaign_nodes',count(*) FROM campaign_nodes
+UNION ALL SELECT 'campaign_events',count(*) FROM campaign_events;",
+    )?;
+    let tables = rows
+        .into_iter()
+        .map(|r| {
+            Ok((
+                r["name"]
+                    .as_str()
+                    .ok_or(StoreStatusError::Identity)?
+                    .to_owned(),
+                r["count"].clone(),
+            ))
         })
-    };
-    let jobs = if has_table(&connection, "jobs")? {
-        grouped(
-            &connection,
-            "SELECT environment,evidence_class,status,count(*) AS count
-               FROM jobs
-              GROUP BY environment,evidence_class,status
-              ORDER BY environment,evidence_class,status",
-            &["environment", "evidence_class", "status", "count"],
-        )?
+        .collect::<Result<serde_json::Map<_, _>, StoreStatusError>>()?;
+    let metadata = sql::query(
+        &connection,
+        "SELECT key,value,updated_at FROM store_metadata ORDER BY key;",
+    )?;
+    let evidence = sql::query(
+        &connection,
+        "SELECT environment,evidence_class,count(*) AS count FROM receipt_ledger GROUP BY environment,evidence_class ORDER BY environment,evidence_class;",
+    )?;
+    let qualifications = sql::query(
+        &connection,
+        "SELECT count(*) AS row_count,count(DISTINCT receipt_id) AS qualified_receipt_count FROM receipt_ledger_qualifications;",
+    )?;
+    let allow = if allow_isolated_verification_evidence {
+        ""
     } else {
-        Value::Array(Vec::new())
+        "(environment='verification' AND evidence_class='technical_conformance') OR"
     };
-    Ok(json!({
-        "version": 3,
-        "kind": "HeptaNativeStoreStatus",
-        "status": if ready { "hepta_native_store_ready" } else { "hepta_native_store_blocked" },
-        "ready": ready,
-        "dbPath": database_path.to_string_lossy(),
-        "schemaVersion": version,
-        "quickCheck": quick,
-        "tables": Value::Object(tables),
-        "metadata": metadata(&connection)?,
-        "evidenceClassifications": evidence,
-        "receiptQualifications": qualifications,
-        "jobClassifications": jobs,
-        "autonomousSubmissionHandoff": handoff,
-        "legacyDefaultDependency": false,
-    }))
+    let contamination = sql::query(
+        &connection,
+        &format!(
+            "SELECT count(*) AS count FROM receipt_ledger AS receipt WHERE ({allow} (environment='production' AND evidence_class='runtime_unclassified') OR (environment='production' AND evidence_class='release_conformance_with_operational_binding')) AND NOT EXISTS (SELECT 1 FROM receipt_ledger_qualifications AS qualification WHERE qualification.receipt_id=receipt.receipt_id AND qualification.disposition IN ('administrative_exported','invalid','superseded','retention_tombstone'));"
+        ),
+    )?;
+    let unresolved = contamination
+        .first()
+        .map(|r| r["count"].clone())
+        .unwrap_or(json!(0));
+    let jobs = sql::query(
+        &connection,
+        "SELECT environment,evidence_class,status,count(*) AS count FROM jobs GROUP BY environment,evidence_class,status ORDER BY environment,evidence_class,status;",
+    )?;
+    let quick = sql::quick_check(&connection)?;
+    let version = sql::query(
+        &connection,
+        "SELECT coalesce(max(version),0) AS version FROM schema_migrations;",
+    )?
+    .first()
+    .map(|r| r["version"].clone())
+    .unwrap_or(json!(0));
+    let schema_number = sql::number_or_zero(&version);
+    let version = if schema_number.is_finite() {
+        serde_json::from_str(ryu_js::Buffer::new().format(schema_number))
+            .map_err(|e| StoreStatusError::Projection(e.to_string()))?
+    } else {
+        Value::Null
+    };
+    let handoff = handoff::inspect(&connection, &runtime);
+    let ready = quick == "ok"
+        && unresolved.as_i64() == Some(0)
+        && schema_number >= 25.0
+        && handoff["ready"] == Value::Bool(true);
+    Ok(
+        json!({"version":3,"kind":"HeptaNativeStoreStatus","status":if ready {"hepta_native_store_ready"} else {"hepta_native_store_blocked"},"ready":ready,"dbPath":database_path.to_str().ok_or(StoreStatusError::Utf8)?,"schemaVersion":version,"quickCheck":quick,"tables":tables,"metadata":metadata,"evidenceClassifications":evidence,"receiptQualifications":{"rowCount":qualifications.first().map(|r|r["row_count"].clone()).unwrap_or(json!(0)),"qualifiedReceiptCount":qualifications.first().map(|r|r["qualified_receipt_count"].clone()).unwrap_or(json!(0)),"unresolvedContaminatedReceiptCount":unresolved,"rawEvidenceClassificationsPreserved":true},"jobClassifications":jobs,"autonomousSubmissionHandoff":handoff,"legacyDefaultDependency":false}),
+    )
 }

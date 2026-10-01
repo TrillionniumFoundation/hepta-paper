@@ -11,7 +11,7 @@ use crate::{
     native_workspace::resolve_native_workspace_root_v1,
 };
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Selects command grammar and help text, never an authority profile.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -173,17 +173,20 @@ pub fn inspect_supervisor_health_command_v1(
     let fully_autonomous = options.contains_key("require-fully-autonomous");
     let cwd = std::env::current_dir()
         .map_err(|error| format!("health_runtime_root_working_directory_invalid:{error}"))?;
-    let legacy_default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../hepta-paper-runtime/native-runtime");
     let requested_root = options
         .get("runtime-root")
         .map(|value| (*value).to_owned())
-        .or_else(|| std::env::var("HEPTA_PAPER_RUNTIME_ROOT").ok());
-    let root = resolve_native_workspace_root_v1(
-        &cwd,
-        &legacy_default,
-        requested_root.as_deref().map(Path::new),
-    )
+        .or_else(|| {
+            std::env::var("HEPTA_PAPER_RUNTIME_ROOT")
+                .ok()
+                .filter(|value| !value.is_empty())
+        });
+    let root = match requested_root {
+        Some(selected) => {
+            resolve_native_workspace_root_v1(&cwd, Path::new(&selected), Some(Path::new(&selected)))
+        }
+        None => crate::native_workspace::current_native_command_runtime_root_v1(),
+    }
     .map_err(|error| format!("health_runtime_root_invalid:{error}"))?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -192,11 +195,12 @@ pub fn inspect_supervisor_health_command_v1(
         .ok_or_else(|| "health_clock_invalid".to_owned())?;
     let report = if fully_autonomous {
         let environment = full_environment()?;
-        // This remains the existing compile-time source-tree default, not an
-        // installed-source identity verifier or caller-selected authority root.
-        let compiled_repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let repository = resolve_native_workspace_root_v1(&cwd, &compiled_repository, None)
-            .map_err(|error| format!("health_repository_root_invalid:{error}"))?;
+        let repository = crate::native_workspace::resolve_native_command_workspace_root_v1(
+            &cwd,
+            &environment,
+            None,
+        )
+        .map_err(|error| format!("health_repository_root_invalid:{error}"))?;
         inspect_supervisor_health_fully_autonomous_v1(&FullSupervisorHealthOptionsV1 {
             runtime_root: &root,
             repository_root: &repository,

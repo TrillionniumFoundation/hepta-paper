@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 const NAMES: [&str; 4] = ["workspaceRoot", "assetRoot", "runtimeRoot", "legacyRoot"];
@@ -366,15 +366,11 @@ pub fn workspace_status_cli_v1(
             return Err(format!("unexpected_cli_positional:{arg}"));
         }
     }
-    // The incumbent `paper-core/bin/workspace-status.mjs` resolves its
-    // workspace from the installed module location (`HEPTA_WORKSPACE_ROOT`),
-    // rather than from the caller's cwd. Keep the explicit relocation and
-    // environment override for native deployments, but make the no-argument
-    // invocation observe the same compiled deployment root as Node.
-    let compiled_workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let root = requested(explicit, environment, "HEPTA_PAPER_WORKSPACE_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or(compiled_workspace_root);
+    let root = crate::native_workspace::resolve_native_command_workspace_root_v1(
+        working_directory,
+        environment,
+        explicit.map(Path::new),
+    )?;
     let report = inspect_workspace_status_v1(&root, working_directory, environment)?;
     let code = if require_decoupled && !report.layout.physically_decoupled {
         2

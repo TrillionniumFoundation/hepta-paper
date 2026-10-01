@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
-    fs::{self, Metadata, OpenOptions},
+    fs::{self, File, Metadata, OpenOptions},
     io::Read,
     os::unix::{
         ffi::OsStrExt,
@@ -56,6 +56,51 @@ fn git(root: &Path, operation: &str, args: &[&str], empty: bool) -> Result<Vec<u
     }
     Ok(output.stdout)
 }
+/// Internal composition seam. Only the fixed queries in this module reach the
+/// observer. The compatibility observer retains the existing unbounded file
+/// resource scope; the release source owner supplies per-read limits and an
+/// authenticated, cancellable process-group observer.
+pub(crate) trait ProvenanceObservationV1 {
+    fn git(&mut self, root: &Path, operation: &str, args: &[&str], empty: bool) -> Result<Vec<u8>>;
+    fn checkpoint(&mut self) -> Result<()>;
+    fn source_entry(&mut self, root: &Path, relative: &str) -> Result<()>;
+    fn file_size(&mut self, size: u64) -> Result<()>;
+    fn consume(&mut self, bytes: usize) -> Result<()>;
+    fn read_capacity(&mut self, requested: usize) -> Result<usize>;
+    fn open_regular(&mut self, root: &Path, relative: &str) -> Result<File>;
+    fn payload(&mut self, relative: &str, mode: Option<u32>, bytes: Option<&[u8]>) -> Result<()>;
+}
+struct CompatibilityObservation;
+impl ProvenanceObservationV1 for CompatibilityObservation {
+    fn git(&mut self, root: &Path, operation: &str, args: &[&str], empty: bool) -> Result<Vec<u8>> {
+        git(root, operation, args, empty)
+    }
+    fn checkpoint(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn source_entry(&mut self, _: &Path, _: &str) -> Result<()> {
+        Ok(())
+    }
+    fn file_size(&mut self, _: u64) -> Result<()> {
+        Ok(())
+    }
+    fn consume(&mut self, _: usize) -> Result<()> {
+        Ok(())
+    }
+    fn read_capacity(&mut self, requested: usize) -> Result<usize> {
+        Ok(requested)
+    }
+    fn payload(&mut self, _: &str, _: Option<u32>, _: Option<&[u8]>) -> Result<()> {
+        Ok(())
+    }
+    fn open_regular(&mut self, root: &Path, relative: &str) -> Result<File> {
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+            .open(root.join(relative))
+            .map_err(io_error)
+    }
+}
 fn id(bytes: Vec<u8>, operation: &str) -> Result<String> {
     let text = String::from_utf8(bytes)
         .map_err(|_| error("code_provenance_git_utf8_required"))?
@@ -71,13 +116,21 @@ fn id(bytes: Vec<u8>, operation: &str) -> Result<String> {
 fn io_error(_: std::io::Error) -> super::OperationalStatusError {
     error("code_provenance_entry_read_failed")
 }
-fn capture(root: &Path, read_only: bool) -> Result<Snapshot> {
-    let commit = id(git(root, "head", &["rev-parse", "HEAD"], false)?, "head")?;
+fn capture(
+    root: &Path,
+    read_only: bool,
+    observation: &mut dyn ProvenanceObservationV1,
+) -> Result<Snapshot> {
+    observation.checkpoint()?;
+    let commit = id(
+        observation.git(root, "head", &["rev-parse", "HEAD"], false)?,
+        "head",
+    )?;
     let tree = id(
-        git(root, "head_tree", &["rev-parse", "HEAD^{tree}"], false)?,
+        observation.git(root, "head_tree", &["rev-parse", "HEAD^{tree}"], false)?,
         "head_tree",
     )?;
-    let mut tags = String::from_utf8(git(
+    let mut tags = String::from_utf8(observation.git(
         root,
         "head_tags",
         &["tag", "--points-at", "HEAD"],
@@ -88,7 +141,7 @@ fn capture(root: &Path, read_only: bool) -> Result<Snapshot> {
     .filter(|v| !v.is_empty())
     .map(str::to_owned)
     .collect::<Vec<_>>();
-    tags.sort();
+    tags.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
     let status_args: &[&str] = if read_only {
         &[
             "status",
@@ -99,8 +152,8 @@ fn capture(root: &Path, read_only: bool) -> Result<Snapshot> {
     } else {
         &["status", "--porcelain=v1", "-z"]
     };
-    let status = git(root, "worktree_status", status_args, true)?;
-    let listed = git(
+    let status = observation.git(root, "worktree_status", status_args, true)?;
+    let listed = observation.git(
         root,
         "repository_entries",
         &[
@@ -129,7 +182,7 @@ fn capture(root: &Path, read_only: bool) -> Result<Snapshot> {
             Ok(path.to_owned())
         })
         .collect::<Result<BTreeSet<_>>>()?;
-    let index = git(
+    let index = observation.git(
         root,
         "index_state",
         &["diff-index", "--cached", "--raw", "-z", "HEAD"],
@@ -141,6 +194,8 @@ fn capture(root: &Path, read_only: bool) -> Result<Snapshot> {
     let mut entries = Vec::new();
     let mut package = Vec::new();
     for relative in paths {
+        observation.checkpoint()?;
+        observation.source_entry(root, &relative)?;
         let path = root.join(&relative);
         let before = match fs::symlink_metadata(&path) {
             Ok(meta) => Some(meta),
@@ -156,16 +211,33 @@ fn capture(root: &Path, read_only: bool) -> Result<Snapshot> {
         };
         let (kind, mode, content_hash) = if let Some(meta) = &before {
             let (kind, mode, bytes) = if meta.is_file() {
-                let mut file = OpenOptions::new()
-                    .read(true)
-                    .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
-                    .open(&path)
-                    .map_err(io_error)?;
+                observation.file_size(meta.len())?;
+                let mut file = observation.open_regular(root, &relative)?;
                 if !files::same(meta, &file.metadata().map_err(io_error)?) {
                     return Err(error("code_provenance_snapshot_changed_during_scan"));
                 }
                 let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes).map_err(io_error)?;
+                let mut buffer = [0u8; 64 * 1024];
+                loop {
+                    observation.checkpoint()?;
+                    let remaining = meta.len().saturating_sub(bytes.len() as u64);
+                    if remaining == 0 {
+                        break;
+                    }
+                    let requested = usize::try_from(remaining.min(buffer.len() as u64))
+                        .map_err(|_| error("code_provenance_entry_read_failed"))?;
+                    let capacity = observation.read_capacity(requested)?;
+                    if capacity == 0 || capacity > requested {
+                        return Err(error("code_provenance_read_capacity_invalid"));
+                    }
+                    let read = file.read(&mut buffer[..capacity]).map_err(io_error)?;
+                    if read == 0 {
+                        break;
+                    }
+                    observation.file_size(bytes.len() as u64 + read as u64)?;
+                    observation.consume(read)?;
+                    bytes.extend_from_slice(&buffer[..read]);
+                }
                 if !files::same(meta, &file.metadata().map_err(io_error)?)
                     || bytes.len() as u64 != meta.len()
                 {
@@ -203,8 +275,13 @@ fn capture(root: &Path, read_only: bool) -> Result<Snapshot> {
             if relative == "package.json" && kind == "file" {
                 package = bytes.clone().unwrap_or_default();
             }
+            if kind == "symlink" {
+                observation.consume(bytes.as_ref().map_or(0, Vec::len))?;
+            }
+            observation.payload(&relative, Some(mode), bytes.as_deref())?;
             (kind, Some(mode), bytes.as_deref().map(hash))
         } else {
+            observation.payload(&relative, None, None)?;
             ("missing", None, None)
         };
         let entry = Entry {
@@ -256,6 +333,8 @@ fn same(left: &Snapshot, right: &Snapshot) -> bool {
 /// intentionally ignored, as they are by the Node operational status entrypoint.
 /// Sealed deployments verify their hydrated submodule closure before the Git
 /// status probe, which ignores only closure-bound submodule worktree dirtiness.
+/// This compatibility entry retains its incumbent synchronous Git and unbounded
+/// per-file resource scope. Release source capture uses the bounded seam below.
 pub fn current_operational_code_provenance_v1(root: &Path) -> Result<Value> {
     let root = fs::canonicalize(root).map_err(io_error)?;
     let sealed = std::env::var("HEPTA_RELEASE_ENV_LAUNCHER").ok().as_deref() == Some("sealed-v1");
@@ -266,10 +345,47 @@ pub fn current_operational_code_provenance_v1(root: &Path) -> Result<Value> {
             return Err(error("code_provenance_sealed_submodule_closure_required"));
         }
     }
+    let environment = std::env::var("HEPTA_EVIDENCE_ENVIRONMENT")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or("production".to_owned());
+    let class = std::env::var("HEPTA_EVIDENCE_CLASS")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or("runtime_unclassified".to_owned());
+    current_with_observation(
+        &root,
+        read_only,
+        &environment,
+        &class,
+        &mut CompatibilityObservation,
+    )
+}
+/// Bounded release capture uses complete development status, including submodule
+/// worktree changes. It does not infer a sealed deployment from environment.
+pub(crate) fn current_bounded_code_provenance_v1(
+    root: &Path,
+    observation: &mut dyn ProvenanceObservationV1,
+) -> Result<Value> {
+    current_with_observation(
+        root,
+        false,
+        "administrative",
+        "release_attestation",
+        observation,
+    )
+}
+fn current_with_observation(
+    root: &Path,
+    read_only: bool,
+    environment: &str,
+    class: &str,
+    observation: &mut dyn ProvenanceObservationV1,
+) -> Result<Value> {
     for _ in 0..3 {
         let attempt = (|| {
-            let before = capture(&root, read_only)?;
-            let after = capture(&root, read_only)?;
+            let before = capture(root, read_only, observation)?;
+            let after = capture(root, read_only, observation)?;
             if !same(&before, &after) {
                 return Err(error("code_provenance_snapshot_changed_during_scan"));
             }
@@ -302,7 +418,7 @@ pub fn current_operational_code_provenance_v1(root: &Path) -> Result<Value> {
         state.update(b"\0");
         state.update(&snapshot.content_hash);
         return Ok(
-            json!({"version":2,"kind":"CodeProvenance","packageVersion":version,"commit":snapshot.commit,"commitTree":snapshot.tree,"tags":snapshot.tags,"treeDirty":!snapshot.status.is_empty(),"indexStateHash":index_hash,"repositoryEntryCount":snapshot.entries.len(),"repositoryContentHash":snapshot.content_hash,"worktreeStateHash":format!("sha256:{}",hex::encode(state.finalize())),"evidenceEnvironment":std::env::var("HEPTA_EVIDENCE_ENVIRONMENT").ok().filter(|v| !v.is_empty()).unwrap_or("production".to_owned()),"evidenceClass":std::env::var("HEPTA_EVIDENCE_CLASS").ok().filter(|v| !v.is_empty()).unwrap_or("runtime_unclassified".to_owned())}),
+            json!({"version":2,"kind":"CodeProvenance","packageVersion":version,"commit":snapshot.commit,"commitTree":snapshot.tree,"tags":snapshot.tags,"treeDirty":!snapshot.status.is_empty(),"indexStateHash":index_hash,"repositoryEntryCount":snapshot.entries.len(),"repositoryContentHash":snapshot.content_hash,"worktreeStateHash":format!("sha256:{}",hex::encode(state.finalize())),"evidenceEnvironment":environment,"evidenceClass":class}),
         );
     }
     Err(error("code_provenance_snapshot_unstable"))

@@ -12,6 +12,9 @@ pub(crate) mod production;
 mod provenance;
 mod sealed;
 
+pub(crate) use ordered::Ordered;
+pub(crate) use provenance::{ProvenanceObservationV1, current_bounded_code_provenance_v1};
+
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

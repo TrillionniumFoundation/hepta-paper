@@ -3,7 +3,7 @@ use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Number, Value};
 use std::fmt;
 #[derive(Clone)]
-pub(super) enum Ordered {
+pub(crate) enum Ordered {
     Scalar(Value),
     Array(Vec<Ordered>),
     Object(Vec<(String, Ordered)>),

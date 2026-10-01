@@ -561,4 +561,4 @@ pub fn load_schema_transition_checkpoint_v1<T: MutationAuthorityTransportV1>(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

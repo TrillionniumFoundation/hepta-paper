@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 use zbus::{
-    Connection, MatchRule, MessageStream,
+    AsyncDrop, Connection, MatchRule, MessageStream,
     connection::{AuthMechanism, Builder},
     zvariant::OwnedObjectPath,
 };
@@ -82,6 +82,18 @@ impl HeldStoppedInstalledAuthorityV1<'_, '_> {
     }
 }
 impl UnitObservation {
+    fn frame(&self, unit: &str) -> Value {
+        json!({"unit":unit,"activeState":self.active,"subState":self.substate,"mainPid":self.main_pid,"controlPid":self.control_pid,"job":self.job,"cgroup":self.cgroup})
+    }
+    fn quiescent_for(&self, expected: &SourceUnitV1) -> bool {
+        self.quiescent()
+            || (super::installation::fixed_root_layout_oneshot(expected)
+                && self.active == "active"
+                && self.substate == "exited"
+                && self.main_pid == 0
+                && self.control_pid == 0
+                && self.job == 0)
+    }
     fn quiescent(&self) -> bool {
         matches!(self.active.as_str(), "inactive" | "failed")
             && matches!(self.substate.as_str(), "dead" | "failed")
@@ -101,6 +113,7 @@ pub(crate) struct HeldInstalledSchemaMaintenanceV1<'a> {
     cgroups: Vec<(String, ObservedCgroup)>,
     manager_owner: String,
     operation: SchemaOperationIdentityV1,
+    original: Option<super::original::OriginalManagerV2>,
 }
 impl HeldInstalledSchemaMaintenanceV1<'_> {
     pub(crate) fn assert_current(&self) -> Result<()> {
@@ -125,6 +138,157 @@ impl HeldInstalledSchemaMaintenanceV1<'_> {
             "continuedCheck":"retained_profile_barrier_boot_pidfd_cgroup_only",
             "releaseAuthority":false,"submissionAuthority":false,"productionActivation":false})
     }
+    pub(super) fn assert_early_rollback_origin(&self) -> Result<()> {
+        self.assert_current()?;
+        let original = self.original.as_ref().ok_or_else(invalid)?;
+        original.manager_identity(self.boot.identity(), &self.manager_owner)?;
+        original.assert_reversible_units()?;
+        original.assert_authority_untouched()?;
+        let deadline = Instant::now() + Duration::from_secs(120);
+        exchange(deadline, async |connection| {
+            let owner = manager::owner(connection, deadline).await?;
+            if owner != self.manager_owner {
+                return Err(bus_invalid());
+            }
+            manager::principal(connection, &owner, deadline).await?;
+            let authority = &self.profile.authority_restart().source_unit;
+            let frame = observe_unit(connection, &owner, authority, &[], None, true, deadline)
+                .await?
+                .frame(&authority.unit);
+            if frame != *original.frame(&authority.unit).map_err(|_| bus_invalid())? {
+                return Err(bus_invalid());
+            }
+            if manager::owner(connection, deadline).await? != owner {
+                return Err(bus_invalid());
+            }
+            manager::principal(connection, &owner, deadline).await?;
+            Ok(())
+        })?;
+        self.assert_current()
+    }
+    pub(super) fn retain_rollback_fence(&mut self) -> Result<()> {
+        // A durable ConditionPathExists only prevents future starts. It cannot
+        // stop a writer whose rollback StartUnit may already have succeeded.
+        // Keep the same global lock while loading the reinstated conditions,
+        // stopping every source writer and retaining actual empty cgroups.
+        self.barrier.reinstate()?;
+        self.profile.assert_current()?;
+        self.boot.assert_current().map_err(bus_error)?;
+        manager_alive(&self.manager_pidfd)?;
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let (owner, cgroups) = exchange(deadline, async |connection| {
+            let owner = manager::owner(connection, deadline).await?;
+            if owner != self.manager_owner {
+                return Err(bus_invalid());
+            }
+            manager::principal(connection, &owner, deadline).await?;
+            reload_and_subscribe(connection, &owner, deadline).await?;
+            let cgroups = stop_source_units(
+                connection,
+                &owner,
+                self.profile.source_units(),
+                &self.barrier.marker_path(),
+                deadline,
+            )
+            .await?;
+            if manager::owner(connection, deadline).await? != owner {
+                return Err(bus_invalid());
+            }
+            manager::principal(connection, &owner, deadline).await?;
+            Ok((owner, cgroups))
+        })?;
+        // A resumed service can have a new manager-selected cgroup inode. The
+        // new observation is accepted only after its real StopUnit completion;
+        // an observation error leaves the previous witness unusable and the
+        // durable journal pending, never a claim of physical fencing.
+        self.manager_owner = owner;
+        self.cgroups = cgroups;
+        self.assert_current()
+    }
+    pub(super) fn rollback_writers(&mut self) -> Result<()> {
+        self.assert_early_rollback_origin()?;
+        let result = self.resume_original_writers();
+        rollback_result(result, || self.retain_rollback_fence())
+    }
+    fn resume_original_writers(&mut self) -> Result<()> {
+        let original = self.original.as_ref().ok_or_else(invalid)?;
+        self.barrier.release_for_early_rollback()?;
+        let deadline = Instant::now() + Duration::from_secs(120);
+        exchange(deadline, async |connection| {
+            let owner = manager::owner(connection, deadline).await?;
+            if owner != self.manager_owner {
+                return Err(bus_invalid());
+            }
+            manager::principal(connection, &owner, deadline).await?;
+            manager::call(
+                connection,
+                &owner,
+                MANAGER_PATH,
+                MANAGER_INTERFACE,
+                "Reload",
+                &(),
+                deadline,
+            )
+            .await?;
+            manager::call(
+                connection,
+                &owner,
+                MANAGER_PATH,
+                MANAGER_INTERFACE,
+                "Subscribe",
+                &(),
+                deadline,
+            )
+            .await?;
+            for unit in self.profile.source_units() {
+                let selected = original.frame(&unit.unit).map_err(|_| bus_invalid())?;
+                let before =
+                    observe_unit(connection, &owner, unit, &[], None, true, deadline).await?;
+                if selected["activeState"] == "active" && selected["subState"] == "running" {
+                    if before.quiescent() {
+                        job(connection, &owner, &unit.unit, "StartUnit", deadline).await?;
+                    }
+                    let after =
+                        observe_unit(connection, &owner, unit, &[], None, true, deadline).await?;
+                    if after.active != "active"
+                        || after.substate != "running"
+                        || after.main_pid == 0
+                        || after.control_pid != 0
+                        || after.job != 0
+                    {
+                        return Err(bus_invalid());
+                    }
+                } else {
+                    // Completed root oneshot and all originally inactive/failed
+                    // units are observed exactly; they are never Stop/Started.
+                    if before.frame(&unit.unit) != *selected {
+                        return Err(bus_invalid());
+                    }
+                    ObservedCgroup::capture(&before.cgroup, &unit.unit)
+                        .and_then(|c| c.assert_empty())
+                        .map_err(|_| bus_invalid())?;
+                }
+            }
+            let authority = &self.profile.authority_restart().source_unit;
+            if observe_unit(connection, &owner, authority, &[], None, true, deadline)
+                .await?
+                .frame(&authority.unit)
+                != *original.frame(&authority.unit).map_err(|_| bus_invalid())?
+            {
+                return Err(bus_invalid());
+            }
+            if manager::owner(connection, deadline).await? != owner {
+                return Err(bus_invalid());
+            }
+            manager::principal(connection, &owner, deadline).await?;
+            Ok(())
+        })?;
+        self.profile.assert_current()?;
+        original.assert_current()?;
+        original.assert_authority_untouched()?;
+        manager_alive(&self.manager_pidfd)?;
+        self.boot.assert_current().map_err(bus_error)
+    }
     pub(crate) fn bootstrap_source_authority(&self) -> Result<()> {
         self.assert_current()?;
         switch_authority(self, AuthorityStage::Source)?;
@@ -147,6 +311,106 @@ impl HeldInstalledSchemaMaintenanceV1<'_> {
         self.assert_current()
     }
 }
+
+/// Both a failed restart and a failed durable completion require the same
+/// physical re-fence. A failed Stop/observation is returned as unknown physical
+/// state; a surviving marker never substitutes for a stopped writer.
+pub(super) fn rollback_result<T>(
+    result: Result<T>,
+    retain_fence: impl FnOnce() -> Result<()>,
+) -> Result<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(cause) => {
+            retain_fence()?;
+            Err(cause)
+        }
+    }
+}
+
+async fn reload_and_subscribe(
+    connection: &Connection,
+    owner: &str,
+    deadline: Instant,
+) -> BusResult<()> {
+    for method in ["Reload", "Subscribe"] {
+        manager::call(
+            connection,
+            owner,
+            MANAGER_PATH,
+            MANAGER_INTERFACE,
+            method,
+            &(),
+            deadline,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn source_maintenance_drop_in(unit: &SourceUnitV1) -> PathBuf {
+    // Private fixture units exist only in a test binary; the installed profile
+    // still accepts solely the four fixed production /etc source units.
+    #[cfg(test)]
+    if unit.unit.starts_with("hepta-schema-rollback-test-")
+        && unit.fragment.path == PathBuf::from("/run/systemd/system").join(&unit.unit)
+    {
+        return PathBuf::from("/run/systemd/system")
+            .join(format!("{}.d", unit.unit))
+            .join(DROP_IN_NAME);
+    }
+    PathBuf::from("/etc/systemd/system")
+        .join(format!("{}.d", unit.unit))
+        .join(DROP_IN_NAME)
+}
+
+async fn stop_source_units(
+    connection: &Connection,
+    owner: &str,
+    units: &[SourceUnitV1],
+    marker: &Path,
+    deadline: Instant,
+) -> BusResult<Vec<(String, ObservedCgroup)>> {
+    let mut observed = Vec::new();
+    for unit in units {
+        let drop_in = source_maintenance_drop_in(unit);
+        let before = observe_unit(
+            connection,
+            owner,
+            unit,
+            std::slice::from_ref(&drop_in),
+            Some(marker),
+            true,
+            deadline,
+        )
+        .await?;
+        let cgroup =
+            ObservedCgroup::capture(&before.cgroup, &unit.unit).map_err(|_| bus_invalid())?;
+        // The completed fixed root oneshot is already empty and is preserved.
+        if !before.quiescent_for(unit) {
+            job(connection, owner, &unit.unit, "StopUnit", deadline).await?;
+        } else if !before.quiescent() {
+            cgroup.assert_empty().map_err(|_| bus_invalid())?;
+        }
+        let after = observe_unit(
+            connection,
+            owner,
+            unit,
+            std::slice::from_ref(&drop_in),
+            Some(marker),
+            true,
+            deadline,
+        )
+        .await?;
+        if !after.quiescent_for(unit) || (!after.cgroup.is_empty() && after.cgroup != before.cgroup)
+        {
+            return Err(bus_invalid());
+        }
+        cgroup.assert_empty().map_err(|_| bus_invalid())?;
+        observed.push((unit.unit.clone(), cgroup));
+    }
+    Ok(observed)
+}
 fn manager_alive(pidfd: &OwnedFd) -> Result<()> {
     let mut descriptors = [PollFd::new(pidfd.as_fd(), PollFlags::POLLIN)];
     loop {
@@ -158,91 +422,107 @@ fn manager_alive(pidfd: &OwnedFd) -> Result<()> {
     }
 }
 
-pub(crate) fn acquire_installed_schema_maintenance_v1<'a>(
+pub(super) fn hold_with_intent<'a>(
     profile: &'a ObservedInstalledSchemaProfileV1,
     operation: &SchemaOperationIdentityV1,
+    journal: &mut super::journal::ExecutionJournalV1,
+    now: i64,
 ) -> Result<HeldInstalledSchemaMaintenanceV1<'a>> {
-    hold(profile, operation)
-}
-pub(crate) fn recover_installed_schema_maintenance_v1<'a>(
-    profile: &'a ObservedInstalledSchemaProfileV1,
-    operation: &SchemaOperationIdentityV1,
-) -> Result<HeldInstalledSchemaMaintenanceV1<'a>> {
-    // Recovery adopts only the same exact persistent barriers and profile.
-    // A typed StopUnit on a still-active fixed writer is idempotent; no SQL,
-    // lease renewal or authority restart occurs until actual quiescence holds.
-    hold(profile, operation)
+    hold(profile, operation, Some((journal, now)))
 }
 fn hold<'a>(
     profile: &'a ObservedInstalledSchemaProfileV1,
     operation: &SchemaOperationIdentityV1,
+    intent: Option<(&mut super::journal::ExecutionJournalV1, i64)>,
 ) -> Result<HeldInstalledSchemaMaintenanceV1<'a>> {
     profile.assert_current()?;
     let deadline = Instant::now() + Duration::from_secs(120);
     let boot = manager::BootObservation::load().map_err(bus_error)?;
     let manager_pidfd = manager::installed_manager_pidfd(deadline).map_err(bus_error)?;
     manager_alive(&manager_pidfd)?;
-    let barrier = Barrier::acquire(profile, operation)?;
+    let mut original = None;
+    let barrier = Barrier::acquire_with_preparation(profile, operation, |directory| {
+        let Some((journal, now)) = intent else {
+            return Ok(());
+        };
+        if journal.value()["version"] != 2 {
+            return Ok(());
+        }
+        let pin = journal.value()["originalManagerFileSha256"]
+            .as_str()
+            .map(str::to_owned);
+        let record = if let Some(pin) = pin {
+            super::original::OriginalManagerV2::load(profile, operation, directory, &pin)?
+        } else {
+            let (owner, frames) = exchange(deadline, async |connection| {
+                let owner = manager::owner(connection, deadline).await?;
+                manager::principal(connection, &owner, deadline).await?;
+                let mut frames = Vec::new();
+                for unit in profile
+                    .source_units()
+                    .iter()
+                    .chain(std::iter::once(&profile.authority_restart().source_unit))
+                {
+                    let observed =
+                        observe_unit(connection, &owner, unit, &[], None, true, deadline).await?;
+                    if super::installation::fixed_root_layout_oneshot(unit)
+                        && observed.active == "active"
+                        && observed.substate == "exited"
+                    {
+                        ObservedCgroup::capture(&observed.cgroup, &unit.unit)
+                            .and_then(|c| c.assert_empty())
+                            .map_err(|_| bus_invalid())?;
+                    }
+                    frames.push(observed.frame(&unit.unit));
+                }
+                frames.sort_by(|a, b| a["unit"].as_str().cmp(&b["unit"].as_str()));
+                if manager::owner(connection, deadline).await? != owner {
+                    return Err(bus_invalid());
+                }
+                manager::principal(connection, &owner, deadline).await?;
+                Ok((owner, json!(frames)))
+            })?;
+            let record_path = directory.path.join(super::original::NAME);
+            let record = match fs::symlink_metadata(&record_path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    super::original::OriginalManagerV2::capture(
+                        profile,
+                        operation,
+                        directory,
+                        boot.identity(),
+                        &owner,
+                        frames,
+                    )?
+                }
+                Ok(_) => super::original::OriginalManagerV2::recover_unpinned(
+                    profile,
+                    operation,
+                    directory,
+                    boot.identity(),
+                    &owner,
+                    &frames,
+                )?,
+                Err(_) => return Err(invalid()),
+            };
+            journal.record_original_manager(&record.file_sha256()?, now)?;
+            record
+        };
+        original = Some(record);
+        Ok(())
+    })?;
     let (manager_owner, cgroups) = exchange(deadline, async |connection| {
         let owner = manager::owner(connection, deadline).await?;
         manager::principal(connection, &owner, deadline).await?;
         // Persistent conditions must be loaded before any writer is stopped.
-        manager::call(
+        reload_and_subscribe(connection, &owner, deadline).await?;
+        let observed = stop_source_units(
             connection,
             &owner,
-            MANAGER_PATH,
-            MANAGER_INTERFACE,
-            "Reload",
-            &(),
+            profile.source_units(),
+            &barrier.marker_path(),
             deadline,
         )
         .await?;
-        manager::call(
-            connection,
-            &owner,
-            MANAGER_PATH,
-            MANAGER_INTERFACE,
-            "Subscribe",
-            &(),
-            deadline,
-        )
-        .await?;
-        let mut observed = Vec::new();
-        for unit in profile.source_units() {
-            let drop_in = PathBuf::from("/etc/systemd/system")
-                .join(format!("{}.d", unit.unit))
-                .join(DROP_IN_NAME);
-            let before = observe_unit(
-                connection,
-                &owner,
-                unit,
-                std::slice::from_ref(&drop_in),
-                Some(&barrier.marker_path()),
-                true,
-                deadline,
-            )
-            .await?;
-            let cgroup =
-                ObservedCgroup::capture(&before.cgroup, &unit.unit).map_err(|_| bus_invalid())?;
-            if !before.quiescent() {
-                job(connection, &owner, &unit.unit, "StopUnit", deadline).await?;
-            }
-            let after = observe_unit(
-                connection,
-                &owner,
-                unit,
-                std::slice::from_ref(&drop_in),
-                Some(&barrier.marker_path()),
-                true,
-                deadline,
-            )
-            .await?;
-            if !after.quiescent() || (!after.cgroup.is_empty() && after.cgroup != before.cgroup) {
-                return Err(bus_invalid());
-            }
-            cgroup.assert_empty().map_err(|_| bus_invalid())?;
-            observed.push((unit.unit.clone(), cgroup));
-        }
         if manager::owner(connection, deadline).await? != owner {
             return Err(bus_invalid());
         }
@@ -256,6 +536,7 @@ fn hold<'a>(
         manager_pidfd,
         cgroups,
         manager_owner,
+        original,
         operation: SchemaOperationIdentityV1 {
             runtime_root: operation.runtime_root.clone(),
             transition_id: operation.transition_id.clone(),
@@ -295,23 +576,30 @@ where
                     executor.tick().await;
                 }
             },
-            async {
-                let outcome = manager::bounded(deadline, operation(&connection)).await;
-                closed.shutdown();
-                let closing = manager::bounded(deadline, async {
-                    connection.close().await.map_err(|_| bus_invalid())
-                })
-                .await;
-                match outcome {
-                    Ok(value) => {
-                        closing?;
-                        Ok(value)
-                    }
-                    Err(error) => Err(error),
-                }
-            },
+            manager::bounded(deadline, operation(&connection)),
         )
         .await;
+        // Cancellation can drop a JobRemoved stream while zbus has queued its
+        // RemoveMatch task. Interrupt the bounded wire, then drive the same
+        // lexical executor until all such reader owners are destroyed. Cleanup
+        // can never extend the wire's original RPC deadline or actuate a unit.
+        closed.shutdown();
+        let cleanup_deadline = Instant::now() + Duration::from_secs(5);
+        let closing = manager::bounded(cleanup_deadline, async {
+            let close = connection.close().await.map_err(|_| bus_invalid());
+            while !executor.is_empty() {
+                executor.tick().await;
+            }
+            close
+        })
+        .await;
+        let outcome = match outcome {
+            Ok(value) => {
+                closing?;
+                Ok(value)
+            }
+            Err(cause) => Err(cause),
+        };
         drop(executor);
         outcome
     })
@@ -460,6 +748,66 @@ async fn job(
     if !matches!(method, "StopUnit" | "StartUnit") {
         return Err(bus_invalid());
     }
+    let mut signals = job_signals(connection, owner, unit, deadline).await?;
+    let outcome = async {
+        let response = manager::call(
+            connection,
+            owner,
+            MANAGER_PATH,
+            MANAGER_INTERFACE,
+            method,
+            &(unit, "replace"),
+            deadline,
+        )
+        .await?;
+        let selected: OwnedObjectPath = response.body().deserialize().map_err(|_| bus_invalid())?;
+        for _ in 0..256 {
+            let message = manager::bounded(deadline, async {
+                signals
+                    .next()
+                    .await
+                    .ok_or_else(bus_invalid)?
+                    .map_err(|_| bus_invalid())
+            })
+            .await?;
+            if message.header().sender().map(|v| v.as_str()) != Some(owner)
+                || message.data().len() > 65536
+                || !message.data().fds().is_empty()
+            {
+                return Err(bus_invalid());
+            }
+            let (_id, path, actual_unit, result): (u32, OwnedObjectPath, String, String) =
+                message.body().deserialize().map_err(|_| bus_invalid())?;
+            if actual_unit != unit {
+                return Err(bus_invalid());
+            }
+            if path == selected {
+                return if result == "done" {
+                    Ok(())
+                } else {
+                    Err(bus_invalid())
+                };
+            }
+        }
+        Err(bus_invalid())
+    }
+    .await;
+    // Take the rule before normal Drop can enqueue an unpolled task. The
+    // enclosing exchange also drains cancellation cleanup after wire shutdown.
+    manager::bounded(deadline, async {
+        signals.async_drop().await;
+        Ok(())
+    })
+    .await?;
+    outcome
+}
+
+async fn job_signals(
+    connection: &Connection,
+    owner: &str,
+    unit: &str,
+    deadline: Instant,
+) -> BusResult<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(owner)
@@ -473,52 +821,12 @@ async fn job(
         .arg(2, unit)
         .map_err(|_| bus_invalid())?
         .build();
-    let mut signals = manager::bounded(deadline, async {
+    manager::bounded(deadline, async {
         MessageStream::for_match_rule(rule, connection, Some(8))
             .await
             .map_err(|_| bus_invalid())
     })
-    .await?;
-    let response = manager::call(
-        connection,
-        owner,
-        MANAGER_PATH,
-        MANAGER_INTERFACE,
-        method,
-        &(unit, "replace"),
-        deadline,
-    )
-    .await?;
-    let selected: OwnedObjectPath = response.body().deserialize().map_err(|_| bus_invalid())?;
-    for _ in 0..256 {
-        let message = manager::bounded(deadline, async {
-            signals
-                .next()
-                .await
-                .ok_or_else(bus_invalid)?
-                .map_err(|_| bus_invalid())
-        })
-        .await?;
-        if message.header().sender().map(|v| v.as_str()) != Some(owner)
-            || message.data().len() > 65536
-            || !message.data().fds().is_empty()
-        {
-            return Err(bus_invalid());
-        }
-        let (_id, path, actual_unit, result): (u32, OwnedObjectPath, String, String) =
-            message.body().deserialize().map_err(|_| bus_invalid())?;
-        if actual_unit != unit {
-            return Err(bus_invalid());
-        }
-        if path == selected {
-            return if result == "done" {
-                Ok(())
-            } else {
-                Err(bus_invalid())
-            };
-        }
-    }
-    Err(bus_invalid())
+    .await
 }
 
 fn configured_principal_matches(
@@ -971,3 +1279,108 @@ fn switch_authority(
     directory.assert_current()?;
     held.assert_current()
 }
+
+#[cfg(test)]
+mod early_rollback_tests {
+    use super::*;
+    fn unit() -> SourceUnitV1 {
+        let pin = crate::sqlite_mutation_coordinator::hash_bytes(b"test-profile-only");
+        let file = |path: &str| super::super::installation::PinnedInstalledFileV1 {
+            path: PathBuf::from(path),
+            sha256: pin.clone(),
+        };
+        SourceUnitV1 {
+            unit: "autonomous-submission-handoff-layout-provision.service".into(),
+            fragment: file(
+                "/etc/systemd/system/autonomous-submission-handoff-layout-provision.service",
+            ),
+            drop_ins: vec![],
+            executable: file("/usr/bin/env"),
+            argv: [
+                "/usr/bin/env",
+                "-i",
+                "PATH=/usr/sbin:/usr/bin",
+                "/usr/libexec/hepta-paper/autonomous-submission-handoff-layout-provision",
+                "--runtime-root",
+                "/var/lib/hepta-paper/runtime",
+                "--receipt-path",
+                "/run/hepta-paper-handoff-layout/autonomous-submission-handoff-layout.receipt.json",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            working_directory: PathBuf::new(),
+            uid: 0,
+            gid: 982,
+            supplementary_gids: vec![0],
+            service_type: "oneshot".into(),
+            kill_mode: "control-group".into(),
+            input_files: vec![file(
+                "/usr/libexec/hepta-paper/autonomous-submission-handoff-layout-provision",
+            )],
+        }
+    }
+    #[test]
+    fn fixed_completed_root_oneshot_requires_exact_contract_and_zero_processes() {
+        let expected = unit();
+        assert!(super::super::installation::fixed_root_layout_oneshot(
+            &expected
+        ));
+        let mut observed = UnitObservation {
+            active: "active".into(),
+            substate: "exited".into(),
+            main_pid: 0,
+            control_pid: 0,
+            job: 0,
+            cgroup: String::new(),
+        };
+        assert!(observed.quiescent_for(&expected));
+        assert!(!observed.quiescent());
+        for field in 0..3 {
+            observed.main_pid = 0;
+            observed.control_pid = 0;
+            observed.job = 0;
+            match field {
+                0 => observed.main_pid = 1,
+                1 => observed.control_pid = 1,
+                _ => observed.job = 1,
+            };
+            assert!(!observed.quiescent_for(&expected));
+        }
+        for change in 0..8 {
+            let mut bad = unit();
+            match change {
+                0 => bad.unit = "hepta-paper-state-authority.service".into(),
+                1 => bad.service_type = "simple".into(),
+                2 => bad.kill_mode = "process".into(),
+                3 => bad.argv[3] = "/usr/bin/sh".into(),
+                4 => bad.supplementary_gids.push(5),
+                5 => bad.gid = 0,
+                6 => bad.input_files.clear(),
+                _ => bad.working_directory = PathBuf::from("/tmp"),
+            };
+            assert!(!super::super::installation::fixed_root_layout_oneshot(&bad));
+        }
+    }
+    #[test]
+    fn synthetic_or_foreign_cgroups_cannot_prove_completed_root_oneshot() {
+        for path in [
+            "/",
+            "/tmp/fixture",
+            "/system.slice/foreign.service",
+            "/system.slice/../autonomous-submission-handoff-layout-provision.service",
+            "/system.slice/autonomous-submission-handoff-layout-provision.service/child",
+        ] {
+            assert!(
+                ObservedCgroup::capture(
+                    path,
+                    "autonomous-submission-handoff-layout-provision.service"
+                )
+                .is_err()
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod rollback_refence_tests;

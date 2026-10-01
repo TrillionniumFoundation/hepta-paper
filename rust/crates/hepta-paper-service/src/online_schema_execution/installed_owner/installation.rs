@@ -190,6 +190,36 @@ fn protected_ancestors(file_path: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// Only the installed layout provisioner has an existing root oneshot contract.
+/// This is a shape restriction, never a readiness or activation capability;
+/// the manager independently binds every command/input/principal and cgroup.
+pub(super) fn fixed_root_layout_oneshot(unit: &SourceUnitV1) -> bool {
+    unit.unit == "autonomous-submission-handoff-layout-provision.service"
+        && unit.uid == 0
+        && unit.gid != 0
+        && unit.service_type == "oneshot"
+        && unit.kill_mode == "control-group"
+        && unit.supplementary_gids == [0]
+        && unit.executable.path == Path::new("/usr/bin/env")
+        && unit.argv.len() == 8
+        && unit.argv[0] == "/usr/bin/env"
+        && unit.argv[1] == "-i"
+        && unit.argv[2] == "PATH=/usr/sbin:/usr/bin"
+        && unit.argv[3] == "/usr/libexec/hepta-paper/autonomous-submission-handoff-layout-provision"
+        && unit.argv[4] == "--runtime-root"
+        && Path::new(&unit.argv[5]).is_absolute()
+        && Path::new(&unit.argv[5])
+            .components()
+            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+        && unit.argv[6] == "--receipt-path"
+        && unit.argv[7]
+            == "/run/hepta-paper-handoff-layout/autonomous-submission-handoff-layout.receipt.json"
+        && unit.working_directory.as_os_str().is_empty()
+        && unit
+            .input_files
+            .iter()
+            .any(|p| p.path == Path::new(&unit.argv[3]))
+}
 fn unit_observations(
     unit: &SourceUnitV1,
     files: &mut Vec<Snapshot>,
@@ -204,10 +234,10 @@ fn unit_observations(
             .any(|v| v.is_empty() || v.len() > 16384 || v.contains('\0'))
         || unit.drop_ins.len() > 64
         || unit.input_files.len() > 512
-        || unit.uid == 0
+        || (unit.uid == 0 && !fixed_root_layout_oneshot(unit))
         || unit.gid == 0
         || unit.supplementary_gids.len() > 64
-        || unit.supplementary_gids.contains(&0)
+        || (unit.supplementary_gids.contains(&0) && !fixed_root_layout_oneshot(unit))
         || !unit.supplementary_gids.windows(2).all(|w| w[0] < w[1])
         || !matches!(
             unit.service_type.as_str(),
@@ -235,7 +265,13 @@ fn unit_observations(
         observed.clear_secret_bytes();
         files.push(observed);
     }
-    directories.push(Directory::observe(&unit.working_directory)?);
+    if fixed_root_layout_oneshot(unit) {
+        // systemd's empty WorkingDirectory is this fixed oneshot's actual
+        // contract; the command uses only the independently pinned runtime.
+        directories.push(Directory::observe(Path::new("/"))?);
+    } else {
+        directories.push(Directory::observe(&unit.working_directory)?);
+    }
     Ok(())
 }
 pub fn observe_installed_schema_profile_v1(
@@ -295,6 +331,9 @@ pub fn observe_installed_schema_profile_v1(
         .iter()
         .chain(std::iter::once(&profile.authority_restart.source_unit))
     {
+        if fixed_root_layout_oneshot(unit) && Path::new(&unit.argv[5]) != profile.runtime_root {
+            return Err(invalid());
+        }
         unit_observations(unit, &mut files, &mut directories)?;
     }
     let restart = &profile.authority_restart;

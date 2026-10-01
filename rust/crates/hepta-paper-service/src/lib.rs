@@ -67,6 +67,7 @@ mod production;
 pub mod qualification_stored_evidence;
 pub mod release_attest;
 pub mod release_integrity_key;
+pub mod release_replay;
 pub mod release_state;
 pub mod release_trust_gate;
 pub mod repository_assets;

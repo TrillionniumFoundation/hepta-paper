@@ -132,11 +132,16 @@ pub(super) fn parse(args: &[String]) -> Result<Arguments, String> {
     let action = values.get("action").map(String::as_str).unwrap_or("plan");
     if !matches!(
         action,
-        "plan" | "inspect-pristine" | "inspect-installed-profile" | "execute" | "recover"
+        "plan"
+            | "inspect-pristine"
+            | "inspect-installed-profile"
+            | "execute"
+            | "recover"
+            | "rollback"
     ) {
         return Err(invalid(&format!("action_invalid:{action}")));
     }
-    let mutating = matches!(action, "execute" | "recover");
+    let mutating = matches!(action, "execute" | "recover" | "rollback");
     if mutating {
         if !values.contains_key("execute") {
             return Err(invalid("execute_confirmation_required"));

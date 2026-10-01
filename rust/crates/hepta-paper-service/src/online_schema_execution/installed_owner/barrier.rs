@@ -134,9 +134,35 @@ pub(super) struct Barrier {
     drop_ins: Vec<(ProtectedDirectory, Snapshot)>,
 }
 impl Barrier {
-    pub(super) fn acquire(
+    pub(super) fn any_published(
         profile: &ObservedInstalledSchemaProfileV1,
         operation: &SchemaOperationIdentityV1,
+    ) -> Result<bool> {
+        profile.assert_current()?;
+        let mut paths = profile
+            .source_units()
+            .iter()
+            .map(|u| {
+                PathBuf::from("/etc/systemd/system")
+                    .join(format!("{}.d", u.unit))
+                    .join(DROP_IN_NAME)
+            })
+            .collect::<Vec<_>>();
+        paths.push(operation.barrier_root.join(MARKER));
+        for path in paths {
+            match fs::symlink_metadata(path) {
+                Ok(_) => return Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(_) => return Err(invalid()),
+            }
+        }
+        profile.assert_current()?;
+        Ok(false)
+    }
+    pub(super) fn acquire_with_preparation(
+        profile: &ObservedInstalledSchemaProfileV1,
+        operation: &SchemaOperationIdentityV1,
+        prepare: impl FnOnce(&Directory) -> Result<()>,
     ) -> Result<Self> {
         profile.assert_current()?;
         if operation.runtime_root != profile.runtime_root()
@@ -179,6 +205,11 @@ impl Barrier {
             .map_err(|_| error("autonomous_research_installed_schema_maintenance_locked"))?;
         let lock_identity = (metadata.dev(), metadata.ino());
         let selected = ProtectedDirectory::open_or_create(&operation.barrier_root, true)?;
+        let evidence = Directory::open_or_create(&selected.path.join("execution"), true)?;
+        // Capture original facts and durably pin them under this same global
+        // lock before publishing any persistent fence or stopping a writer.
+        prepare(&evidence)?;
+        selected.assert_current()?;
         let payload = serde_json::to_vec(&json!({"version":1,"kind":"InstalledSchemaMaintenanceBarrierV1",
             "runtimeRoot":operation.runtime_root,"transitionId":operation.transition_id,
             "planHash":operation.plan_hash,"profileSha256":operation.profile_sha256,
@@ -234,6 +265,45 @@ impl Barrier {
             file.assert_current()?;
         }
         Ok(())
+    }
+    /// The global Flock remains held by self throughout release/restart.
+    /// Every removed file was exact, original-absent and root-pinned. A failure
+    /// is followed by reinstate before the ordinary owner returns an error.
+    pub(super) fn release_for_early_rollback(&mut self) -> Result<()> {
+        self.assert_current()?;
+        for (directory, file) in &self.drop_ins {
+            directory.assert_current()?;
+            file.assert_current()?;
+            self.marker.assert_current()?;
+            nix::unistd::unlinkat(
+                directory.held.as_fd(),
+                Path::new(DROP_IN_NAME),
+                nix::unistd::UnlinkatFlags::NoRemoveDir,
+            )
+            .map_err(|_| invalid())?;
+            directory.held.sync_all().map_err(|_| invalid())?;
+        }
+        self.operation.assert_current()?;
+        self.marker.assert_current()?;
+        nix::unistd::unlinkat(
+            self.operation.held.as_fd(),
+            Path::new(MARKER),
+            nix::unistd::UnlinkatFlags::NoRemoveDir,
+        )
+        .map_err(|_| invalid())?;
+        self.operation.held.sync_all().map_err(|_| invalid())?;
+        self.operation.assert_current()?;
+        Ok(())
+    }
+    pub(super) fn reinstate(&mut self) -> Result<()> {
+        self.parent.assert_current()?;
+        self.operation.assert_current()?;
+        self.marker = publish_exact(&self.operation, MARKER, self.marker.bytes())?;
+        for (directory, file) in &mut self.drop_ins {
+            directory.assert_current()?;
+            *file = publish_exact(directory, DROP_IN_NAME, file.bytes())?;
+        }
+        self.assert_current()
     }
     pub(super) fn marker_path(&self) -> PathBuf {
         self.operation.path.join(MARKER)

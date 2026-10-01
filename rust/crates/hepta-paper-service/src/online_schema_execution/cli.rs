@@ -526,7 +526,7 @@ pub fn schema_transition_plan_cli_v1(
             "kind": "NativeSchemaTransitionPlanUsage",
             "mutation": "none",
             "usage": "hepta-paper-rust autonomous-online-schema-transition --action plan|inspect-pristine --runtime-root ABSOLUTE_PATH --authority-process-config ABSOLUTE_PATH --authority-process-config-sha256 sha256:HASH [--expected-previous-final-receipt-sha256 sha256:HASH] [--historical-source-authority-process-config ABSOLUTE_PATH --historical-source-authority-process-config-sha256 sha256:HASH] [--requested-lease-ms N] [--required-execution-window-ms N] [--expected-pre-rebind-pristine-runtime-state-hash sha256:HASH]",
-            "installedUsage":"hepta-paper-rust autonomous-online-schema-transition --action execute|recover --execute --runtime-root ABSOLUTE_PATH --authority-process-config ABSOLUTE_PATH --authority-process-config-sha256 sha256:HASH --transition-id sha256:HASH --expected-plan-hash sha256:HASH --planned-at ORIGINAL_PLAN_INSTANT --installed-maintenance-profile ABSOLUTE_PATH --installed-maintenance-profile-sha256 sha256:HASH [--expected-previous-final-receipt-sha256 sha256:HASH] [--expected-pre-rebind-pristine-runtime-state-hash sha256:HASH] [--requested-lease-ms N] [--required-execution-window-ms N] [--commit-safety-margin-ms N]",
+            "installedUsage":"hepta-paper-rust autonomous-online-schema-transition --action execute|recover|rollback --execute --runtime-root ABSOLUTE_PATH --authority-process-config ABSOLUTE_PATH --authority-process-config-sha256 sha256:HASH --transition-id sha256:HASH --expected-plan-hash sha256:HASH --planned-at ORIGINAL_PLAN_INSTANT --installed-maintenance-profile ABSOLUTE_PATH --installed-maintenance-profile-sha256 sha256:HASH [--expected-previous-final-receipt-sha256 sha256:HASH] [--expected-pre-rebind-pristine-runtime-state-hash sha256:HASH] [--requested-lease-ms N] [--required-execution-window-ms N] [--commit-safety-margin-ms N]",
             "profileInspectionUsage":"hepta-paper-rust autonomous-online-schema-transition --action inspect-installed-profile --runtime-root ABSOLUTE_PATH --authority-process-config ABSOLUTE_PATH --authority-process-config-sha256 sha256:HASH --installed-maintenance-profile ABSOLUTE_PATH --installed-maintenance-profile-sha256 sha256:HASH",
             "scope": "native_source_planning_and_separate_pinned_installed_maintenance",
             "executionAuthority": false
@@ -582,7 +582,7 @@ pub fn schema_transition_plan_cli_v1(
         previous = Some(now);
         Ok(now)
     };
-    if args.action == "recover" {
+    if matches!(args.action.as_str(), "recover" | "rollback") {
         return crate::online_schema_execution::installed_owner::execution::run(
             &args,
             &manifest,

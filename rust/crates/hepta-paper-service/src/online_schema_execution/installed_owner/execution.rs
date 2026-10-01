@@ -215,7 +215,7 @@ pub(in crate::online_schema_execution) fn run(
     historical_source: Option<&Authority>,
 ) -> Result<Value> {
     let profile = profile(args)?;
-    let recovering = args.action == "recover";
+    let recovering = matches!(args.action.as_str(), "recover" | "rollback");
     let (operation, mut journal, mut fresh_plan) = if recovering {
         let operation = SchemaOperationIdentityV1::from_pins(
             &profile,
@@ -249,12 +249,71 @@ pub(in crate::online_schema_execution) fn run(
         )?;
         (operation, journal, Some(plan))
     };
-    let held = if recovering {
-        systemd::recover_installed_schema_maintenance_v1(&profile, &operation)?
-    } else {
-        systemd::acquire_installed_schema_maintenance_v1(&profile, &operation)?
-    };
+    if journal.value()["rollbackState"] == "completed"
+        && !super::barrier::Barrier::any_published(&profile, &operation)?
+    {
+        if args.action == "execute" {
+            return Err(invalid());
+        }
+        return Ok(
+            json!({"version":2,"kind":"HeptaInstalledSchemaEarlyRollbackReportV2","transitionId":operation.transition_id,"planHash":operation.plan_hash,"scope":"before_bootstrap_and_reserve_dispatch_only","rollbackState":"completed","replayedEffects":false,"releaseAuthority":false,"submissionAuthority":false}),
+        );
+    }
+    let mut held =
+        systemd::hold_with_intent(&profile, &operation, &mut journal, clock.now_millis()?)?;
     held.assert_current()?;
+    let rolling_back = args.action == "rollback"
+        || (journal.value()["version"] == 2 && journal.value()["rollbackState"] != "not_selected");
+    if rolling_back {
+        journal.rollback_eligible()?;
+        held.assert_early_rollback_origin()?;
+        if journal.value()["rollbackState"] == "not_selected"
+            || journal.value()["rollbackState"] == "control_restore_pending"
+        {
+            // Rebuild the same independently pinned plan under the actual
+            // stopped-writer guard; any changed head/result/backup refuses.
+            let unchanged = selected_plan(args, manifest, writer, source, clock)?;
+            if unchanged.value() != &journal.value()["plan"] {
+                return Err(invalid());
+            }
+            held.assert_current()?;
+            journal.select_rollback(clock.now_millis()?)?;
+            control::restore_predecessor_control_v2(
+                &operation,
+                journal.value()["previousFinalReceiptFileSha256"].as_str(),
+                || {
+                    crate::online_schema_execution::cli::finalized_predecessor(
+                        &args.runtime,
+                        args.expected_previous_final.as_deref(),
+                        source,
+                        historical_source,
+                    )
+                },
+            )?;
+            held.assert_current()?;
+            journal.advance_rollback("writer_resume_pending", clock.now_millis()?)?;
+        }
+        let previously_completed = journal.value()["rollbackState"] == "completed";
+        if journal.value()["rollbackState"] != "writer_resume_pending" && !previously_completed {
+            return Err(invalid());
+        }
+        let physical = held.diagnostics();
+        held.rollback_writers()?;
+        let completion = if previously_completed {
+            journal.assert_current()
+        } else {
+            clock
+                .now_millis()
+                .and_then(|now| journal.advance_rollback("completed", now))
+        };
+        // Keep the same global lock through the final durable CAS. On a lost
+        // clock/CAS completion, physically Stop the possibly resumed writers;
+        // forward recovery never reapplies an old control image over results.
+        systemd::rollback_result(completion, || held.retain_rollback_fence())?;
+        return Ok(
+            json!({"version":2,"kind":"HeptaInstalledSchemaEarlyRollbackReportV2","transitionId":operation.transition_id,"planHash":operation.plan_hash,"scope":"before_bootstrap_and_reserve_dispatch_only","rollbackState":"completed","originalControlAndHistoryRetained":true,"retiredEmptyControlRetained":true,"physicalObservationBeforeResume":physical,"releaseAuthority":false,"submissionAuthority":false}),
+        );
+    }
     if recovering {
         control::recover_control_handoff_v1(
             &operation,
@@ -280,6 +339,7 @@ pub(in crate::online_schema_execution) fn run(
         // owner first preserves and converts its signed journal, then starts
         // the pinned native executor under the original source configuration.
         // Later recovery phases never move the authority back to that epoch.
+        journal.mark_dispatch("bootstrapDispatchState", clock.now_millis()?)?;
         held.bootstrap_source_authority()?;
         held.assert_current()?;
         journal.assert_current()?;
@@ -313,6 +373,7 @@ pub(in crate::online_schema_execution) fn run(
             };
             held.assert_current()?;
             journal.assert_current()?;
+            journal.mark_dispatch("reserveDispatchState", clock.now_millis()?)?;
             let token = reserve_exact_schema_maintenance_v1(
                 plan,
                 journal.value()["reserveRequest"].clone(),
@@ -464,6 +525,7 @@ pub(in crate::online_schema_execution) fn run(
             .ok_or_else(invalid)?
             .to_owned();
     }
+    let research_view;
     if journal.value()["plan"]["version"] == 2 {
         let mut prepared = resume_restart(args, manifest, writer, &journal, source)?;
         if phase == "target_restart_pending" {
@@ -501,6 +563,19 @@ pub(in crate::online_schema_execution) fn run(
                 journal: &journal,
             },
         )?;
+        let inventory = crate::state_database_inventory::observe_state_database_inventory_v1(
+            &args.runtime,
+            manifest,
+        )?;
+        research_view = super::research_view::publish(
+            &profile,
+            &operation,
+            &held,
+            &inventory,
+            writer,
+            &target,
+            &published.file_sha256,
+        )?;
         journal.advance(
             "completed",
             Some(("finalReceiptFileSha256", &published.file_sha256)),
@@ -534,6 +609,19 @@ pub(in crate::online_schema_execution) fn run(
                 journal: &journal,
             },
         )?;
+        let inventory = crate::state_database_inventory::observe_state_database_inventory_v1(
+            &args.runtime,
+            manifest,
+        )?;
+        research_view = super::research_view::publish(
+            &profile,
+            &operation,
+            &held,
+            &inventory,
+            writer,
+            source,
+            &published.file_sha256,
+        )?;
         journal.advance(
             "completed",
             Some(("finalReceiptFileSha256", &published.file_sha256)),
@@ -543,6 +631,6 @@ pub(in crate::online_schema_execution) fn run(
     held.assert_current()?;
     journal.assert_current()?;
     Ok(
-        json!({"version":1,"kind":"InstalledSchemaExecutionReportV1","status":"schema_transition_published_writers_remain_fenced","transitionId":operation.transition_id,"planHash":operation.plan_hash,"profileSha256":operation.profile_sha256,"executionJournal":journal.value(),"maintenance":held.diagnostics(),"productionActivation":false,"releaseAuthority":false,"submissionAuthority":false,"nodeRetirement":false}),
+        json!({"version":1,"kind":"InstalledSchemaExecutionReportV1","status":"schema_transition_published_writers_remain_fenced","transitionId":operation.transition_id,"planHash":operation.plan_hash,"profileSha256":operation.profile_sha256,"executionJournal":journal.value(),"researchReadonlyView":research_view,"maintenance":held.diagnostics(),"productionActivation":false,"releaseAuthority":false,"submissionAuthority":false,"nodeRetirement":false}),
     )
 }

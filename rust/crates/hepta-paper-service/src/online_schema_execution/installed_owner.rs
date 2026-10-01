@@ -8,6 +8,8 @@ mod control;
 pub(in crate::online_schema_execution) mod execution;
 pub mod installation;
 mod journal;
+mod original;
+mod research_view;
 pub(crate) mod systemd;
 
 use super::plan::ObservedSchemaTransitionPlanV1;

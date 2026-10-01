@@ -154,10 +154,26 @@ fn retained_archive_receipt(
     expected_metadata: &Value,
     pin: &str,
 ) -> Result<()> {
+    retained_control_receipt(
+        &directory.held,
+        &directory.path.join(ARCHIVE),
+        expected_metadata,
+        pin,
+    )
+}
+// The retained predecessor can belong to the service principal. Its exact
+// original directory identity and entire tree are independently pinned; root
+// ownership is required for our mementos, never substituted for that identity.
+fn retained_control_receipt(
+    parent: &fs::File,
+    path: &Path,
+    expected_metadata: &Value,
+    pin: &str,
+) -> Result<()> {
     let archive = fs::File::from(
         openat(
-            directory.held.as_fd(),
-            Path::new(ARCHIVE),
+            parent.as_fd(),
+            Path::new(path.file_name().ok_or_else(invalid)?),
             OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
             Mode::empty(),
         )
@@ -194,8 +210,7 @@ fn retained_archive_receipt(
         .read_to_end(&mut bytes)
         .map_err(|_| invalid())?;
     let after = file.metadata().map_err(|_| invalid())?;
-    let named = fs::symlink_metadata(directory.path.join(ARCHIVE).join("FINAL.json"))
-        .map_err(|_| invalid())?;
+    let named = fs::symlink_metadata(path.join("FINAL.json")).map_err(|_| invalid())?;
     let same = |current: &fs::Metadata| {
         current.is_file()
             && before.dev() == current.dev()
@@ -214,7 +229,7 @@ fn retained_archive_receipt(
         || hash_bytes(&bytes) != pin
         || !same(&after)
         || !same(&named)
-        || metadata(&directory.path.join(ARCHIVE))? != archive_metadata
+        || metadata(path)? != archive_metadata
     {
         return Err(invalid());
     }
@@ -419,3 +434,223 @@ pub(crate) fn recover_control_handoff_v1(
 
 #[cfg(test)]
 mod tests;
+
+const ROLLBACK_RECORD: &str = "ROLLBACK_CONTROL.v2.json";
+const RETIRED_EMPTY: &str = "rollback-empty-control";
+fn retained_json(directory: &Directory, name: &str) -> Result<(Snapshot, Value)> {
+    let mut file = fs::File::from(
+        openat(
+            directory.held.as_fd(),
+            name,
+            OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| invalid())?,
+    );
+    let m = file.metadata().map_err(|_| invalid())?;
+    if !m.is_file() || m.nlink() != 1 || m.uid() != 0 || m.mode() & 0o077 != 0 || m.len() > 8192 {
+        return Err(invalid());
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(8193)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid())?;
+    if bytes.len() as u64 != m.len() {
+        return Err(invalid());
+    }
+    let observed = Snapshot::load(
+        &directory.path.join(name),
+        &hash_bytes(&bytes),
+        8192,
+        &invalid().code,
+    )?;
+    if observed.file.metadata().map_err(|_| invalid())?.ino() != m.ino() {
+        return Err(invalid());
+    }
+    let value = observed.json(&invalid().code)?;
+    observed.assert_current()?;
+    directory.assert_current()?;
+    Ok((observed, value))
+}
+fn empty_control(path: &Path, expected: &Value) -> Result<()> {
+    if metadata(path)? != *expected {
+        return Err(invalid());
+    }
+    let m = fs::symlink_metadata(path).map_err(|_| invalid())?;
+    if m.uid() != 0
+        || m.mode() & 0o077 != 0
+        || fs::read_dir(path).map_err(|_| invalid())?.next().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+/// Only the pre-dispatch owner calls this inverse. All original signed history
+/// and the retired empty directory survive; no data or epoch is overwritten.
+/// A new kernel file or result makes the operation fail closed.
+pub(super) fn restore_predecessor_control_v2(
+    operation: &SchemaOperationIdentityV1,
+    previous_final_pin: Option<&str>,
+    original: impl FnOnce() -> std::result::Result<ControlGuard, String>,
+) -> Result<()> {
+    restore_control_impl(operation, previous_final_pin, original, &mut |_| Ok(()))
+}
+fn restore_control_impl(
+    operation: &SchemaOperationIdentityV1,
+    previous_final_pin: Option<&str>,
+    original: impl FnOnce() -> std::result::Result<ControlGuard, String>,
+    checkpoint: &mut dyn FnMut(&str) -> Result<()>,
+) -> Result<()> {
+    // Old null mementos do not distinguish an absent control tree from an
+    // existing empty tree. They cannot support a physical inverse proof.
+    let pin = previous_final_pin.ok_or_else(|| {
+        error("autonomous_research_installed_schema_early_rollback_original_absence_ambiguous")
+    })?;
+    let directory = Directory::open_or_create(&operation.barrier_root.join("execution"), false)?;
+    let live = operation
+        .runtime_root
+        .join("autonomous-research/online-schema-transition");
+    let inverse_path = directory.path.join(ROLLBACK_RECORD);
+    if matches!(fs::symlink_metadata(&inverse_path),Err(e) if e.kind()==std::io::ErrorKind::NotFound)
+    {
+        recover_control_handoff_v1(operation, Some(pin), original)?;
+        let (memento, value) = retained_json(&directory, RECORD)?;
+        if value["previousFinalReceiptFileSha256"] != pin
+            || !sha(&value["sourceControlTreeHash"])
+            || value["sourceControlMetadata"].is_null()
+        {
+            return Err(invalid());
+        }
+        retained_archive_receipt(&directory, &value["sourceControlMetadata"], pin)?;
+        if json!(control_tree_hash(&directory.path.join(ARCHIVE))?)
+            != value["sourceControlTreeHash"]
+        {
+            return Err(invalid());
+        }
+        let empty = metadata(&live)?;
+        empty_control(&live, &empty)?;
+        let inverse = json!({"version":2,"kind":"HeptaInstalledSchemaEarlyControlInverseV2","runtimeRoot":operation.runtime_root,"transitionId":operation.transition_id,"planHash":operation.plan_hash,"profileSha256":operation.profile_sha256,"predecessorMementoFileSha256":hash_bytes(memento.bytes()),"previousFinalReceiptFileSha256":pin,"sourceControlMetadata":value["sourceControlMetadata"],"sourceControlTreeHash":value["sourceControlTreeHash"],"retiredEmptyControlMetadata":empty});
+        memento.assert_current()?;
+        publish_receipt(&directory, ROLLBACK_RECORD, &inverse, None)?;
+    }
+    let (inverse_observed, inverse) = retained_json(&directory, ROLLBACK_RECORD)?;
+    let (memento_observed, memento) = retained_json(&directory, RECORD)?;
+    if !keys(
+        &inverse,
+        &[
+            "version",
+            "kind",
+            "runtimeRoot",
+            "transitionId",
+            "planHash",
+            "profileSha256",
+            "predecessorMementoFileSha256",
+            "previousFinalReceiptFileSha256",
+            "sourceControlMetadata",
+            "sourceControlTreeHash",
+            "retiredEmptyControlMetadata",
+        ],
+    ) || inverse["version"] != 2
+        || inverse["kind"] != "HeptaInstalledSchemaEarlyControlInverseV2"
+        || inverse["runtimeRoot"] != json!(operation.runtime_root)
+        || inverse["transitionId"] != operation.transition_id
+        || inverse["planHash"] != operation.plan_hash
+        || inverse["profileSha256"] != operation.profile_sha256
+        || inverse["previousFinalReceiptFileSha256"] != pin
+        || inverse["predecessorMementoFileSha256"] != hash_bytes(memento_observed.bytes())
+        || inverse["sourceControlMetadata"] != memento["sourceControlMetadata"]
+        || inverse["sourceControlTreeHash"] != memento["sourceControlTreeHash"]
+    {
+        return Err(error(
+            "autonomous_research_installed_schema_early_inverse_record_binding_changed",
+        ));
+    }
+    checkpoint("after_inverse_before_retire_empty")?;
+    let archive = directory.path.join(ARCHIVE);
+    let retired = directory.path.join(RETIRED_EMPTY);
+    let parent_path = live.parent().ok_or_else(invalid)?;
+    let parent = fs::File::from(
+        nix::fcntl::open(
+            parent_path,
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| invalid())?,
+    );
+    let parent_metadata = metadata(parent_path)?;
+    let assert_parent = || -> Result<()> {
+        let m = parent.metadata().map_err(|_| invalid())?;
+        if metadata(parent_path)? != parent_metadata
+            || json!({"device":m.dev(),"inode":m.ino(),"uid":m.uid(),"gid":m.gid(),"mode":m.mode()})
+                != parent_metadata
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    };
+    assert_parent()?;
+    if fs::symlink_metadata(&archive).is_ok() {
+        retained_archive_receipt(&directory, &inverse["sourceControlMetadata"], pin).map_err(
+            |_| error("autonomous_research_installed_schema_early_inverse_archive_receipt_changed"),
+        )?;
+        if json!(control_tree_hash(&archive)?) != inverse["sourceControlTreeHash"] {
+            return Err(error(
+                "autonomous_research_installed_schema_early_inverse_archive_tree_changed",
+            ));
+        }
+        if matches!(fs::symlink_metadata(&retired),Err(e) if e.kind()==std::io::ErrorKind::NotFound)
+        {
+            empty_control(&live, &inverse["retiredEmptyControlMetadata"]).map_err(|_|error("autonomous_research_installed_schema_early_inverse_current_control_not_selected_empty"))?;
+            inverse_observed.assert_current()?;
+            memento_observed.assert_current()?;
+            directory.assert_current()?;
+            assert_parent()?;
+            renameat2(
+                parent.as_fd(),
+                "online-schema-transition",
+                directory.held.as_fd(),
+                RETIRED_EMPTY,
+                RenameFlags::RENAME_NOREPLACE,
+            )
+            .map_err(|_| invalid())?;
+            parent.sync_all().map_err(|_| invalid())?;
+            directory.held.sync_all().map_err(|_| invalid())?;
+        }
+        empty_control(&retired, &inverse["retiredEmptyControlMetadata"]).map_err(|_| {
+            error("autonomous_research_installed_schema_early_inverse_retired_control_changed")
+        })?;
+        checkpoint("after_retire_before_restore")?;
+        inverse_observed.assert_current()?;
+        memento_observed.assert_current()?;
+        directory.assert_current()?;
+        assert_parent()?;
+        renameat2(
+            directory.held.as_fd(),
+            ARCHIVE,
+            parent.as_fd(),
+            "online-schema-transition",
+            RenameFlags::RENAME_NOREPLACE,
+        )
+        .map_err(|_| invalid())?;
+        directory.held.sync_all().map_err(|_| invalid())?;
+        parent.sync_all().map_err(|_| invalid())?;
+    }
+    checkpoint("after_restore_before_verify")?;
+    empty_control(&retired, &inverse["retiredEmptyControlMetadata"])?;
+    if metadata(&live)? != inverse["sourceControlMetadata"]
+        || json!(control_tree_hash(&live)?) != inverse["sourceControlTreeHash"]
+        || fs::symlink_metadata(&archive).is_ok()
+    {
+        return Err(error(
+            "autonomous_research_installed_schema_early_inverse_restored_tree_changed",
+        ));
+    }
+    retained_control_receipt(&parent, &live, &inverse["sourceControlMetadata"], pin)?;
+    inverse_observed.assert_current()?;
+    memento_observed.assert_current()?;
+    assert_parent()?;
+    directory.assert_current()?;
+    checkpoint("after_restored_control")?;
+    Ok(())
+}

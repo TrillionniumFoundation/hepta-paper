@@ -12,7 +12,10 @@ use serde_json::{Value, json};
 use std::{
     fs::{self, File},
     io::Read,
-    os::{fd::AsFd, unix::fs::MetadataExt},
+    os::{
+        fd::{AsFd, AsRawFd},
+        unix::fs::MetadataExt,
+    },
     path::{Component, Path, PathBuf},
 };
 
@@ -141,28 +144,46 @@ impl ObservedCgroup {
                 return Err(invalid());
             }
         }
+        let removed = self.original_removed()?;
         match fs::symlink_metadata(&self.path) {
             Ok(named)
-                if named.is_dir()
+                if !removed
+                    && named.is_dir()
                     && !named.is_symlink()
                     && Some((named.dev(), named.ino())) == self.identity =>
             {
                 Ok(())
             }
             Err(e)
-                if e.kind() == std::io::ErrorKind::NotFound
-                    && self
-                        .held
-                        .as_ref()
-                        .map(|f| f.metadata().map(|m| m.nlink() == 0))
-                        .transpose()
-                        .map_err(|_| invalid())?
-                        .unwrap_or(true) =>
+                if e.kind() == std::io::ErrorKind::NotFound && (self.held.is_none() || removed) =>
             {
                 Ok(())
             }
             _ => Err(invalid()),
         }
+    }
+    fn original_removed(&self) -> Result<bool> {
+        let Some(held) = &self.held else {
+            return Ok(false);
+        };
+        actual(held)?;
+        if Some(inode(held)?) != self.identity {
+            return Err(invalid());
+        }
+        let link =
+            fs::read_link(format!("/proc/self/fd/{}", held.as_raw_fd())).map_err(|_| invalid())?;
+        if link == self.path {
+            return Ok(false);
+        }
+        let mut deleted = self.path.as_os_str().to_os_string();
+        deleted.push(" (deleted)");
+        if link.as_os_str() != deleted {
+            return Err(invalid());
+        }
+        // kernfs may retain nlink=2 after rmdir. The kernel's exact deleted
+        // original-fd path, original inode and cgroup2 namespace are checked;
+        // assert_namespace_current separately refuses any replacement inode.
+        Ok(true)
     }
     pub(super) fn assert_empty(&self) -> Result<()> {
         self.assert_namespace_current()?;
@@ -170,7 +191,7 @@ impl ObservedCgroup {
             return Ok(());
         };
         // A removed original kernfs inode cannot be replaced by a fresh group.
-        if held.metadata().map_err(|_| invalid())?.nlink() == 0 {
+        if self.original_removed()? {
             return self.assert_namespace_current();
         }
         let mut events = File::from(
@@ -196,7 +217,7 @@ impl ObservedCgroup {
     pub(super) fn diagnostics(&self) -> Value {
         json!({"path":self.path,"identity":self.identity,"initiallyAbsent":self.held.is_none(),
             "filesystem":"actual-cgroup-v2","recursivePopulationEmpty":true,
-            "removedOriginalInode":self.held.as_ref().is_some_and(|f|f.metadata().is_ok_and(|m| m.nlink() == 0))})
+            "removedOriginalInode":self.held.is_some() && self.assert_namespace_current().is_ok() && self.original_removed().is_ok_and(|removed| removed)})
     }
 }
 fn empty_events(bytes: &[u8]) -> Result<bool> {

@@ -2,6 +2,8 @@
 //! Source and tool observations bind before/after bytes; they are cooperative
 //! consistency checks, not an immutable snapshot or hostile-UID containment.
 use super::{FullSuiteVerificationOptions, MAX_WALK_ENTRIES, digest, read_regular};
+use crate::operational_status::OperationalStatusError;
+use crate::release_attest::source_capture::git_binding::{self, GitTreeObservationV1};
 use hepta_codex_runtime::{
     BoundedProcessRequestV1, BoundedProcessResultV1, EnvironmentPolicyV1, ProcessLimitsV1,
     ProcessTerminationReason, RestrictedEnvironmentV1,
@@ -15,7 +17,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
@@ -106,6 +108,7 @@ fn tool_hash(path: &Path) -> Result<String, String> {
 
 struct Owner<'a> {
     root: PathBuf,
+    git: PathBuf,
     environment: RestrictedEnvironmentV1,
     cancelled: &'a AtomicBool,
     deadline: Instant,
@@ -116,9 +119,26 @@ impl Owner<'_> {
         if self.cancelled.load(Ordering::Acquire) {
             return Err(error("cancelled"));
         }
+        // Repository config may name an executable fsmonitor. Fixed Git queries
+        // must not turn that config into another command or credential helper.
+        let git_prefix: &[&str] = if path == self.git {
+            &[
+                "--no-replace-objects",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "credential.helper=",
+            ]
+        } else {
+            &[]
+        };
         Ok(BoundedProcessRequestV1 {
             executable: path.into(),
-            arguments: arguments.iter().map(OsString::from).collect(),
+            arguments: git_prefix
+                .iter()
+                .chain(arguments.iter())
+                .map(OsString::from)
+                .collect(),
             working_directory: self.root.clone(),
             environment: self.environment.clone(),
             stdin: None,
@@ -134,7 +154,7 @@ impl Owner<'_> {
             timeout_ms: remaining,
             termination_grace_ms: 100,
             cleanup_timeout_ms: 2_000,
-            maximum_stdout_bytes: 32 * 1024 * 1024,
+            maximum_stdout_bytes: 64 * 1024 * 1024,
             maximum_stderr_bytes: 16 * 1024 * 1024,
             maximum_tail_bytes: 64 * 1024,
             ..ProcessLimitsV1::default()
@@ -194,46 +214,87 @@ fn passed(result: &BoundedProcessResultV1) -> bool {
         && result.process_group_cleanup_verified
 }
 
-#[derive(Eq, PartialEq)]
+// Reuse the same fixed Git-tree contract as release source capture. The
+// development owner keeps its own tool identity, environment, timeout and
+// cancellation; this adapter grants no release or runtime capability.
+struct DevelopmentTreeObservation<'a, 'b> {
+    owner: &'a Owner<'b>,
+    git: &'a Path,
+    head: &'a str,
+    tree: &'a str,
+    bytes: u64,
+}
+impl GitTreeObservationV1 for DevelopmentTreeObservation<'_, '_> {
+    fn workspace_root(&self) -> &Path {
+        &self.owner.root
+    }
+    fn expected_commit(&self) -> &str {
+        self.head
+    }
+    fn expected_tree(&self) -> &str {
+        self.tree
+    }
+    fn query(
+        &self,
+        root: &Path,
+        args: &[&str],
+        stdin: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>, OperationalStatusError> {
+        if root != self.owner.root {
+            return Err(OperationalStatusError(error("source_entry_not_supported")));
+        }
+        self.owner
+            .capture_with_stdin(self.git, args, stdin)
+            .map_err(OperationalStatusError)
+    }
+    fn consume(&mut self, bytes: usize) -> Result<(), OperationalStatusError> {
+        self.bytes = self.bytes.saturating_add(bytes as u64);
+        if self.bytes > MAX_SOURCE_BYTES {
+            Err(OperationalStatusError(error("source_inventory_too_large")))
+        } else {
+            Ok(())
+        }
+    }
+}
+fn source_binding_error(failure: OperationalStatusError) -> String {
+    let code = failure.0;
+    if code.starts_with("full_suite_verification_") {
+        return code;
+    }
+    let suffix = code
+        .strip_prefix("release_attestation_source_")
+        .unwrap_or(&code);
+    error(match suffix {
+        "worktree_redirection" => "source_root_mismatch",
+        "index_ignore_flags_forbidden" => "source_hidden_index_flags",
+        "tree_index_mismatch" => "source_index_tree_mismatch",
+        "tracked_mode_mismatch" => "source_mode_mismatch",
+        "tracked_bytes_mismatch" => "source_blob_mismatch",
+        _ => suffix,
+    })
+}
+
 struct Source {
     head: String,
     tree: String,
     hash: String,
     count: usize,
+    gitlink_references: Vec<git_binding::GitlinkReference>,
 }
 impl Source {
+    fn assert_current(&self) -> Result<(), String> {
+        for reference in &self.gitlink_references {
+            reference.assert_current().map_err(source_binding_error)?;
+        }
+        Ok(())
+    }
+    fn matches(&self, other: &Self) -> bool {
+        self.head == other.head
+            && self.tree == other.tree
+            && self.hash == other.hash
+            && self.count == other.count
+    }
     fn capture(owner: &Owner<'_>, git: &Path) -> Result<Self, String> {
-        let top = owner.capture(git, &["rev-parse", "--show-toplevel"])?;
-        let top = std::str::from_utf8(&top)
-            .map_err(|_| error("source_root_invalid"))?
-            .trim_end_matches('\n');
-        if fs::canonicalize(top).map_err(|_| error("source_root_invalid"))? != owner.root {
-            return Err(error("source_root_mismatch"));
-        }
-        let flags = owner.capture(git, &["ls-files", "--cached", "-v", "-z"])?;
-        if flags
-            .split(|b| *b == 0)
-            .filter(|v| !v.is_empty())
-            .any(|v| !v.starts_with(b"H "))
-        {
-            return Err(error("source_hidden_index_flags"));
-        }
-        if !owner
-            .capture(
-                git,
-                &[
-                    "-c",
-                    "core.fsmonitor=false",
-                    "status",
-                    "--porcelain=v1",
-                    "--untracked-files=normal",
-                    "--ignore-submodules=none",
-                ],
-            )?
-            .is_empty()
-        {
-            return Err(error("source_not_clean"));
-        }
         let oid = |name| -> Result<String, String> {
             let bytes = owner.capture(git, &["rev-parse", "--verify", name])?;
             let value = std::str::from_utf8(&bytes)
@@ -250,122 +311,88 @@ impl Source {
         };
         let head = oid("HEAD^{commit}")?;
         let tree = oid("HEAD^{tree}")?;
-        let tree_entries = owner.capture(git, &["ls-tree", "-r", "--full-tree", "-z", "HEAD"])?;
-        let mut expected_entries = BTreeMap::new();
-        for entry in tree_entries.split(|b| *b == 0).filter(|v| !v.is_empty()) {
-            let separator = entry
-                .iter()
-                .position(|b| *b == b'\t')
-                .ok_or_else(|| error("source_inventory_invalid"))?;
-            let fields: Vec<_> = entry[..separator].split(|b| *b == b' ').collect();
-            if fields.len() != 3 || fields[1] != b"blob" {
-                return Err(error("source_entry_not_supported"));
-            }
-            if expected_entries
-                .insert(
-                    entry[separator + 1..].to_vec(),
-                    (fields[0].to_vec(), fields[2].to_vec()),
-                )
-                .is_some()
-                || expected_entries.len() > MAX_WALK_ENTRIES
-            {
-                return Err(error("source_inventory_invalid"));
-            }
+        let mut observation = DevelopmentTreeObservation {
+            owner,
+            git,
+            head: &head,
+            tree: &tree,
+            bytes: 0,
+        };
+        let selected = git_binding::capture_tree(&observation).map_err(source_binding_error)?;
+        git_binding::assert_object_integrity(&observation).map_err(source_binding_error)?;
+        if !owner
+            .capture(
+                git,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=normal",
+                    "--ignore-submodules=none",
+                ],
+            )?
+            .is_empty()
+        {
+            return Err(error("source_not_clean"));
         }
-        let entries = owner.capture(git, &["ls-files", "--stage", "-z"])?;
         let mut hasher = Sha256::new();
-        let mut total = 0u64;
-        let mut count = 0;
-        let mut hash_input = Vec::new();
-        let mut expected_blobs = Vec::new();
-        for entry in entries.split(|b| *b == 0).filter(|b| !b.is_empty()) {
-            count += 1;
-            if count > MAX_WALK_ENTRIES {
-                return Err(error("source_inventory_too_large"));
-            }
+        let mut actual = BTreeMap::new();
+        let mut gitlink_references = Vec::new();
+        for (name, entry) in &selected {
             if owner.cancelled.load(Ordering::Acquire) {
                 return Err(error("cancelled"));
             }
-            let separator = entry
-                .iter()
-                .position(|b| *b == b'\t')
-                .ok_or_else(|| error("source_inventory_invalid"))?;
-            let (header, tail) = entry.split_at(separator);
-            let relative = &tail[1..];
-            let fields: Vec<_> = header.split(|b| *b == b' ').collect();
-            let expected = expected_entries
-                .remove(relative)
-                .ok_or_else(|| error("source_index_tree_mismatch"))?;
-            if fields.len() != 3
-                || fields[2] != b"0"
-                || fields[0] != expected.0
-                || fields[1] != expected.1
-                || !matches!(fields[0], b"100644" | b"100755")
+            if selected.len() > MAX_WALK_ENTRIES
+                || !matches!(entry.mode, 0o100644 | 0o100755 | 0o160000)
             {
-                return Err(error("source_index_tree_mismatch"));
+                return Err(error("source_entry_not_supported"));
             }
-            let name = std::str::from_utf8(relative).map_err(|_| error("source_path_invalid"))?;
-            let relative = Path::new(name);
-            if relative
-                .components()
-                .any(|c| !matches!(c, Component::Normal(_)))
-            {
-                return Err(error("source_path_invalid"));
+            if entry.mode == 0o160000 {
+                gitlink_references.push(
+                    git_binding::GitlinkReference::capture(&owner.root, name, entry)
+                        .map_err(source_binding_error)?,
+                );
+                hasher.update(format!("{:06o} {} 0\t{}", entry.mode, entry.oid, name));
+                hasher.update([0]);
+                hasher.update(git_binding::GITLINK_REFERENCE_PROFILE);
+                hasher.update([0]);
+                actual.insert(name.clone(), (entry.mode, None));
+                continue;
             }
-            hasher.update(entry);
-            hasher.update([0]);
-            let path = owner.root.join(relative);
+            let path = owner.root.join(name);
             let metadata = fs::symlink_metadata(&path).map_err(|_| error("source_unreadable"))?;
-            if !metadata.is_file() || (metadata.mode() & 0o111 != 0) != (fields[0] == b"100755") {
+            if !metadata.is_file() || (metadata.mode() & 0o111 != 0) != (entry.mode == 0o100755) {
                 return Err(error("source_mode_mismatch"));
             }
             let bytes = read_regular(&path)?;
-            total += bytes.len() as u64;
-            if total > MAX_SOURCE_BYTES {
-                return Err(error("source_inventory_too_large"));
-            }
-            hasher.update(digest(&bytes));
+            observation
+                .consume(bytes.len())
+                .map_err(source_binding_error)?;
+            let payload_hash = digest(&bytes);
+            hasher.update(format!("{:06o} {} 0\t{}", entry.mode, entry.oid, name));
             hasher.update([0]);
-            // A fixed no-filter Git query hashes the actual regular files in
-            // one bounded batch, independently of the status/stat cache.
-            let quoted = serde_json::to_string(name).map_err(|_| error("source_path_invalid"))?;
-            hash_input.extend_from_slice(quoted.as_bytes());
-            hash_input.push(b'\n');
-            if hash_input.len() > 8 * 1024 * 1024 {
-                return Err(error("source_inventory_too_large"));
-            }
-            expected_blobs.push(fields[1].to_vec());
+            hasher.update(&payload_hash);
+            hasher.update([0]);
+            actual.insert(name.clone(), (entry.mode, Some(payload_hash)));
         }
-        if !expected_entries.is_empty() {
-            return Err(error("source_index_tree_mismatch"));
-        }
-        let actual_blobs = owner.capture_with_stdin(
-            git,
-            &["hash-object", "--no-filters", "--stdin-paths"],
-            Some(hash_input),
-        )?;
-        let actual_blobs: Vec<_> = actual_blobs
-            .split(|b| *b == b'\n')
-            .filter(|v| !v.is_empty())
-            .collect();
-        if actual_blobs.len() != expected_blobs.len()
-            || actual_blobs
-                .iter()
-                .zip(&expected_blobs)
-                .any(|(a, b)| *a != b)
-        {
-            return Err(error("source_blob_mismatch"));
-        }
-        Ok(Self {
+        git_binding::assert_blob_binding(&mut observation, &selected, &actual)
+            .map_err(source_binding_error)?;
+        git_binding::assert_object_integrity(&observation).map_err(source_binding_error)?;
+        let count = selected.len();
+        let source = Self {
             head,
             tree,
             hash: format!("sha256:{:x}", hasher.finalize()),
             count,
-        })
+            gitlink_references,
+        };
+        source.assert_current()?;
+        Ok(source)
     }
     fn value(&self) -> Value {
         json!({"head": self.head, "tree": self.tree, "trackedSourceHash": self.hash, "trackedEntryCount": self.count,
-            "observationScope": "clean-source-and-byte-inventory-before-and-after"})
+            "observationScope": "clean-source-and-byte-inventory-before-and-after",
+            "gitlinkReferenceProfile":git_binding::GITLINK_REFERENCE_PROFILE,
+            "gitlinkReferences":self.gitlink_references.iter().map(git_binding::GitlinkReference::value).collect::<Vec<_>>()})
     }
 }
 
@@ -449,6 +476,7 @@ pub fn execute_full_suite_verification_v1(
             "GIT_CONFIG_GLOBAL",
             "GIT_OPTIONAL_LOCKS",
             "GIT_NO_REPLACE_OBJECTS",
+            "GIT_NO_LAZY_FETCH",
         ],
         ["PATH", "LC_ALL"],
     )
@@ -466,11 +494,13 @@ pub fn execute_full_suite_verification_v1(
                 ("GIT_CONFIG_GLOBAL".into(), "/dev/null".into()),
                 ("GIT_OPTIONAL_LOCKS".into(), "0".into()),
                 ("GIT_NO_REPLACE_OBJECTS".into(), "1".into()),
+                ("GIT_NO_LAZY_FETCH".into(), "1".into()),
             ]),
         )
         .map_err(|_| error("environment_invalid"))?;
     let owner = Owner {
         root: root.clone(),
+        git: git.clone(),
         environment,
         cancelled,
         deadline: Instant::now(),
@@ -623,9 +653,11 @@ pub fn execute_full_suite_verification_v1(
             return Err(error("npm_cli_changed"));
         }
     }
-    let after = Source::capture(&owner, &git);
+    let after = before
+        .assert_current()
+        .and_then(|()| Source::capture(&owner, &git));
     let (source_current, post_observation_error) = match &after {
-        Ok(after) if &before == after => (true, None),
+        Ok(after) if before.matches(after) => (true, None),
         Ok(_) => (false, Some(error("source_changed"))),
         Err(error) => (false, Some(error.clone())),
     };

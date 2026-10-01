@@ -158,6 +158,8 @@ pub(super) fn run_definition(
     if options.help
         || options.launch_mode != "local-run"
         || options.require_full_ready
+        || (campaign_request.is_none()
+            && (options.maximum_cost_microusd.is_some() || options.maximum_wall_ms.is_some()))
         || (options.research_qualification_request.is_some()
             && !matches!(options.action.as_str(), "launch" | "converge"))
     {

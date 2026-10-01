@@ -103,10 +103,14 @@ use hepta_paper_service::{
     release_replay::{
         ReleaseAttestationMeasuredPolicyReplayRequestV8,
         ReleaseAttestationNativeAstPolicyReplayRequestV9,
+        ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12,
+        ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13,
         ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
         ReleaseAttestationPolicyReplayRequestV4, ReleaseAttestationReplayRequestV3,
         inspect_release_attestation_measured_policy_replay_with_cancellation_v8,
         inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9,
+        inspect_release_attestation_native_command_disposition_policy_replay_with_cancellation_v12,
+        inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13,
         inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10,
         inspect_release_attestation_policy_replay_with_cancellation_v4,
         inspect_release_attestation_replay_with_cancellation_v3,
@@ -710,7 +714,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string(receipt.receipt())?);
         }
         Some(CommandV1::InspectDb) if args.len() == 2 => {
-            let store = hepta_readonly_store::ReadOnlyStoreV1::open(PathBuf::from(&args[1]))?;
+            let store = hepta_readonly_store::ReadOnlyStoreV1::open_known_installed_v1(
+                PathBuf::from(&args[1]),
+            )?;
             println!(
                 "{}",
                 serde_json::to_string(&store.node_logical_snapshot()?)?
@@ -730,7 +736,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 Some(path) => PathBuf::from(path),
                 None => default_store_integrity_database_v1()?,
             };
-            let store = hepta_readonly_store::ReadOnlyStoreV1::open(database)?;
+            let store = hepta_readonly_store::ReadOnlyStoreV1::open_known_installed_v1(database)?;
             let report = store.node_logical_integrity_report()?;
             println!("{}", serde_json::to_string(&report)?);
             if report.status != "sqlite_logical_integrity_verified" {
@@ -1209,7 +1215,19 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some(CommandV1::ReleaseAttest) if args.len() == 2 => {
             let bytes = read_bounded(&args[1])?;
             let discriminator: serde_json::Value = serde_json::from_slice(&bytes)?;
-            let report = if discriminator["version"] == 10 {
+            let report = if discriminator["version"] == 13 {
+                let request: ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13(request,&cancelled)?
+            } else if discriminator["version"] == 12 {
+                let request: ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_native_command_disposition_policy_replay_with_cancellation_v12(
+                    request, &cancelled,
+                )?
+            } else if discriminator["version"] == 10 {
                 let request: ReleaseAttestationNativeRetirementPolicyReplayRequestV10 =
                     serde_json::from_slice(&bytes)?;
                 let cancelled = command_cancellation_flag()?;

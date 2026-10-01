@@ -14,6 +14,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+mod budgets;
 mod campaign;
 mod local;
 pub use campaign::{AutonomousResearchCampaignRequestV1, AutonomousResearchRoleV1};
@@ -23,7 +24,8 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
   "kind": "AutonomousResearchCampaignUsage",
   "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
   "defaultLaunchMode": "local-run",
-  "campaignUsage": "--paper-id ID --runtime-root ABSOLUTE_PRIVATE_ROOT [--objective TEXT] [--revision-rounds N] --action prepare|launch|status|converge|pause|resume|cancel; fixed autonomous-research-request.v1.json supplies broker policy and bounded resources",
+  "campaignUsage": "--paper-id ID --runtime-root ABSOLUTE_PRIVATE_ROOT [--objective TEXT] [--revision-rounds N] [--max-cost-usd USD] [--max-wall-ms MS] --action prepare|launch|status|converge|pause|resume|cancel; fixed autonomous-research-request.v1.json supplies broker policy and bounded resources",
+  "budgetBoundary": "whole microUSD and milliseconds only; Node local golden normalization is narrowed by the configured ceiling, retained in the first CAS request and restored without repeated flags; a different persisted budget requires a separate authorized amendment",
   "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--research-qualification-request ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
   "persistedWorkflowUsage": "--campaign-id ID --workflow-root ABSOLUTE_STATE --definition-hash SHA256 --action launch|status|converge|pause|resume|cancel|amend [--research-qualification-request ABSOLUTE_JSON] [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
   "safety": {
@@ -46,6 +48,8 @@ pub struct AutonomousResearchOptions {
     pub runtime_root: Option<PathBuf>,
     pub objective: Option<String>,
     pub revision_rounds: Option<usize>,
+    pub maximum_cost_microusd: Option<u64>,
+    pub maximum_wall_ms: Option<u64>,
     pub workflow_file: Option<PathBuf>,
     pub workflow_root: Option<PathBuf>,
     pub definition_hash: Option<Sha256Digest>,
@@ -78,6 +82,8 @@ pub fn parse_autonomous_research_arguments(
     let mut runtime_root = None;
     let mut objective = None;
     let mut revision_rounds = None;
+    let mut maximum_cost_text = None;
+    let mut maximum_wall_text = None;
     let mut workflow_file = None;
     let mut workflow_root = None;
     let mut definition_hash = None;
@@ -110,6 +116,12 @@ pub fn parse_autonomous_research_arguments(
                         .parse::<usize>()
                         .map_err(|_| "invalid_autonomous_research_revision_rounds".to_owned())?,
                 )
+            }
+            "--max-cost-usd" => {
+                maximum_cost_text = Some(value(args, &mut index, "max_cost_usd")?);
+            }
+            "--max-wall-ms" => {
+                maximum_wall_text = Some(value(args, &mut index, "max_wall_ms")?);
             }
             "--workflow-file" => {
                 workflow_file = Some(PathBuf::from(value(args, &mut index, "workflow_file")?))
@@ -164,6 +176,8 @@ pub fn parse_autonomous_research_arguments(
             runtime_root,
             objective,
             revision_rounds,
+            maximum_cost_microusd: None,
+            maximum_wall_ms: None,
             workflow_file,
             workflow_root,
             definition_hash,
@@ -175,6 +189,14 @@ pub fn parse_autonomous_research_arguments(
             help,
         });
     }
+    let maximum_cost_microusd = maximum_cost_text
+        .as_deref()
+        .map(budgets::cost_microusd)
+        .transpose()?;
+    let maximum_wall_ms = maximum_wall_text
+        .as_deref()
+        .map(budgets::wall_ms)
+        .transpose()?;
     if !matches!(
         action.as_str(),
         "prepare" | "launch" | "status" | "resume" | "converge" | "pause" | "cancel" | "amend"
@@ -191,7 +213,11 @@ pub fn parse_autonomous_research_arguments(
             "autonomous_research_launch_mode_invalid:{launch_mode}"
         ));
     }
-    if (runtime_root.is_some() || objective.is_some() || revision_rounds.is_some())
+    if (runtime_root.is_some()
+        || objective.is_some()
+        || revision_rounds.is_some()
+        || maximum_cost_microusd.is_some()
+        || maximum_wall_ms.is_some())
         && (workflow_root.is_some()
             || workflow_file.is_some()
             || amendment_file.is_some()
@@ -239,6 +265,8 @@ pub fn parse_autonomous_research_arguments(
         runtime_root,
         objective,
         revision_rounds,
+        maximum_cost_microusd,
+        maximum_wall_ms,
         workflow_file,
         workflow_root,
         definition_hash,

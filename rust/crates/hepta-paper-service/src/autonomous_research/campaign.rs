@@ -479,6 +479,7 @@ pub(super) fn run(
             }
             let configured_request: AutonomousResearchCampaignRequestV1 =
                 local::read_private_request(&runtime.join(REQUEST_FILE))?;
+            configured_request.validate()?;
             // Bind configured facts separately from the effective first-request
             // overrides; subsequent invocations need not repeat CLI overrides.
             let configured_request_hash = hash(&configured_request)?;
@@ -488,6 +489,12 @@ pub(super) fn run(
             }
             if let Some(rounds) = options.revision_rounds {
                 request.revision_rounds = rounds;
+            }
+            if let Some(budget) = options.maximum_cost_microusd {
+                request.budget_microusd = request.budget_microusd.min(budget);
+            }
+            if let Some(wall) = options.maximum_wall_ms {
+                request.maximum_wall_ms = request.maximum_wall_ms.min(wall);
             }
             let campaign = options
                 .campaign_id
@@ -530,6 +537,16 @@ pub(super) fn run(
                         || options.revision_rounds.is_some_and(|rounds| {
                             rounds != retained_request.revision_rounds
                         })
+                        || retained_request.budget_microusd > configured_request.budget_microusd
+                        || retained_request.maximum_wall_ms > configured_request.maximum_wall_ms
+                        || options.maximum_cost_microusd.is_some_and(|budget| {
+                            budget.min(configured_request.budget_microusd)
+                                != retained_request.budget_microusd
+                        })
+                        || options.maximum_wall_ms.is_some_and(|wall| {
+                            wall.min(configured_request.maximum_wall_ms)
+                                != retained_request.maximum_wall_ms
+                        })
                     {
                         return Err(WorkflowError::Definition);
                     }
@@ -539,6 +556,8 @@ pub(super) fn run(
                     request = configured_request;
                     request.objective = retained_request.objective.clone();
                     request.revision_rounds = retained_request.revision_rounds;
+                    request.budget_microusd = retained_request.budget_microusd;
+                    request.maximum_wall_ms = retained_request.maximum_wall_ms;
                     if hash(&request)? != hash(&retained_request)?
                         || hash(&request_subject(&campaign, &request, &configured_request_hash))?
                             != current.template.initial_state_hash
@@ -634,6 +653,8 @@ pub(super) fn run(
             report["requestHash"] = json!(hash(&request).ok());
             report["configuredRequestHash"] = json!(configured_request_hash);
             report["revisionRounds"] = json!(request.revision_rounds);
+            report["budgetMicrousd"] = json!(request.budget_microusd);
+            report["maximumWallMs"] = json!(request.maximum_wall_ms);
             report
         }
         Err(error) => {

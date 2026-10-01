@@ -47,5 +47,5 @@ oxc_parser = "=0.148.0"
 oxc_semantic = "=0.148.0"
 oxc_span = "=0.148.0"
 
-rustpython-parser = "=0.4.0"
-rustpython-ast = { version = "=0.4.0", features = ["visitor"] }
+rustpython-parser = { version = "=0.4.0", default-features = false, features = ["location", "num-bigint"] }
+rustpython-ast = { version = "=0.4.0", default-features = false, features = ["location", "num-bigint", "visitor"] }

@@ -277,8 +277,8 @@ A rejected independent review causes a bounded ordinary amendment and another
 author/reviewer pair; accepted review closes the campaign. Every role result
 still needs actual signed cost settlement and commit-bound ACK.
 
-First-use `--objective`, `--revision-rounds`, `--max-cost-usd` and
-`--max-wall-ms` select the effective business request. Cost/wall inputs use the
+First-use `--objective`, `--revision-rounds`, `--max-cost-usd`,
+`--max-wall-ms` and `--max-agent-calls` select the effective business request. Cost/wall inputs use the
 incumbent Number-string owner and local golden ceilings (100 USD and 7200000
 milliseconds), then narrow the valid configured request ceilings. The durable
 owner represents whole microUSD and milliseconds. Cost conversion admits only
@@ -296,6 +296,28 @@ accepted; a different effective budget, changed configuration, missing/corrupt
 initial request or expanded ceiling refuses. Equivalent Number spellings do not
 silently amend a budget. Status/replay preserve committed results; unknown
 provider results query the original issued request with no second dispatch.
+
+The actual ordinary Node CLI normalizes omitted/local-run mode to
+`golden-bootstrap` before selecting budgets. Agent calls default to 48, narrow
+finite values above 512 to 512, then narrow the configured version1 request's
+optional `maxAgentCalls` ceiling. A larger configured ceiling never raises the
+omitted-flag default. `production-run` has a separate default of 64 and no 512 ceiling; that mode
+still lacks native production authority and is not claimed by this local route.
+Whole agent calls use the existing Number-string owner; fractional values below
+512 remain an explicit protocol gap, zero cannot admit a broker dispatch.
+
+The first CAS request and `LocalWorkflowV1.providerCallBudget` bind the same
+version1 ceiling. Existing workflow locking and authenticated committed history
+count one call for each BrokerExecute step; the current frozen pending plan
+retains its slot through unavailable/unknown outcomes, TERM/KILL and cancellation.
+Query and commit-bound ACK retries revisit that slot without another reservation.
+Admission checks the cumulative ceiling before creating the next plan or payload;
+review-repair amendments keep the same limit and already committed prefix. This
+is distinct from snapshot resource limits, which describe selected-plan capacity.
+Old requests/workflows omit the optional fields and keep their original bytes and
+typed hashes; reopening does not silently install or expand a new ceiling.
+The conservative pre-external frozen-plan reservation is not general parity with
+Node's proven pre-external refund/requeue or arbitrary multi-attempt accounting.
 The ordinary source tests drive actual launch/converge, signed settlement,
 commit-bound ACK and held-child TERM/KILL recovery through the existing owners.
 Their bounded local protocol peers are not independently authenticated installed

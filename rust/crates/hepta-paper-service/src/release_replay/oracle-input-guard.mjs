@@ -1,6 +1,6 @@
 // Shared byte/depth/node/schema bounds for the two fixed oracle programs.
 import replayInputFs from 'node:fs';
-function readBoundedReplayInput(family) {
+export function readBoundedReplayInput(family) {
   const maximumBytes = 4 * 1024 * 1024;
   const chunks = [];
   let observed = 0;

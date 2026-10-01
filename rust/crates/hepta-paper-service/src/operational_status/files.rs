@@ -53,6 +53,23 @@ impl Snapshot {
     }
 }
 pub(super) fn read(root: &Path, path: &Path) -> Result<Snapshot> {
+    read_inner(root, path, None)
+}
+pub(super) fn read_with_observation(
+    root: &Path,
+    path: &Path,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<Snapshot> {
+    read_inner(root, path, Some(observation))
+}
+fn read_inner(
+    root: &Path,
+    path: &Path,
+    mut observation: Option<&mut super::bounded::Observation<'_>>,
+) -> Result<Snapshot> {
+    if let Some(observer) = &observation {
+        observer.checkpoint()?;
+    }
     let root = std::path::absolute(root).map_err(io_error)?;
     let path = std::path::absolute(path).map_err(io_error)?;
     let relative = path
@@ -102,10 +119,27 @@ pub(super) fn read(root: &Path, path: &Path) -> Result<Snapshot> {
         return Err(error("capability_proof_file_identity_invalid"));
     }
     let mut bytes = Vec::new();
-    (&mut descriptor)
-        .take(16 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io_error)?;
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        let remaining = before.len().saturating_sub(bytes.len() as u64);
+        if remaining == 0 {
+            break;
+        }
+        let requested = remaining.min(buffer.len() as u64) as usize;
+        let capacity = if let Some(observer) = &observation {
+            observer.read_capacity(requested)?
+        } else {
+            requested
+        };
+        let count = descriptor.read(&mut buffer[..capacity]).map_err(io_error)?;
+        if count == 0 {
+            break;
+        }
+        if let Some(observer) = &mut observation {
+            observer.consume(count)?;
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
     if !same(&before, &descriptor.metadata().map_err(io_error)?)
         || bytes.len() as u64 != before.len()
     {
@@ -121,5 +155,8 @@ pub(super) fn read(root: &Path, path: &Path) -> Result<Snapshot> {
         parents,
     };
     snapshot.assert_current()?;
+    if let Some(observer) = &observation {
+        observer.checkpoint()?;
+    }
     Ok(snapshot)
 }

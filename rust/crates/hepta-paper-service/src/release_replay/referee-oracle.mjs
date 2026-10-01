@@ -1,3 +1,5 @@
+// The Rust owner prefixes oracle-input-guard.mjs in this same module scope.
+/* global readBoundedReplayInput */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';

@@ -5,6 +5,7 @@
 //! Node is used only by the differential test oracle.
 
 pub(crate) mod authority;
+mod bounded;
 mod conformance;
 mod files;
 mod ordered;
@@ -18,10 +19,13 @@ pub(crate) use provenance::{ProvenanceObservationV1, current_bounded_code_proven
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path, sync::atomic::AtomicBool};
 use thiserror::Error;
 
-pub use provenance::current_operational_code_provenance_v1;
+pub use provenance::{
+    current_operational_code_provenance_v1,
+    current_operational_code_provenance_with_cancellation_v1,
+};
 pub use sealed::inspect_operational_sealed_submodules_v1;
 
 /// The capability catalog used by the existing `verify/operational` command.
@@ -218,7 +222,35 @@ pub fn capability_operational_proof_status_v1(
     runtime_root: &Path,
     asset_root: &Path,
 ) -> Result<Value> {
-    let provenance = current_operational_code_provenance_v1(workspace_root)?;
+    capability_operational_proof_status_with_cancellation_v1(
+        workspace_root,
+        runtime_root,
+        asset_root,
+        &AtomicBool::new(false),
+    )
+}
+fn read_imported_with_observation(
+    root: &Path,
+    path: &Path,
+    observation: &mut bounded::Observation<'_>,
+) -> Result<Option<files::Snapshot>> {
+    match files::read_with_observation(root, path, observation) {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(failure) if failure.0.starts_with("code_provenance_") => Err(failure),
+        Err(_) => Ok(None),
+    }
+}
+/// Inspect imported proofs using the existing validation algorithms. Ordinary
+/// source observations and receipt directory enumeration have finite budgets.
+pub fn capability_operational_proof_status_with_cancellation_v1(
+    workspace_root: &Path,
+    runtime_root: &Path,
+    asset_root: &Path,
+    cancelled: &AtomicBool,
+) -> Result<Value> {
+    let mut observation = bounded::Observation::new(cancelled)?;
+    let provenance =
+        provenance::current_operational_with_observation(workspace_root, &mut observation)?;
     let commit = provenance["commit"]
         .as_str()
         .ok_or_else(|| error("code_provenance_commit_required"))?;
@@ -230,7 +262,7 @@ pub fn capability_operational_proof_status_v1(
             let path = workspace_root.join(target);
             let digest = if path.exists() {
                 Some(hash(
-                    &fs::read(path).map_err(|_| error("capability_target_read_failed"))?,
+                    &observation.read_file(&path, bounded::MAX_FILE_BYTES)?,
                 ))
             } else {
                 None
@@ -239,30 +271,43 @@ pub fn capability_operational_proof_status_v1(
         })
         .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
     let mut operational = std::collections::BTreeMap::new();
-    if let Ok(trust) = files::read(
+    if let Some(trust) = read_imported_with_observation(
         runtime_root,
         &runtime_root.join("owner-acceptance/OWNER_TRUST_STORE.json"),
-    ) {
+        &mut observation,
+    )? {
         let mut accepted = Vec::new();
+        let mut enumerated = 0usize;
         for (capability, _) in &catalog {
+            observation.checkpoint()?;
             let directory = runtime_root
                 .join("operational-proof/capabilities")
                 .join(capability);
-            let mut paths = fs::read_dir(&directory)
-                .ok()
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .is_some_and(|name| name.to_string_lossy().ends_with(".json"))
-                })
-                .collect::<Vec<_>>();
+            let mut paths = Vec::new();
+            if let Ok(entries) = fs::read_dir(&directory) {
+                for entry in entries {
+                    observation.checkpoint()?;
+                    enumerated = enumerated
+                        .checked_add(1)
+                        .filter(|count| *count <= 4096)
+                        .ok_or_else(|| error("capability_proof_directory_entry_budget_exceeded"))?;
+                    if let Ok(entry) = entry {
+                        let path = entry.path();
+                        if path
+                            .file_name()
+                            .is_some_and(|name| name.to_string_lossy().ends_with(".json"))
+                        {
+                            paths.push(path);
+                        }
+                    }
+                }
+            }
             paths.sort();
             let mut receipts = BTreeSet::new();
             for path in paths {
-                if let Ok(receipt) = files::read(runtime_root, &path)
+                observation.checkpoint()?;
+                if let Some(receipt) =
+                    read_imported_with_observation(runtime_root, &path, &mut observation)?
                     && targets_match_json(&receipt, &targets[*capability])
                     && operational_receipt(
                         &receipt.document,
@@ -290,8 +335,20 @@ pub fn capability_operational_proof_status_v1(
             operational.clear();
         }
     }
-    let conformance = conformance::load(runtime_root, asset_root, &provenance, &catalog, &targets)
-        .unwrap_or_default();
+    observation.checkpoint()?;
+    let conformance = match conformance::load(
+        runtime_root,
+        asset_root,
+        &provenance,
+        &catalog,
+        &targets,
+        &mut observation,
+    ) {
+        Ok(value) => value,
+        Err(failure) if failure.0.starts_with("code_provenance_") => return Err(failure),
+        Err(_) => std::collections::BTreeMap::new(),
+    };
+    observation.checkpoint()?;
     let capabilities: Vec<_> = catalog.iter().map(|(id, _)| json!({
         "capabilityId": id,
         "operationallyProven": operational.contains_key(id),

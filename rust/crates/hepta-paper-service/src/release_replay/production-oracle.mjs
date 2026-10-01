@@ -1,5 +1,7 @@
 // Fixed differential observer. It evaluates the actual Node implementation and
 // archived Python bytes on the same supplied corpus. It never grants authority.
+// The Rust owner prefixes oracle-input-guard.mjs in this same module scope.
+/* global readBoundedReplayInput */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';

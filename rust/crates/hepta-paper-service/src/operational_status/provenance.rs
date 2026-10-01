@@ -4,14 +4,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
-    fs::{self, File, Metadata, OpenOptions},
+    fs::{self, File, Metadata},
     io::Read,
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{MetadataExt, OpenOptionsExt},
-    },
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::Path,
-    process::Command,
+    sync::atomic::AtomicBool,
 };
 
 #[derive(Serialize)]
@@ -32,74 +29,21 @@ struct Snapshot {
     content_hash: String,
     package: Vec<u8>,
 }
-fn git(root: &Path, operation: &str, args: &[&str], empty: bool) -> Result<Vec<u8>> {
-    let output = Command::new("git")
-        .args(args)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .current_dir(root)
-        .output()
-        .map_err(|_| error(&format!("code_provenance_git_spawn_failed:{operation}")))?;
-    if !output.status.success() {
-        return Err(error(&format!(
-            "code_provenance_git_command_failed:{operation}:exit_{}:stderr_{}",
-            output
-                .status
-                .code()
-                .map_or("no_status".to_owned(), |v| v.to_string()),
-            &hash(&output.stderr)[7..]
-        )));
-    }
-    if (!empty && output.stdout.is_empty()) || output.stdout.len() > 64 * 1024 * 1024 {
-        return Err(error(&format!(
-            "code_provenance_git_output_required:{operation}"
-        )));
-    }
-    Ok(output.stdout)
-}
 /// Internal composition seam. Only the fixed queries in this module reach the
-/// observer. The compatibility observer retains the existing unbounded file
-/// resource scope; the release source owner supplies per-read limits and an
-/// authenticated, cancellable process-group observer.
+/// observer. Ordinary and release observations both supply bounded reads and
+/// cancellable process-group observations without sharing evidence authority.
 pub(crate) trait ProvenanceObservationV1 {
     fn git(&mut self, root: &Path, operation: &str, args: &[&str], empty: bool) -> Result<Vec<u8>>;
     fn checkpoint(&mut self) -> Result<()>;
+    fn repository_entry_count(&mut self, _: usize) -> Result<()> {
+        Ok(())
+    }
     fn source_entry(&mut self, root: &Path, relative: &str) -> Result<()>;
     fn file_size(&mut self, size: u64) -> Result<()>;
     fn consume(&mut self, bytes: usize) -> Result<()>;
     fn read_capacity(&mut self, requested: usize) -> Result<usize>;
     fn open_regular(&mut self, root: &Path, relative: &str) -> Result<File>;
     fn payload(&mut self, relative: &str, mode: Option<u32>, bytes: Option<&[u8]>) -> Result<()>;
-}
-struct CompatibilityObservation;
-impl ProvenanceObservationV1 for CompatibilityObservation {
-    fn git(&mut self, root: &Path, operation: &str, args: &[&str], empty: bool) -> Result<Vec<u8>> {
-        git(root, operation, args, empty)
-    }
-    fn checkpoint(&mut self) -> Result<()> {
-        Ok(())
-    }
-    fn source_entry(&mut self, _: &Path, _: &str) -> Result<()> {
-        Ok(())
-    }
-    fn file_size(&mut self, _: u64) -> Result<()> {
-        Ok(())
-    }
-    fn consume(&mut self, _: usize) -> Result<()> {
-        Ok(())
-    }
-    fn read_capacity(&mut self, requested: usize) -> Result<usize> {
-        Ok(requested)
-    }
-    fn payload(&mut self, _: &str, _: Option<u32>, _: Option<&[u8]>) -> Result<()> {
-        Ok(())
-    }
-    fn open_regular(&mut self, root: &Path, relative: &str) -> Result<File> {
-        OpenOptions::new()
-            .read(true)
-            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
-            .open(root.join(relative))
-            .map_err(io_error)
-    }
 }
 fn id(bytes: Vec<u8>, operation: &str) -> Result<String> {
     let text = String::from_utf8(bytes)
@@ -170,6 +114,7 @@ fn capture(
             "code_provenance_git_nul_list_invalid:repository_entries",
         ));
     }
+    observation.repository_entry_count(listed.iter().filter(|byte| **byte == 0).count())?;
     let paths = listed
         .split(|b| *b == 0)
         .filter(|v| !v.is_empty())
@@ -333,14 +278,29 @@ fn same(left: &Snapshot, right: &Snapshot) -> bool {
 /// intentionally ignored, as they are by the Node operational status entrypoint.
 /// Sealed deployments verify their hydrated submodule closure before the Git
 /// status probe, which ignores only closure-bound submodule worktree dirtiness.
-/// This compatibility entry retains its incumbent synchronous Git and unbounded
-/// per-file resource scope. Release source capture uses the bounded seam below.
+/// File/entry/operation limits and a deadline apply to all source observations.
+/// This cooperative identity check does not claim an immutable source snapshot.
 pub fn current_operational_code_provenance_v1(root: &Path) -> Result<Value> {
+    current_operational_code_provenance_with_cancellation_v1(root, &AtomicBool::new(false))
+}
+/// Ordinary evidence classification and sealed closure semantics are preserved;
+/// cancellation does not manufacture release attestation or imported authority.
+pub fn current_operational_code_provenance_with_cancellation_v1(
+    root: &Path,
+    cancelled: &AtomicBool,
+) -> Result<Value> {
+    let mut observation = super::bounded::Observation::new(cancelled)?;
+    current_operational_with_observation(root, &mut observation)
+}
+pub(super) fn current_operational_with_observation(
+    root: &Path,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<Value> {
     let root = fs::canonicalize(root).map_err(io_error)?;
     let sealed = std::env::var("HEPTA_RELEASE_ENV_LAUNCHER").ok().as_deref() == Some("sealed-v1");
     let read_only = sealed || fs::metadata(&root).map_err(io_error)?.mode() & 0o222 == 0;
     if read_only {
-        let inspection = super::sealed::inspect_operational_sealed_submodules_v1(&root)?;
+        let inspection = super::sealed::inspect_with_observation(&root, observation)?;
         if sealed && inspection["status"] != "sealed_readonly_submodules_verified" {
             return Err(error("code_provenance_sealed_submodule_closure_required"));
         }
@@ -353,13 +313,7 @@ pub fn current_operational_code_provenance_v1(root: &Path) -> Result<Value> {
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or("runtime_unclassified".to_owned());
-    current_with_observation(
-        &root,
-        read_only,
-        &environment,
-        &class,
-        &mut CompatibilityObservation,
-    )
+    current_with_observation(&root, read_only, &environment, &class, observation)
 }
 /// Bounded release capture uses complete development status, including submodule
 /// worktree changes. It does not infer a sealed deployment from environment.

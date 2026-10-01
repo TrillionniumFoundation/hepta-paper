@@ -11,6 +11,7 @@ import {
   parseStrictJson,
   validateCommand,
   verifyRepositorySourceEvidence,
+  SOURCE_EVIDENCE_PRODUCER_PATHS,
 } from '../bin/verify-source-implementation-evidence.mjs';
 
 function command(root, ...args) {
@@ -46,7 +47,7 @@ function createFixture(mutator = () => {}) {
   command(root, 'git', 'init', '--quiet');
   command(root, 'git', 'config', 'user.name', 'Hepta Source Evidence Test');
   command(root, 'git', 'config', 'user.email', 'source-evidence@example.invalid');
-  for (const relative of ['paper-core/bin/verify-source-implementation-evidence.mjs', 'paper-core/src/source-evidence-git-inputs.mjs', 'paper-core/src/source-evidence-rust-symbols.mjs']) {
+  for (const relative of SOURCE_EVIDENCE_PRODUCER_PATHS) {
     write(root, relative, fs.readFileSync(new URL(`../../${relative}`, import.meta.url)));
   }
 

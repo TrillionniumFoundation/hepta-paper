@@ -97,10 +97,13 @@ export default [
     rules: correctnessRules,
   },
   {
-    files: ['paper-core/bin/verify-source-implementation-evidence.mjs'],
+    files: [
+      'paper-core/bin/verify-source-implementation-evidence.mjs',
+      'paper-core/src/source-evidence-cargo-observations.mjs',
+    ],
     rules: {
-      // The strict JSON grammar intentionally matches the four RFC 8259
-      // whitespace code points and rejects every other control character.
+      // Preserve the existing closed owner-title and ANSI libtest transcript
+      // grammars when Cargo observations move out of the executable entrypoint.
       'no-control-regex': 'off',
     },
   },

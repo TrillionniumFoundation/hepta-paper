@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { stripRustInertText, rustSymbolMatches } from '../src/source-evidence-rust-symbols.mjs';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -9,7 +8,18 @@ import {
 } from '../src/source-evidence-git-inputs.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const MAX_JSON_BYTES = 2 * 1024 * 1024;
+import { parseStrictJson } from '../src/source-evidence-strict-json.mjs';
+import {
+  SAFE_RUST_TEST_PATTERN, artifactPin, assertExactCargoOwnerExecution,
+  cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory,
+} from '../src/source-evidence-cargo-observations.mjs';
+import { hashBytes, producerPin } from '../src/source-evidence-producer.mjs';
+export { parseStrictJson } from '../src/source-evidence-strict-json.mjs';
+export {
+  assertExactCargoOwnerExecution, cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory,
+} from '../src/source-evidence-cargo-observations.mjs';
+export { SOURCE_EVIDENCE_PRODUCER_PATHS } from '../src/source-evidence-producer.mjs';
+
 const MAX_COMMAND_DIAGNOSTIC_BYTES = 8 * 1024;
 const MAX_COMMAND_TIMEOUT_SECONDS = 1200;
 const SHA1_PATTERN = /^[0-9a-f]{40}$/;
@@ -20,7 +30,6 @@ const BUNDLE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SYMBOL_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const NODE_TEST_TITLE_PATTERN = /^[^\u0000-\u001f\u007f]{1,512}$/u;
 const SAFE_PACKAGE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const SAFE_RUST_TEST_PATTERN = /^[A-Za-z0-9_:]+$/;
 const AUTHORITY_KEYS = Object.freeze([
   'externalAuthorityGranted',
   'nodeRetirementAuthorized',
@@ -103,148 +112,6 @@ function requireUniqueStrings(value, label, { minimum = 1, pattern = null } = {}
   return value;
 }
 
-class StrictJsonParser {
-  constructor(text, label) {
-    this.text = text;
-    this.label = label;
-    this.index = 0;
-  }
-
-  parse() {
-    this.skipWhitespace();
-    const value = this.parseValue();
-    this.skipWhitespace();
-    if (this.index !== this.text.length) this.error('trailing_bytes');
-    return value;
-  }
-
-  error(code) {
-    fail('strict_json_invalid', `${this.label}:${code}@${this.index}`);
-  }
-
-  skipWhitespace() {
-    while (this.index < this.text.length && /[\u0009\u000a\u000d\u0020]/u.test(this.text[this.index])) {
-      this.index += 1;
-    }
-  }
-
-  parseValue() {
-    this.skipWhitespace();
-    const token = this.text[this.index];
-    if (token === '{') return this.parseObject();
-    if (token === '[') return this.parseArray();
-    if (token === '"') return this.parseString();
-    if (token === '-' || /[0-9]/u.test(token ?? '')) return this.parseNumber();
-    if (this.text.startsWith('true', this.index)) {
-      this.index += 4;
-      return true;
-    }
-    if (this.text.startsWith('false', this.index)) {
-      this.index += 5;
-      return false;
-    }
-    if (this.text.startsWith('null', this.index)) {
-      this.index += 4;
-      return null;
-    }
-    this.error('unexpected_token');
-  }
-
-  parseObject() {
-    const result = Object.create(null);
-    const keys = new Set();
-    this.index += 1;
-    this.skipWhitespace();
-    if (this.text[this.index] === '}') {
-      this.index += 1;
-      return result;
-    }
-    while (this.index < this.text.length) {
-      if (this.text[this.index] !== '"') this.error('object_key_required');
-      const key = this.parseString();
-      if (keys.has(key)) this.error(`duplicate_key:${key}`);
-      keys.add(key);
-      this.skipWhitespace();
-      if (this.text[this.index] !== ':') this.error('colon_required');
-      this.index += 1;
-      result[key] = this.parseValue();
-      this.skipWhitespace();
-      if (this.text[this.index] === '}') {
-        this.index += 1;
-        return result;
-      }
-      if (this.text[this.index] !== ',') this.error('object_comma_required');
-      this.index += 1;
-      this.skipWhitespace();
-    }
-    this.error('unterminated_object');
-  }
-
-  parseArray() {
-    const result = [];
-    this.index += 1;
-    this.skipWhitespace();
-    if (this.text[this.index] === ']') {
-      this.index += 1;
-      return result;
-    }
-    while (this.index < this.text.length) {
-      result.push(this.parseValue());
-      this.skipWhitespace();
-      if (this.text[this.index] === ']') {
-        this.index += 1;
-        return result;
-      }
-      if (this.text[this.index] !== ',') this.error('array_comma_required');
-      this.index += 1;
-      this.skipWhitespace();
-    }
-    this.error('unterminated_array');
-  }
-
-  parseString() {
-    const start = this.index;
-    this.index += 1;
-    let escapedValue = false;
-    while (this.index < this.text.length) {
-      const code = this.text.charCodeAt(this.index);
-      if (!escapedValue && code === 0x22) {
-        this.index += 1;
-        try {
-          return JSON.parse(this.text.slice(start, this.index));
-        } catch {
-          this.error('string_decode');
-        }
-      }
-      if (!escapedValue && code < 0x20) this.error('control_character');
-      if (!escapedValue && code === 0x5c) {
-        escapedValue = true;
-        this.index += 1;
-        continue;
-      }
-      escapedValue = false;
-      this.index += 1;
-    }
-    this.error('unterminated_string');
-  }
-
-  parseNumber() {
-    const fragment = this.text.slice(this.index);
-    const match = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/u.exec(fragment);
-    if (!match) this.error('number_syntax');
-    this.index += match[0].length;
-    const value = Number(match[0]);
-    if (!Number.isFinite(value)) this.error('non_finite_number');
-    return value;
-  }
-}
-
-export function parseStrictJson(text, label = 'JSON') {
-  if (typeof text !== 'string') fail('json_text_required', label);
-  if (Buffer.byteLength(text, 'utf8') > MAX_JSON_BYTES) fail('json_byte_limit', label);
-  return new StrictJsonParser(text, label).parse();
-}
-
 function canonicalRelative(value, label, { allowDot = false } = {}) {
   requireString(value, label);
   if (allowDot && value === '.') return value;
@@ -257,10 +124,6 @@ function canonicalRelative(value, label, { allowDot = false } = {}) {
   }
   if (path.posix.normalize(value) !== value) fail('path_not_canonical', `${label}=${value}`);
   return value;
-}
-
-function hashBytes(bytes) {
-  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 }
 
 function commandDiagnostic(value) {
@@ -660,158 +523,6 @@ function assertTestExecution(command, bundle, stdout, label) {
       || named.length === 0 || expectedNames.some((name) => !named.includes(name))) {
     fail('verification_test_execution_incomplete', `${label}:tap_execution`);
   }
-}
-
-export function assertExactCargoOwnerExecution(selector, stdout, label) {
-  if (typeof selector !== 'string' || !SAFE_RUST_TEST_PATTERN.test(selector)) fail('verification_selector_invalid', label);
-  const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
-  const rows = text.split(/\r?\n/u).filter((line) => line.startsWith('test ') && !line.startsWith('test result:'));
-  const summaryLines = text.split(/\r?\n/u).filter((line) => line.startsWith('test result:'));
-  const summaries = [...text.matchAll(
-    /^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;[^\r\n]*$/gmu,
-  )];
-  const counts = summaries.map((row) => row.slice(1, 6).map(Number));
-  const expected = `test ${selector} ... ok`;
-  if (rows.length !== 1 || rows[0] !== expected || summaryLines.length !== 1 || counts.length !== 1
-      || counts[0].some((value) => !Number.isSafeInteger(value))
-      || counts[0][0] !== 1 || counts[0].slice(1, 4).some((value) => value !== 0)) {
-    fail('verification_test_execution_incomplete', `${label}:exact_owner`);
-  }
-  return { rows, counts: Object.fromEntries(['passed', 'failed', 'ignored', 'measured', 'filteredOut'].map((key, index) => [key, counts[0][index]])) };
-}
-
-function artifactPin(executable, root) {
-  if (!path.isAbsolute(executable) || fs.realpathSync(executable) !== executable
-      || executable === root || executable.startsWith(`${root}${path.sep}`)) {
-    fail('verification_artifact_path_invalid', executable);
-  }
-  const descriptor = fs.openSync(executable, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-  const identity = (value) => [value.dev, value.ino, value.mode, value.uid, value.gid,
-    value.nlink, value.size, value.mtimeNs, value.ctimeNs].map(String);
-  try {
-    const before = fs.fstatSync(descriptor, { bigint: true });
-    if (!before.isFile() || before.size < 4n || before.size > 1024n * 1024n * 1024n
-        || (before.mode & 0o111n) === 0n) fail('verification_artifact_file_invalid', executable);
-    const hash = crypto.createHash('sha256');
-    const buffer = Buffer.alloc(65536);
-    let offset = 0;
-    while (true) {
-      const count = fs.readSync(descriptor, buffer, 0, buffer.length, offset);
-      if (count === 0) break;
-      if (offset === 0 && !buffer.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) {
-        fail('verification_artifact_not_elf', executable);
-      }
-      offset += count;
-      if (offset > Number(before.size)) fail('verification_artifact_changed', executable);
-      hash.update(buffer.subarray(0, count));
-    }
-    const named = fs.lstatSync(executable, { bigint: true });
-    if (!named.isFile() || named.isSymbolicLink()) fail('verification_artifact_path_invalid', executable);
-    const after = fs.fstatSync(descriptor, { bigint: true });
-    if (offset !== Number(before.size) || JSON.stringify(identity(before)) !== JSON.stringify(identity(after))
-        || identity(before).some((value, index) => value !== identity(named)[index])) {
-      fail('verification_artifact_changed', executable);
-    }
-    return { path: executable, sha256: `sha256:${hash.digest('hex')}`, identity: identity(before) };
-  } finally { fs.closeSync(descriptor); }
-}
-
-export function cargoTargetObservation(root, binding, stdout, label) {
-  const artifacts = [];
-  const tests = new Set();
-  for (const line of stdout.replace(/\x1b\[[0-9;]*m/gu, '').split(/\r?\n/u)) {
-    if (line.startsWith('{')) {
-      let row;
-      try { row = JSON.parse(line); } catch { fail('verification_artifact_json_invalid', label); }
-      if (row.reason !== 'compiler-artifact' || row.profile?.test !== true || !row.executable) continue;
-      const expectedManifest = path.join(root, 'rust/crates', binding.packageName, 'Cargo.toml');
-      const expectedKind = binding.targetKind === 'library' ? 'lib' : 'test';
-      if (row.manifest_path === expectedManifest && row.target?.kind?.length === 1
-          && row.target.kind[0] === expectedKind
-          && (binding.targetKind === 'library' || row.target?.name === binding.testTarget)) {
-        const packageRoot = path.dirname(expectedManifest);
-        const expectedSources = binding.targetKind === 'library'
-          ? [path.join(packageRoot, 'src/lib.rs')]
-          : [path.join(packageRoot, 'tests', `${binding.testTarget}.rs`),
-            path.join(packageRoot, 'tests', binding.testTarget, 'main.rs')];
-        if (!expectedSources.includes(row.target.src_path)) fail('verification_artifact_source_invalid', label);
-        artifacts.push({ executable: row.executable, manifestPath: row.manifest_path,
-          targetName: row.target.name, targetKind: row.target.kind, sourcePath: row.target.src_path });
-      }
-    } else if (line.endsWith(': test')) {
-      const selector = line.slice(0, -': test'.length);
-      if (!SAFE_RUST_TEST_PATTERN.test(selector) || tests.has(selector)) fail('verification_discovery_invalid', label);
-      tests.add(selector);
-    }
-  }
-  if (artifacts.length !== 1) fail('verification_artifact_cardinality', `${label}:${artifacts.length}`);
-  return { artifact: { ...artifacts[0], ...artifactPin(artifacts[0].executable, root) }, tests: [...tests] };
-}
-
-function producerPin(root) {
-  const paths = ['paper-core/bin/verify-source-implementation-evidence.mjs',
-    'paper-core/src/source-evidence-git-inputs.mjs', 'paper-core/src/source-evidence-rust-symbols.mjs'];
-  return paths.map((relative) => {
-    const bound = trackedBlob(root, relative);
-    const bytes = readPinnedSource(root, relative, bound);
-    const loaded = relative === paths[0] ? fileURLToPath(import.meta.url)
-      : fileURLToPath(new URL(`../src/${path.basename(relative)}`, import.meta.url));
-    if (!bytes.equals(fs.readFileSync(loaded))) fail('verification_capture_producer_mismatch', relative);
-    return { path: relative, mode: bound.mode, gitBlob: bound.blob, sha256: hashBytes(bytes) };
-  });
-}
-
-export function cargoEnvironmentObservation(root, binding, artifact, stdout, cargoPid, runtime, label, expectedEnvironment) {
-  const captures = [];
-  for (const line of stdout.split(/\r?\n/u)) {
-    if (!line.startsWith('{')) continue;
-    const row = parseStrictJson(line, label);
-    if (row.kind === 'CargoOwnerEnvironmentCaptureV1') captures.push(row);
-  }
-  if (captures.length !== 1) fail('verification_capture_cardinality', label);
-  const row = captures[0];
-  const fields = ['kind', 'version', 'processId', 'parentProcessId', 'script', 'node', 'cwd', 'executable', 'args', 'environment'];
-  const actualFields = Object.keys(row).sort();
-  const env = row.environment;
-  const cwd = path.dirname(path.join(root, 'rust/crates', binding.packageName, 'Cargo.toml'));
-  const cargoEnvironmentKeys = new Set(['CARGO', 'CARGO_MANIFEST_DIR', 'CARGO_MANIFEST_PATH',
-    'CARGO_PKG_AUTHORS', 'CARGO_PKG_DESCRIPTION', 'CARGO_PKG_HOMEPAGE', 'CARGO_PKG_LICENSE',
-    'CARGO_PKG_LICENSE_FILE', 'CARGO_PKG_NAME', 'CARGO_PKG_README', 'CARGO_PKG_REPOSITORY',
-    'CARGO_PKG_RUST_VERSION', 'CARGO_PKG_VERSION', 'CARGO_PKG_VERSION_MAJOR', 'CARGO_PKG_VERSION_MINOR',
-    'CARGO_PKG_VERSION_PATCH', 'CARGO_PKG_VERSION_PRE', 'LD_LIBRARY_PATH', 'SSL_CERT_FILE', 'SSL_CERT_DIR']);
-  if (JSON.stringify(actualFields) !== JSON.stringify(fields.sort()) || row.version !== 1
-      || !Number.isSafeInteger(row.processId) || row.processId < 1 || row.parentProcessId !== cargoPid
-      || row.script !== path.join(root, 'paper-core/bin/verify-source-implementation-evidence.mjs')
-      || row.node !== runtime.node.path || row.cwd !== cwd || row.executable !== artifact.path
-      || JSON.stringify(row.args) !== '["--list"]'
-      || !env || Array.isArray(env) || typeof env !== 'object' || Object.keys(env).length > 128
-      || Object.entries(env).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || typeof value !== 'string' || value.includes('\0'))
-      || !expectedEnvironment
-      || Object.entries(expectedEnvironment).some(([key, value]) => !cargoEnvironmentKeys.has(key) && env[key] !== value)
-      || Object.keys(env).some((key) => !Object.hasOwn(expectedEnvironment, key) && !cargoEnvironmentKeys.has(key))
-      || Buffer.byteLength(JSON.stringify(env)) > 1024 * 1024
-      || env.CARGO !== runtime.cargo.path || env.CARGO_MANIFEST_DIR !== cwd || env.CARGO_PKG_NAME !== binding.packageName
-      || (env.CARGO_MANIFEST_PATH !== undefined && env.CARGO_MANIFEST_PATH !== path.join(cwd, 'Cargo.toml'))) {
-    fail('verification_capture_binding_invalid', label);
-  }
-  return { cwd, environment: env, processId: row.processId, parentProcessId: row.parentProcessId,
-    environmentSha256: hashBytes(Buffer.from(JSON.stringify(env))) };
-}
-
-export function exactCargoTestInventory(stdout, label) {
-  const tests = [];
-  const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
-  for (const line of text.split(/\r?\n/u)) {
-    if (!line.endsWith(': test')) continue;
-    const name = line.slice(0, -': test'.length);
-    if (!SAFE_RUST_TEST_PATTERN.test(name) || tests.includes(name)) fail('verification_discovery_invalid', label);
-    tests.push(name);
-  }
-  const summary = [...text.matchAll(/^(\d+) tests?, (\d+) benchmarks?$/gmu)];
-  if (summary.length !== 1 || Number(summary[0][1]) !== tests.length || Number(summary[0][2]) !== 0) {
-    fail('verification_discovery_invalid', label);
-  }
-  return tests;
 }
 
 export function executeCommands(root, bundles, source) {

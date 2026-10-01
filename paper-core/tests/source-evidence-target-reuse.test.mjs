@@ -4,16 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
+import { parse } from 'espree';
 import {
   assertExactCargoOwnerExecution, cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory,
   validateCommand, verifyRepositorySourceEvidence,
+  SOURCE_EVIDENCE_PRODUCER_PATHS,
 } from '../bin/verify-source-implementation-evidence.mjs';
 const fixtureTempParent = fs.realpathSync(os.tmpdir());
 
 function command(root, program, args) {
   const output = spawnSync(program, args, { cwd: root, encoding: 'utf8', shell: false,
     timeout: 30000, maxBuffer: 4 * 1024 * 1024,
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_GLOBAL: '/dev/null',
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, CARGO_HOME: process.env.CARGO_HOME, GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } });
   assert.equal(output.error, undefined); assert.equal(output.signal, null);
   assert.equal(output.status, 0, output.stderr); return output.stdout.trim();
@@ -41,7 +43,7 @@ function fixture(t, { firstOwnerBody, firstSelector } = {}) {
   command(root, 'git', ['init', '--quiet']);
   command(root, 'git', ['config', 'user.name', 'Hepta Execution Test']);
   command(root, 'git', ['config', 'user.email', 'execution@example.invalid']);
-  for (const relative of ['paper-core/bin/verify-source-implementation-evidence.mjs', 'paper-core/src/source-evidence-git-inputs.mjs', 'paper-core/src/source-evidence-rust-symbols.mjs']) {
+  for (const relative of SOURCE_EVIDENCE_PRODUCER_PATHS) {
     write(root, relative, fs.readFileSync(new URL(`../../${relative}`, import.meta.url)));
   }
   write(root, 'rust/Cargo.toml', '[workspace]\nmembers=["crates/fixture"]\nresolver="3"\n');
@@ -104,7 +106,7 @@ test('same-subject Cargo target reuse preserves independent real owners, environ
     assert.equal(target.capture.parentProcessId, target.discovery.processId);
     assert.equal(target.inventory.program, target.artifact.path);
     assert.deepEqual(target.inventory.args, ['--list']);
-    assert.equal(target.producer.length, 3);
+    assert.deepEqual(target.producer.map(row => row.path), SOURCE_EVIDENCE_PRODUCER_PATHS);
   }
   assert.deepEqual(fs.readdirSync(f.cleanup), []);
   assert(Object.values(receipt.authorityClaims).every(value => value === false));
@@ -189,17 +191,50 @@ test('missing compiled selector refuses a receipt without a successful owner obs
   assert.equal(fs.existsSync(missingReceipt), false); assert.deepEqual(fs.readdirSync(missing.cleanup), []);
 });
 
-test('pinned capture producer rejects actual stat-cache-hidden bytes and then freshly verifies restored input', t => {
-  const f = fixture(t), relative = 'paper-core/bin/verify-source-implementation-evidence.mjs';
-  const file = path.join(f.root, relative), original = fs.readFileSync(file), receipt = path.join(f.target, 'producer-refusal.json');
-  command(f.root, 'git', ['update-index', '--assume-unchanged', relative]);
-  fs.appendFileSync(file, '\n// Actual altered capture producer.\n');
-  assert.equal(command(f.root, 'git', ['status', '--porcelain=v1', '--untracked-files=no']), '');
-  assert.throws(() => verifyRepositorySourceEvidence({ root: f.root, execute: true, receipt }), /source_worktree_blob_mismatch/u);
-  assert.equal(fs.existsSync(receipt), false);
-  fs.writeFileSync(file, original); command(f.root, 'git', ['update-index', '--no-assume-unchanged', relative]);
+test('every loaded producer component rejects actual stat-cache-hidden bytes before fresh restored execution', t => {
+  const f = fixture(t), receipt = path.join(f.target, 'producer-refusal.json');
+  for (const relative of SOURCE_EVIDENCE_PRODUCER_PATHS) {
+    const file = path.join(f.root, relative), original = fs.readFileSync(file);
+    command(f.root, 'git', ['update-index', '--assume-unchanged', relative]);
+    fs.appendFileSync(file, '\n// Actual altered capture producer component.\n');
+    assert.equal(command(f.root, 'git', ['status', '--porcelain=v1', '--untracked-files=no']), '');
+    assert.throws(() => verifyRepositorySourceEvidence({ root: f.root, execute: true, receipt }), /source_worktree_blob_mismatch/u, relative);
+    assert.equal(fs.existsSync(receipt), false);
+    fs.writeFileSync(file, original); command(f.root, 'git', ['update-index', '--no-assume-unchanged', relative]);
+  }
   const fresh = verifyRepositorySourceEvidence({ root: f.root, execute: true });
   assert.equal(fresh.commandObservations.length, 5); assert.deepEqual(fs.readdirSync(f.cleanup), []);
+  for (const target of fresh.executionTargets) {
+    assert.deepEqual(target.producer.map(row => row.path), SOURCE_EVIDENCE_PRODUCER_PATHS);
+  }
+});
+
+test('producer pins cover the actual transitive static and literal dynamic module graph', () => {
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
+  const pending = [SOURCE_EVIDENCE_PRODUCER_PATHS[0]], reached = new Set();
+  while (pending.length) {
+    const relative = pending.pop(); if (reached.has(relative)) continue;
+    reached.add(relative);
+    const ast = parse(fs.readFileSync(path.join(root, relative), 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' });
+    const visit = node => {
+      if (!node || typeof node !== 'object') return;
+      if (['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration', 'ImportExpression'].includes(node.type) && node.source) {
+        assert.equal(typeof node.source.value, 'string', `nonliteral producer dependency:${relative}`);
+        const specifier = node.source.value;
+        if (!specifier.startsWith('node:')) {
+          assert.equal(specifier.startsWith('.'), true, `external producer dependency:${specifier}`);
+          pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(relative), specifier)));
+        }
+      }
+      for (const value of Object.values(node)) {
+        if (Array.isArray(value)) value.forEach(visit); else if (value && typeof value === 'object') visit(value);
+      }
+    };
+    visit(ast);
+  }
+  assert.equal(Object.isFrozen(SOURCE_EVIDENCE_PRODUCER_PATHS), true);
+  assert.equal(new Set(SOURCE_EVIDENCE_PRODUCER_PATHS).size, SOURCE_EVIDENCE_PRODUCER_PATHS.length);
+  assert.deepEqual([...reached].sort(), [...SOURCE_EVIDENCE_PRODUCER_PATHS].sort());
 });
 
 function processIdentity(pid) {

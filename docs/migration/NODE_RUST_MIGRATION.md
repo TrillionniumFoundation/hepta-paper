@@ -163,7 +163,32 @@ opening/closing a second descriptor while SQLite owns POSIX locks is avoided.
 SQLite closes before the retained descriptor on normal and error exits.
 
 Known source versions are checked inside that same transaction through
-`hepta-readonly-control::node_schema::validate_node_migration_structure_v1`.
+`hepta-readonly-control::node_schema::recognize_known_installed_node_migration_structure_v1`.
+The original `validate_node_migration_structure_v1` remains base-only. The explicit
+known-installed profile additionally recognizes exactly the three online mutation
+marker tables, their index and seven triggers; every raw SQL object must match
+the shared eleven-string [schema source](../../store/schema/autonomous-research-online-mutation-marker.v1.json).
+Node imports the same strings without changing their order or protocol hash.
+Missing, changed and unknown objects remain refusals. Existing authority rows
+are preserved as original values, with `authorityGranted` and
+`oldAuthorityRecordsAdopted` both false in the versioned installed observation.
+The ordinary offline migration and explicit immutable `inspect-db` /
+`store-integrity` paths select this profile; the original strict immutable APIs
+retain their base-only policy. Generic multi-role authority backups keep their
+separate exact schema-contract checks and are not reclassified as Node stores.
+The recognizer bounds source objects to 4096, names to 512 bytes, SQL cells to
+64 KiB and total object text to 8 MiB before Rust allocation.
+
+The installed-source drill operates on a sealed, consistent private backup,
+with the live database and its sidecars unchanged. The sealed WAL-header backup
+is accepted by the explicit immutable read-only paths, while ordinary migration
+still refuses that header. Migration is exercised only on a separate writable
+scratch clone explicitly converted to DELETE mode, with the original sealed
+backup retained. Old marker values remain unadopted. This proves the bounded
+offline compatibility path; it does not prove target-host quiescence, cutover,
+rollback or Node retirement. The observed installed Node authority daemon remains
+active, and no installed entry point or live SQLite state is changed by the drill.
+
 It reuses the existing trusted SQL replay owner and compares actual SQL objects,
 contiguous migration descriptors and schema metadata with a private in-memory
 expectation. A missing required index, an added column/trigger or changed schema

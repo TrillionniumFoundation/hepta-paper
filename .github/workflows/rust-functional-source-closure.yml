@@ -43,6 +43,10 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
           rustup default 1.98.0
+          functional_source_cargo="$(rustup which --toolchain 1.98.0 cargo)"
+          test -x "$functional_source_cargo"
+          test "$("$functional_source_cargo" --version | cut -d ' ' -f 2)" = 1.98.0
+          dirname "$functional_source_cargo" >> "$GITHUB_PATH"
           test "$(node --version)" = v22.23.1
           rustc --version --verbose
           cargo --version --verbose
@@ -102,6 +106,10 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
           rustup default 1.98.0
+          functional_source_cargo="$(rustup which --toolchain 1.98.0 cargo)"
+          test -x "$functional_source_cargo"
+          test "$("$functional_source_cargo" --version | cut -d ' ' -f 2)" = 1.98.0
+          dirname "$functional_source_cargo" >> "$GITHUB_PATH"
 
       - name: Build immutable prospective merge and verify functional source evidence
         shell: bash

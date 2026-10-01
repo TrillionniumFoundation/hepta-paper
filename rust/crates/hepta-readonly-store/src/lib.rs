@@ -66,7 +66,27 @@ pub struct ReadOnlyStoreV1 {
 
 impl ReadOnlyStoreV1 {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ReadOnlyStoreError> {
-        let path = inspect_path(path.as_ref())?;
+        Self::open_with_schema_validator(path.as_ref(), validate_database_schema_v1)
+    }
+
+    /// Explicit maintenance/read-only compatibility profile. This preserves
+    /// complete known installed marker records and grants no writer authority.
+    /// The original `open` remains the stricter base-only authority API.
+    pub fn open_known_installed_v1(path: impl AsRef<Path>) -> Result<Self, ReadOnlyStoreError> {
+        Self::open_with_schema_validator(
+            path.as_ref(),
+            hepta_readonly_control::node_schema::validate_known_installed_database_schema_v1,
+        )
+    }
+
+    fn open_with_schema_validator(
+        path: &Path,
+        validator: fn(
+            &Connection,
+        )
+            -> Result<DatabaseSchemaV1, hepta_readonly_control::ReadOnlyStoreError>,
+    ) -> Result<Self, ReadOnlyStoreError> {
+        let path = inspect_path(path)?;
         let identity = inspect_file_identity(&path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_URI
@@ -83,7 +103,7 @@ impl ReadOnlyStoreV1 {
         if query_only != 1 {
             return Err(ReadOnlyStoreError::QueryOnlyUnavailable);
         }
-        let schema = validate_database_schema_v1(&connection)?;
+        let schema = validator(&connection)?;
         let store = Self {
             path,
             connection,

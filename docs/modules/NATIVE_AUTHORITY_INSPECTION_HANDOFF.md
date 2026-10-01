@@ -16,6 +16,8 @@ cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --bi
 
 | Binary | Arguments | Public implementation |
 |---|---|---|
+| `hepta-paper-rust verify owner` | Nullary normal registry route; separator and forwarded arguments follow the incumbent registry. | `operational_status::inspect_ordinary_owner_acceptance_status_with_cancellation_v1` |
+| `hepta-paper-rust verify operational` | Nullary normal registry route with physical-workspace runtime/assets defaults. | `operational_status::capability_operational_proof_status_with_cancellation_v1` |
 | `hepta-operational-proof-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH --asset-root ABSOLUTE_PATH`; omitted roots use the selected environment and actual frontend workspace layout, then sibling runtime/assets defaults. | `operational_status::capability_operational_proof_status_v1` |
 | `hepta-owner-acceptance-status` | Optional `--workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH`; omitted roots use the selected environment and actual frontend workspace layout, then the sibling runtime default. | `owner_status::inspect_owner_acceptance_status_v1` |
 | `hepta-nested-runtime-qualification` | the incumbent 18 flags/environment bindings, or `--request ABSOLUTE_JSON_PATH` | `nested_runtime_cli::nested_runtime_qualification_cli_v1` / `nested_runtime_qualification::verify_nested_runtime_platform_qualification_file_v1` |
@@ -86,8 +88,16 @@ postflight snapshot prevent a file change during inspection from retaining an
 accepted result. These restrictions are
 stricter than the legacy owner loader and require explicit compatibility review.
 Missing/malformed acceptance files produce pending status; a missing, invalid or
-drifted source matrix/manifest is an error. The Node matrix builder's unrelated
-operational/conformance inspection is not implemented by this owner-only command.
+drifted source matrix/manifest is an error. The standalone typed owner retains
+its existing matrix/manifest input contract. The normal `verify owner` entry
+first observes the incumbent source provenance, reconstructed family and
+capability target/test coverage before applying the same imported signature
+projection. Relative runtime/assets environment values resolve from the actual
+workspace used by the Node group worker. Both normal governance entries share
+the CLI signal adapter with ordinary store inspection: retained resources close
+before restoring SIGINT/SIGTERM status; blocked stdout and SIGKILL/fresh retry
+are exercised by actual subprocess differential tests. Imported material and
+resource-refusal compatibility still require complete independent route review.
 
 ## Nested runtime qualification request
 
@@ -159,12 +169,14 @@ declared by `rust/rust-toolchain.toml`:
 ```sh
 cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
   --test operational_status_parity --test owner_status_parity \
+  --test canonical_governance_grammar_parity \
   --test nested_runtime_qualification_parity --test nested_runtime_cli \
   --test journal_connector_coverage_parity --test journal_qualification_parity
 cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
   --lib operational_status::bounded::tests:: -- --test-threads=2
 cargo clippy --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
   --all-targets -- -D warnings
+node --test paper-core/tests/native-governance-status-normal.test.mjs
 node docs/tools/audit-node-rust-coverage.mjs
 node docs/tools/generate-node-rust-gap-report.mjs --check
 ```

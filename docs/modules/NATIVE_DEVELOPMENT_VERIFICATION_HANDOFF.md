@@ -70,3 +70,17 @@ owner and occur in that target's unique test inventory; zero or duplicate
 inventory rows refuse. The inventory cache is local to the running process and
 is never loaded from an earlier receipt. Exact execution and transcript checks
 remain separate, and exact head and prospective merge retain separate runs.
+
+The functional source verifier similarly discovers a compiled target once for
+its current invocation, but starts a separate actual test executable for every
+declared owner. Qualified Cargo supplies the actual runtime environment through
+its bound capture process. Selectors, ignored recovery selection, inventory,
+source/tool hashes, executable identity and complete test summaries remain
+checked before and after execution within each declaration's original budget.
+The workflow selects the actual qualified Cargo executable through `rustup
+which`, rather than canonicalizing the dispatch proxy. JavaScript test bindings
+use the exact printable test title and still require that title in the pinned
+source and complete actual TAP output; Rust symbol bindings retain identifier
+syntax. The executable regressions are
+`paper-core/tests/source-evidence-target-reuse.test.mjs` and
+`paper-core/tests/source-implementation-evidence.test.mjs`.

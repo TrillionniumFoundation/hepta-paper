@@ -165,15 +165,15 @@
       "context": "rust-functional-source-exact-head",
       "workflowId": 355736976,
       "workflowPath": ".github/workflows/rust-functional-source-closure.yml",
-      "workflowGitBlobSha": "5735710177fb0841fc7406e24e8dbafc406f32ca",
-      "workflowSha256": "sha256:2b8f20758c3c05de491c644b6653638b7a79d489680953a6e1162eb7753bebba"
+      "workflowGitBlobSha": "48b03b3dfee6fa2885a1040f1f1b7f193efd267d",
+      "workflowSha256": "sha256:79b0b6195adc661baf2e8386c17755738c5e6925d26cba3a380a51eb08d2ec39"
     },
     {
       "context": "rust-functional-source-prospective-merge",
       "workflowId": 355736976,
       "workflowPath": ".github/workflows/rust-functional-source-closure.yml",
-      "workflowGitBlobSha": "5735710177fb0841fc7406e24e8dbafc406f32ca",
-      "workflowSha256": "sha256:2b8f20758c3c05de491c644b6653638b7a79d489680953a6e1162eb7753bebba"
+      "workflowGitBlobSha": "48b03b3dfee6fa2885a1040f1f1b7f193efd267d",
+      "workflowSha256": "sha256:79b0b6195adc661baf2e8386c17755738c5e6925d26cba3a380a51eb08d2ec39"
     },
     {
       "context": "product-targets (exact-head)",

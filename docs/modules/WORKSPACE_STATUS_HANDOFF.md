@@ -99,3 +99,24 @@ the default host timezone and its declared timezone cases. The ordinary suite
 also exercises SQL value types, malformed schema, handoff file boundaries,
 argument refusals and interrupted WAL coordination. Results bind the current
 commit and selected tool bytes; this document stores no reusable passing count.
+
+## Ordinary package command synchronization
+
+`hepta-paper-rust maintenance command-surface-sync` is the nullary normal route.
+It selects the physical worker workspace through the existing root owner and
+calls the ordered `command_surface` implementation with actual package writing.
+The separate `command-surface ROOT` diagnostic retains its explicit modes. The
+normal route's argument rejection, generated package bytes and blocked JSON/exit
+behavior are compared with the actual Node route in
+`paper-core/tests/native-command-surface-normal.test.mjs`.
+
+Package input and generated output have a closed 16 MiB limit because Node
+string/array scripts coercion can grow the package on its first synchronization.
+The implementation reuses the existing `ProductionJsonValue` parser to preserve
+UTF-16 values through rewriting and fresh retry. Other workspace observations
+retain their 64 KiB package budget. Aliases, hardlinks, changed observations and
+oversize packages refuse. Atomic crash-safe publication and concurrent
+replacement acceptance remain open: the current write is still in-place. The
+[canonical route ledger](../migration/node-rust-command-map.v2.json) owns the
+acceptance state; this development route grants no release, submission, writer
+cutover or Node retirement authority.

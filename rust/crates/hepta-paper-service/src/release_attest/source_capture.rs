@@ -450,28 +450,19 @@ impl ProvenanceObservationV1 for Owner<'_> {
     }
 }
 
-pub fn inspect_release_attestation_source_v2(
-    request: ReleaseAttestationSourceRequestV2,
-) -> Result<Value> {
-    inspect_release_attestation_source_with_cancellation_v2(request, &AtomicBool::new(false))
-}
-/// Cancellation uses the existing bounded process owner. The source budget
-/// covers every regular read, including each repeated provenance observation.
-pub fn inspect_release_attestation_source_with_cancellation_v2(
-    request: ReleaseAttestationSourceRequestV2,
-    cancelled: &AtomicBool,
-) -> Result<Value> {
-    if request.version != 2
-        || request.kind != "ReleaseAttestationSourceRequest"
-        || !hex(&request.expected_commit, 40)
-        || !hex(&request.expected_tree, 40)
-        || !digest(&request.expected_release_state_snapshot_hash)
-        || !digest(&request.git_executable_sha256)
-        || !(1..=600_000).contains(&request.timeout_ms)
-        || !request.workspace_root.is_absolute()
+fn initialize_owner<'a>(
+    request: &'a ReleaseAttestationSourceRequestV2,
+    cancelled: &'a AtomicBool,
+    expected_pin: Option<&str>,
+) -> Result<Owner<'a>> {
+    if !request.workspace_root.is_absolute()
         || !request.git_executable.is_absolute()
+        || !(1..=600_000).contains(&request.timeout_ms)
     {
         return Err(error("request_invalid"));
+    }
+    if cancelled.load(Ordering::Acquire) {
+        return Err(error("cancelled"));
     }
     // No ambient credentials, release override, Git redirection, hooks or
     // launcher classification reaches the fixed read-only observations.
@@ -534,7 +525,7 @@ pub fn inspect_release_attestation_source_with_cancellation_v2(
         return Err(error("git_executable_invalid"));
     }
     let mut owner = Owner {
-        request: &request,
+        request,
         cancelled,
         started: Instant::now(),
         environment,
@@ -567,12 +558,40 @@ pub fn inspect_release_attestation_source_with_cancellation_v2(
         return Err(error("git_executable_invalid"));
     }
     let actual_tool = owner.read_file(&request.git_executable, MAX_FILE_BYTES)?;
-    if hash(&actual_tool.bytes) != request.git_executable_sha256
+    if expected_pin.is_some_and(|pin| hash(&actual_tool.bytes) != pin)
         || !actual_tool.bytes.starts_with(b"\x7fELF")
     {
         return Err(error("git_executable_pin_mismatch"));
     }
     owner.tool = actual_tool;
+    owner.assert_current()?;
+    Ok(owner)
+}
+
+pub fn inspect_release_attestation_source_v2(
+    request: ReleaseAttestationSourceRequestV2,
+) -> Result<Value> {
+    inspect_release_attestation_source_with_cancellation_v2(request, &AtomicBool::new(false))
+}
+/// Cancellation uses the existing bounded process owner. The source budget
+/// covers every regular read, including each repeated provenance observation.
+pub fn inspect_release_attestation_source_with_cancellation_v2(
+    request: ReleaseAttestationSourceRequestV2,
+    cancelled: &AtomicBool,
+) -> Result<Value> {
+    if request.version != 2
+        || request.kind != "ReleaseAttestationSourceRequest"
+        || !hex(&request.expected_commit, 40)
+        || !hex(&request.expected_tree, 40)
+        || !digest(&request.expected_release_state_snapshot_hash)
+        || !digest(&request.git_executable_sha256)
+        || !(1..=600_000).contains(&request.timeout_ms)
+        || !request.workspace_root.is_absolute()
+        || !request.git_executable.is_absolute()
+    {
+        return Err(error("request_invalid"));
+    }
+    let mut owner = initialize_owner(&request, cancelled, Some(&request.git_executable_sha256))?;
     owner.tree = git_binding::capture_tree(&owner)?;
     git_binding::assert_object_integrity(&owner)?;
     let before = current_bounded_code_provenance_v1(&request.workspace_root, &mut owner)?;
@@ -648,6 +667,97 @@ pub fn inspect_release_attestation_source_with_cancellation_v2(
         .to_string()
     );
     Ok(report)
+}
+
+/// Select ordinary-command source assertions from actual observations. This is
+/// a bootstrap, not qualification: subsequent replay must match this request.
+/// It accepts no caller commit, tree, snapshot, executable or acceptance count.
+pub(crate) struct PreparedReleaseAttestationSourceV3 {
+    pub request: ReleaseAttestationSourceRequestV2,
+    pub release_state_snapshot: Value,
+}
+pub(crate) fn prepare_release_attestation_source_with_cancellation_v3(
+    workspace_root: &Path,
+    timeout_ms: u64,
+    cancelled: &AtomicBool,
+) -> Result<PreparedReleaseAttestationSourceV3> {
+    let provisional = ReleaseAttestationSourceRequestV2 {
+        version: 2,
+        kind: "ReleaseAttestationSourceRequest".into(),
+        workspace_root: workspace_root.to_owned(),
+        git_executable: "/usr/bin/git".into(),
+        git_executable_sha256: format!("sha256:{}", "0".repeat(64)),
+        expected_commit: "0".repeat(40),
+        expected_tree: "0".repeat(40),
+        expected_release_state_snapshot_hash: format!("sha256:{}", "0".repeat(64)),
+        timeout_ms,
+    };
+    let owner = initialize_owner(&provisional, cancelled, None)?;
+    let query_oid = |reference: &str| -> Result<String> {
+        let raw = owner.query(workspace_root, &["rev-parse", "--verify", reference], None)?;
+        let value = std::str::from_utf8(&raw).map_err(|_| error("bootstrap_oid_invalid"))?;
+        let value = value
+            .strip_suffix('\n')
+            .ok_or_else(|| error("bootstrap_oid_invalid"))?;
+        if !hex(value, 40) {
+            return Err(error("bootstrap_oid_invalid"));
+        }
+        Ok(value.to_owned())
+    };
+    let mut selected = provisional.clone();
+    selected.expected_commit = query_oid("HEAD^{commit}")?;
+    selected.expected_tree = query_oid("HEAD^{tree}")?;
+    selected.git_executable_sha256 = hash(&owner.tool.bytes);
+    // Rebind only the source assertions; all held bytes, namespace witnesses,
+    // start time and actual byte accounting remain in the same owner.
+    let mut owner = Owner {
+        request: &selected,
+        cancelled: owner.cancelled,
+        started: owner.started,
+        environment: owner.environment,
+        directories: owner.directories,
+        source_bytes: owner.source_bytes,
+        source_entries: owner.source_entries,
+        tree: owner.tree,
+        observed: owner.observed,
+        gitlink_references: owner.gitlink_references,
+        tool: owner.tool,
+    };
+    owner.tree = git_binding::capture_tree(&owner)?;
+    git_binding::assert_object_integrity(&owner)?;
+    let before = current_bounded_code_provenance_v1(workspace_root, &mut owner)?;
+    let selected_tree = owner.tree.clone();
+    let actual_payloads = owner.observed.clone();
+    git_binding::assert_blob_binding(&mut owner, &selected_tree, &actual_payloads)?;
+    let first = snapshot::capture(&mut owner)?;
+    let second = snapshot::capture(&mut owner)?;
+    let after = current_bounded_code_provenance_v1(workspace_root, &mut owner)?;
+    let selected_tree = owner.tree.clone();
+    let actual_payloads = owner.observed.clone();
+    git_binding::assert_blob_binding(&mut owner, &selected_tree, &actual_payloads)?;
+    if before != after
+        || first.value != second.value
+        || after["treeDirty"] != false
+        || after["commit"] != selected.expected_commit
+        || after["commitTree"] != selected.expected_tree
+    {
+        return Err(error("bootstrap_source_changed_or_dirty"));
+    }
+    git_binding::assert_object_integrity(&owner)?;
+    first.assert_current()?;
+    second.assert_current()?;
+    owner.assert_current()?;
+    let snapshot_hash = second.value["workspaceReleaseStateSnapshotHash"]
+        .as_str()
+        .filter(|v| digest(v))
+        .ok_or_else(|| error("bootstrap_snapshot_invalid"))?
+        .to_owned();
+    drop(owner);
+    selected.expected_release_state_snapshot_hash = snapshot_hash;
+    Ok(PreparedReleaseAttestationSourceV3 {
+        request: selected,
+        release_state_snapshot: second.value,
+    })
 }
 
 #[cfg(test)]

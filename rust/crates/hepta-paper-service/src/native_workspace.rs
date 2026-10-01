@@ -52,6 +52,19 @@ pub fn resolve_native_command_workspace_root_v1(
     environment: &BTreeMap<String, String>,
     explicit_root: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    resolve_native_command_workspace_root_with_context_v1(
+        working_directory,
+        environment,
+        explicit_root,
+        false,
+    )
+}
+fn resolve_native_command_workspace_root_with_context_v1(
+    working_directory: &Path,
+    environment: &BTreeMap<String, String>,
+    explicit_root: Option<&Path>,
+    command_surface: bool,
+) -> Result<PathBuf, String> {
     if let Some(selected) = explicit_root.or_else(|| {
         environment
             .get("HEPTA_PAPER_WORKSPACE_ROOT")
@@ -92,7 +105,7 @@ pub fn resolve_native_command_workspace_root_v1(
         let root = physical_parent
             .parent()
             .ok_or("native_workspace_root_required")?;
-        if deployment_marker(root)? {
+        if deployment_marker(root, command_surface)? {
             return resolve_native_workspace_root_v1(working_directory, root, None);
         }
     }
@@ -104,10 +117,27 @@ pub fn resolve_native_command_workspace_root_v1(
 pub fn current_native_command_workspace_root_v1(
     explicit_root: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    current_native_command_workspace_root_with_context_v1(explicit_root, false)
+}
+/// Ordinary package synchronization can grow its own metadata through Node
+/// string/array coercion. Only this closed context uses the package owner's
+/// fixed input/output budget and UTF-16-compatible marker projection.
+pub fn current_native_command_surface_workspace_root_v1() -> Result<PathBuf, String> {
+    current_native_command_workspace_root_with_context_v1(None, true)
+}
+fn current_native_command_workspace_root_with_context_v1(
+    explicit_root: Option<&Path>,
+    command_surface: bool,
+) -> Result<PathBuf, String> {
     let cwd =
         std::env::current_dir().map_err(|_| "native_workspace_working_directory_unavailable")?;
     if explicit_root.is_some() {
-        return resolve_native_command_workspace_root_v1(&cwd, &BTreeMap::new(), explicit_root);
+        return resolve_native_command_workspace_root_with_context_v1(
+            &cwd,
+            &BTreeMap::new(),
+            explicit_root,
+            command_surface,
+        );
     }
     let environment = match std::env::var("HEPTA_PAPER_WORKSPACE_ROOT") {
         Ok(value) => BTreeMap::from([("HEPTA_PAPER_WORKSPACE_ROOT".to_owned(), value)]),
@@ -116,7 +146,12 @@ pub fn current_native_command_workspace_root_v1(
             return Err("native_workspace_root_invalid".into());
         }
     };
-    resolve_native_command_workspace_root_v1(&cwd, &environment, explicit_root)
+    resolve_native_command_workspace_root_with_context_v1(
+        &cwd,
+        &environment,
+        explicit_root,
+        command_surface,
+    )
 }
 
 /// An explicit runtime path has no dependency on an unrelated workspace. Only
@@ -137,7 +172,7 @@ pub fn current_native_command_runtime_root_v1() -> Result<PathBuf, String> {
         .join("hepta-paper-runtime/native-runtime"))
 }
 
-fn deployment_marker(root: &Path) -> Result<bool, String> {
+fn deployment_marker(root: &Path, command_surface: bool) -> Result<bool, String> {
     for relative in ["paper-core", "paper-core/bin", "paper-core/config"] {
         let Ok(metadata) = fs::symlink_metadata(root.join(relative)) else {
             return Ok(false);
@@ -145,6 +180,30 @@ fn deployment_marker(root: &Path) -> Result<bool, String> {
         if !metadata.is_dir() || metadata.is_symlink() {
             return Ok(false);
         }
+    }
+    if command_surface {
+        let bytes = match read_native_workspace_package_bytes_with_limit_v1(
+            root,
+            crate::command_surface::COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1,
+        ) {
+            Ok(bytes) => bytes,
+            Err(cause) if cause == "native_workspace_marker_changed" => return Err(cause),
+            Err(_) => return Ok(false),
+        };
+        use hepta_legacy_compatibility::ProductionJsonValue as Node;
+        let Ok(Node::Object(entries)) =
+            hepta_legacy_compatibility::parse_production_json_v1(&bytes)
+        else {
+            return Ok(false);
+        };
+        let expected_name: Vec<u16> = "name".encode_utf16().collect();
+        let expected_value: Vec<u16> = "hepta-paper-workspace".encode_utf16().collect();
+        return Ok(entries
+            .into_iter()
+            .find(|(key, _)| *key == expected_name)
+            .is_some_and(
+                |(_, value)| matches!(value, Node::String(value) if value == expected_value),
+            ));
     }
     match read_native_workspace_package_v1(root) {
         Ok(value) => {
@@ -160,6 +219,19 @@ fn deployment_marker(root: &Path) -> Result<bool, String> {
 /// package metadata. This checks a cooperative before/after observation; the
 /// returned JSON never authenticates deployment or publication authority.
 pub fn read_native_workspace_package_v1(root: &Path) -> Result<serde_json::Value, String> {
+    let bytes = read_native_workspace_package_bytes_with_limit_v1(root, 64 * 1024)?;
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|_| "native_workspace_marker_invalid".into())
+}
+pub(crate) fn read_native_workspace_package_bytes_with_limit_v1(
+    root: &Path,
+    maximum_bytes: u64,
+) -> Result<Vec<u8>, String> {
+    if maximum_bytes == 0
+        || maximum_bytes > crate::command_surface::COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1
+    {
+        return Err("native_workspace_marker_invalid".into());
+    }
     let marker = root.join("package.json");
     let mut file = OpenOptions::new()
         .read(true)
@@ -169,12 +241,13 @@ pub fn read_native_workspace_package_v1(root: &Path) -> Result<serde_json::Value
     let before = file
         .metadata()
         .map_err(|_| "native_workspace_marker_unreadable")?;
-    if !before.is_file() || before.nlink() != 1 || before.len() == 0 || before.len() > 64 * 1024 {
+    if !before.is_file() || before.nlink() != 1 || before.len() == 0 || before.len() > maximum_bytes
+    {
         return Err("native_workspace_marker_invalid".into());
     }
     let mut bytes = Vec::new();
     (&mut file)
-        .take(64 * 1024 + 1)
+        .take(maximum_bytes + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| "native_workspace_marker_unreadable")?;
     let after = file
@@ -202,6 +275,5 @@ pub fn read_native_workspace_package_v1(root: &Path) -> Result<serde_json::Value
     {
         return Err("native_workspace_marker_changed".into());
     }
-    serde_json::from_slice::<serde_json::Value>(&bytes)
-        .map_err(|_| "native_workspace_marker_invalid".into())
+    Ok(bytes)
 }

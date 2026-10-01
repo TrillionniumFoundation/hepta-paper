@@ -16,8 +16,13 @@ use hepta_codex_runtime::{
 };
 use hepta_control_plane::canonical_hash_v1;
 pub use policy::{
-    ReleaseAttestationMeasuredPolicyReplayRequestV8, ReleaseAttestationPolicyReplayRequestV4,
+    ReleaseAttestationMeasuredPolicyReplayRequestV8,
+    ReleaseAttestationNativeAstPolicyReplayRequestV9,
+    ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
+    ReleaseAttestationPolicyReplayRequestV4,
     inspect_release_attestation_measured_policy_replay_with_cancellation_v8,
+    inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9,
+    inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10,
     inspect_release_attestation_policy_replay_v4,
     inspect_release_attestation_policy_replay_with_cancellation_v4,
 };

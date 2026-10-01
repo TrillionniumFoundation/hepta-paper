@@ -66,6 +66,7 @@ pub mod pristine_runtime_state;
 mod production;
 pub mod qualification_stored_evidence;
 pub mod release_attest;
+pub mod release_evidence;
 pub mod release_integrity_key;
 pub mod release_replay;
 pub mod release_state;

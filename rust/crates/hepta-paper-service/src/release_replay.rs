@@ -1,6 +1,8 @@
 //! Native replay calculations. Differential evidence observes actual legacy
 //! reference bytes; these calculations grant no signing or release authority.
+pub(crate) mod local_signature;
 pub mod production_core;
+pub mod python_ast;
 pub mod referee;
 
 use serde::Deserialize;
@@ -85,9 +87,13 @@ pub const REFEREE_REPLAY_CORPUS_V1: &str = include_str!("release_replay/referee-
 
 mod execution;
 pub use execution::{
-    ReleaseAttestationMeasuredPolicyReplayRequestV8, ReleaseAttestationPolicyReplayRequestV4,
-    ReleaseAttestationReplayRequestV3,
+    ReleaseAttestationMeasuredPolicyReplayRequestV8,
+    ReleaseAttestationNativeAstPolicyReplayRequestV9,
+    ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
+    ReleaseAttestationPolicyReplayRequestV4, ReleaseAttestationReplayRequestV3,
     inspect_release_attestation_measured_policy_replay_with_cancellation_v8,
+    inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9,
+    inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10,
     inspect_release_attestation_policy_replay_v4,
     inspect_release_attestation_policy_replay_with_cancellation_v4,
     inspect_release_attestation_replay_v3, inspect_release_attestation_replay_with_cancellation_v3,

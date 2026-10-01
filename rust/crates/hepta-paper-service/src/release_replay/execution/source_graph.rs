@@ -223,6 +223,9 @@ impl SourceGraph {
         input.assert_identity()?;
         Ok(bytes)
     }
+    pub(super) fn paths(&self) -> impl Iterator<Item = &str> {
+        self.inputs.iter().map(|input| input.relative.as_str())
+    }
     pub(super) fn read_bytes(&self) -> u64 {
         self.read_bytes
     }

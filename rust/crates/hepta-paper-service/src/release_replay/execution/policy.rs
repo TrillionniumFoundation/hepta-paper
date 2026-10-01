@@ -1,12 +1,15 @@
 //! Native matrix policy calculations over independently captured source bytes.
 //! Fixed Node suites are explicit differential observers, never product owners.
 mod archive;
+mod current_worker;
 mod facts;
 mod measured_profile;
+mod native_profile;
 mod node_assets;
 mod node_packages;
 mod private_tree;
 mod pure_matching;
+mod retirement_policy;
 use super::{Owner, ReleaseAttestationReplayRequestV3, SourceGraph, Tool, digest, error};
 use archive::PinnedArchive;
 use facts::{Matrix, Reference, graph_paths, inspect_rows, validate_contract};
@@ -17,6 +20,10 @@ use hepta_codex_runtime::{
 use hepta_control_plane::canonical_hash_v1;
 pub use measured_profile::ReleaseAttestationMeasuredPolicyReplayRequestV8;
 use measured_profile::SourceLimits;
+pub use native_profile::{
+    ReleaseAttestationNativeAstPolicyReplayRequestV9,
+    ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
+};
 use private_tree::PrivateTree;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -179,20 +186,64 @@ pub fn inspect_release_attestation_policy_replay_with_cancellation_v4(
     request: ReleaseAttestationPolicyReplayRequestV4,
     cancelled: &AtomicBool,
 ) -> Result<Value, String> {
-    inspect_policy(request, cancelled, SourceLimits::OriginalV4, 4)
+    inspect_policy(
+        request,
+        cancelled,
+        SourceLimits::OriginalV4,
+        4,
+        false,
+        false,
+    )
 }
 pub fn inspect_release_attestation_measured_policy_replay_with_cancellation_v8(
     request: ReleaseAttestationMeasuredPolicyReplayRequestV8,
     cancelled: &AtomicBool,
 ) -> Result<Value, String> {
     measured_profile::validate(&request)?;
-    inspect_policy(request.policy, cancelled, SourceLimits::Measured263V1, 8)
+    inspect_policy(
+        request.policy,
+        cancelled,
+        SourceLimits::Measured263V1,
+        8,
+        false,
+        false,
+    )
+}
+pub fn inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9(
+    request: ReleaseAttestationNativeAstPolicyReplayRequestV9,
+    cancelled: &AtomicBool,
+) -> Result<Value, String> {
+    native_profile::validate(&request)?;
+    inspect_policy(
+        request.policy.policy,
+        cancelled,
+        SourceLimits::Measured263V1,
+        9,
+        true,
+        false,
+    )
+}
+pub fn inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10(
+    request: ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
+    cancelled: &AtomicBool,
+) -> Result<Value, String> {
+    native_profile::validate_retirement(&request)?;
+    inspect_policy(
+        request.policy.policy.policy,
+        cancelled,
+        SourceLimits::Measured263V1,
+        10,
+        true,
+        true,
+    )
 }
 fn inspect_policy(
     request: ReleaseAttestationPolicyReplayRequestV4,
     cancelled: &AtomicBool,
     source_limits: SourceLimits,
     output_version: u16,
+    native_ast_enabled: bool,
+    native_retirement_enabled: bool,
 ) -> Result<Value, String> {
     if request.version != 4
         || request.kind != "ReleaseAttestationPolicyReplayRequest"
@@ -257,6 +308,25 @@ fn inspect_policy(
         return Err(error("policy_node_profile_invalid"));
     }
     let pure_matches = pure_matching::inspect(&owner, &node)?;
+    let native_ast = if native_ast_enabled {
+        Some(current_worker::observe_native_python_ast_v1(
+            &mut owner, &matrix, &mut graph, &python, &mut tree,
+        )?)
+    } else {
+        None
+    };
+    let mut native_retirement = if native_retirement_enabled {
+        Some(retirement_policy::inspect(
+            &mut owner,
+            &mut graph,
+            &matrix,
+            native_ast
+                .as_ref()
+                .ok_or_else(|| error("native_retirement_ast_required"))?,
+        )?)
+    } else {
+        None
+    };
     let mut executions = BTreeMap::new();
     for (index, (suite, kind)) in SUITES.iter().enumerate() {
         owner.remaining()?;
@@ -319,6 +389,9 @@ fn inspect_policy(
         }
         executions.insert((*suite).to_owned(),json!({"path":suite,"scope":"fixed_node_behavior_differential_observer","runtimeIsolation":"independent_private_runtime_per_unique_suite","actualResult":observed,"process":receipt}));
     }
+    if let Some(observed) = &mut native_retirement {
+        retirement_policy::compare(observed, &executions)?;
+    }
     for row in &mut rows {
         let actual = row["behaviorTests"]
             .as_array()
@@ -336,6 +409,16 @@ fn inspect_policy(
         row["nativeFactsVerified"] = json!(true);
         row["verified"] = json!(false);
         row["rustBehavioralSuiteMatchingComplete"] = json!(false);
+        if native_retirement.as_ref().is_some_and(|observed| {
+            row["sourcePath"]
+                .as_str()
+                .is_some_and(|path| observed.accepted_source_paths.contains(path))
+        }) {
+            row["nativeExplicitRetirementPolicyComplete"] = json!(true);
+            row["status"] =
+                json!("native_complete_explicit_retirement_policy_and_full_node_suite_matched");
+        }
+
         row["rustFixedCorpusMatches"] = json!(
             row["behaviorTests"]
                 .as_array()
@@ -374,6 +457,22 @@ fn inspect_policy(
         .ok_or_else(|| error("policy_source_report_invalid"))?
         .clone();
     let mut report = json!({"version":output_version,"kind":"ReleaseAttestationPolicyReplayInspection","status":"release_attestation_blocked","sourceBound":true,"nativeSourceCapture":after["nativeSourceCapture"],"matrixPolicyReplay":{"status":"native_matrix_facts_and_node_observers_captured","scope":"263_hash_bound_source_facts_fixed_node_observers_and_two_native_pure_corpus_matches","matrixSha256":digest(&matrix_bytes),"referenceSha256":digest(&reference_bytes),"archive":archive.report(),"archiveExtraction":extraction,"entryCount":rows.len(),"observedBehavioralReplacementRowCount":behavioral,"observedExplicitRetirementRowCount":retired,"verifiedRustBehavioralReplacementCount":0,"uniqueBehaviorTestExecutionCount":executions.len(),"sharedTestsExecutedOnce":true,"functionalParityClaimAllowed":false,"explicitRetirementIsNotBehavioralMigration":true,"nativeMatrixFactsInspectionComplete":true,"policyReplayComplete":false,"rustBehavioralSuiteMatchingComplete":false,"rustFixedCorpusMatchingSuiteCount":pure_matches.len(),"rustFixedCorpusMatches":pure_matches.values().collect::<Vec<_>>(),"fullRestoredArchiveAndRuntimeReplayComplete":false,"fullRustProductImplementationClaimed":false,"rows":rows,"behaviorExecutions":executions.values().collect::<Vec<_>>(),"nodeProfile":profile,"profileProcess":profile_process,"nodePackageInputs":node_package_inputs,"nodeAssetInputs":node_assets.report()},"implementationBlockers":implementation,"externalQualificationBlockers":after["externalQualificationBlockers"],"technicalLocalChecksReady":false,"releaseEvidenceReady":false,"signingKeyRead":false,"runtimeEvidenceWritten":false,"physicalDeletionAllowed":false,"nodeRetirement":false,"externalActionPerformed":false,"temporaryRuntimeCleanupVerified":true,"sourceGraph":graph.report(),"resourceLimits":{"sourceArchiveProfile":source_limits.report(),"maximumArchiveBytes":source_limits.archive(),"maximumExtractedSourceBytes":source_limits.selected(),"maximumProcessStdinBytes":64*1024*1024,"maximumProcessStdoutBytes":64*1024*1024,"maximumSourceInputFileBytes":4*1024*1024,"aggregateObservedReadBytes":1024*1024*1024,"observerStdoutBytes":16*1024*1024,"sourceCaptureCount":2,"perCaptureMaximumSourceBytes":2_u64*1024*1024*1024,"timeoutMs":request.replay.timeout_ms},"observedReadBytes":owner.read_bytes});
+    if let Some((actual, receipt)) = native_ast {
+        report["matrixPolicyReplay"]["nativePythonAstObservations"] = json!({"version":1,"scope":"actual_245_immutable_archive_python_ast_observations_only","sameInputIndependentPythonAstVerified":true,"actual":actual,"worker":receipt,"fullBehavioralSuiteMatchingComplete":false});
+        report["matrixPolicyReplay"]["scope"] = json!(
+            "263_hash_bound_source_facts_fixed_node_observers_two_native_pure_corpus_matches_and_245_actual_native_ast_matches"
+        );
+    }
+    if let Some(observed) = native_retirement {
+        report["matrixPolicyReplay"]["nativeExplicitRetirementPolicies"] = observed.receipt;
+        report["matrixPolicyReplay"]["verifiedNativeExplicitRetirementCount"] =
+            json!(observed.accepted_source_paths.len());
+        report["matrixPolicyReplay"]["completeNativeExplicitRetirementSuiteCount"] =
+            json!(observed.summaries.len());
+        report["matrixPolicyReplay"]["scope"] = json!(
+            "263_source_facts_245_native_ast_matches_two_native_pure_corpora_and_24_complete_explicit_retirement_policies"
+        );
+    }
     let mut blockers = implementation;
     blockers.extend(
         after["externalQualificationBlockers"]

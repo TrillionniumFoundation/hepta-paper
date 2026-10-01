@@ -305,25 +305,42 @@ pub fn inspect_owner_acceptance_status_v1(
     workspace_root: &Path,
     runtime_root: &Path,
 ) -> Result<Value> {
+    inspect_owner_acceptance_status_with_cancellation_v1(
+        workspace_root,
+        runtime_root,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+}
+/// The typed owner projection keeps its existing input contract; cancellation
+/// only interrupts reads and never changes imported authority validation.
+pub fn inspect_owner_acceptance_status_with_cancellation_v1(
+    workspace_root: &Path,
+    runtime_root: &Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<Value> {
     // Source files may belong to a group-writable development checkout. Public
     // trust and acceptance intake must not be writable by group or others.
-    let matrix = reader::read(
+    let matrix = reader::read_with_cancellation(
         &workspace_root.join("migration/legacy-semantic-migration-matrix.json"),
         false,
+        cancelled,
     )?;
-    let manifest = reader::read(
+    let manifest = reader::read_with_cancellation(
         &workspace_root
             .join("paper-domain/governance/legacy-owner-acceptance-family-manifest.v1.json"),
         false,
+        cancelled,
     )?;
-    let document = reader::read(
+    let document = reader::read_with_cancellation(
         &runtime_root.join("owner-acceptance/CAPABILITY_OWNER_ACCEPTANCE.json"),
         true,
+        cancelled,
     )
     .ok();
-    let trust = reader::read(
+    let trust = reader::read_with_cancellation(
         &runtime_root.join("owner-acceptance/OWNER_TRUST_STORE.json"),
         true,
+        cancelled,
     )
     .ok();
     let result = owner_acceptance_status_from_values_v1(
@@ -349,6 +366,9 @@ pub fn inspect_owner_acceptance_status_v1(
             &Value::Null,
             &Value::Null,
         );
+    }
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(error("owner_acceptance_cancelled"));
     }
     Ok(result)
 }

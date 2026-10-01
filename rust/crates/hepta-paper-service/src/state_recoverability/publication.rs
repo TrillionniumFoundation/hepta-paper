@@ -149,6 +149,20 @@ impl Directory {
             "autonomous_research_state_backup_publication_path_changed_or_unsafe",
         )
     }
+    /// Sync held ancestors after creating a nested local publication layout.
+    /// All existing owner and no-alias guards remain in effect.
+    pub(crate) fn sync_with_parents(&self) -> Result<()> {
+        self.assert_current()?;
+        for held in self
+            .parents
+            .iter()
+            .map(|(_, file)| file)
+            .chain(std::iter::once(&self.held))
+        {
+            held.sync_all().map_err(|_| failure())?;
+        }
+        self.assert_current()
+    }
     pub(crate) fn observe_empty_lock(&self, name: &str) -> Result<ObservedEmptyLock> {
         self.assert_current()?;
         ensure(

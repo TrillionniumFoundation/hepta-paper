@@ -63,6 +63,24 @@ pub struct ReadOnlyStoreSnapshotV1 {
 
 /// Opens and verifies a database without permitting WAL, SHM, DDL, or writes.
 pub fn inspect_read_only_store(path: &Path) -> Result<ReadOnlyStoreSnapshotV1, ReadOnlyStoreError> {
+    inspect_read_only_store_with_validator(path, validate_database_schema_v1)
+}
+
+/// Explicit known-installed immutable observation. No original authority rows
+/// are adopted, and the stricter original inspector keeps its base-only policy.
+pub fn inspect_known_installed_read_only_store_v1(
+    path: &Path,
+) -> Result<ReadOnlyStoreSnapshotV1, ReadOnlyStoreError> {
+    inspect_read_only_store_with_validator(
+        path,
+        node_schema::validate_known_installed_database_schema_v1,
+    )
+}
+
+fn inspect_read_only_store_with_validator(
+    path: &Path,
+    validator: fn(&Connection) -> Result<DatabaseSchemaV1, ReadOnlyStoreError>,
+) -> Result<ReadOnlyStoreSnapshotV1, ReadOnlyStoreError> {
     let before = inspect_identity(path)?;
     reject_sidecars(path)?;
     let uri = format!("file:{}?mode=ro&immutable=1", percent_encode_path(path)?);
@@ -76,7 +94,7 @@ pub fn inspect_read_only_store(path: &Path) -> Result<ReadOnlyStoreSnapshotV1, R
          PRAGMA trusted_schema = OFF;
          PRAGMA temp_store = MEMORY;",
     )?;
-    let schema = validate_database_schema_v1(&connection)?;
+    let schema = validator(&connection)?;
     let schema_version = schema.schema_version;
     let (table_count, row_count, logical_hash) = logical_snapshot(&connection, schema_version)?;
     drop(connection);

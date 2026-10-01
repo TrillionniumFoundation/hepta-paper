@@ -1,3 +1,5 @@
+#[path = "native_business_service/cas_submission.rs"]
+mod cas_submission;
 #[path = "native_business_service/dispatch_recovery.rs"]
 mod dispatch_recovery;
 

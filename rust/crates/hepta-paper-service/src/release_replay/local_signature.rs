@@ -87,7 +87,10 @@ pub(crate) fn sign_blocked_replay_diagnostic_v1(
         || payload["physicalDeletionAllowed"] != false
         || payload["nodeRetirement"] != false
         || payload["externalActionPerformed"] != false
-        || !matches!(payload["version"].as_u64(), Some(3 | 4 | 8 | 9 | 10))
+        || !matches!(
+            payload["version"].as_u64(),
+            Some(3 | 4 | 8 | 9 | 10 | 11 | 12 | 13)
+        )
     {
         return Err(error("blocked_diagnostic_contract_invalid"));
     }

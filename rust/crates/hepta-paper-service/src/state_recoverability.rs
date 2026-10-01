@@ -13,6 +13,17 @@ pub mod resident;
 pub mod safety_inspection;
 pub mod service;
 mod sqlite_copy;
+
+// Test-only adapter to the same production Backup kernel. It cannot become a
+// product launcher or confer live-state, writer, or authority qualification.
+#[cfg(test)]
+pub(crate) fn closed_private_backup_for_migration_test_v1(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> crate::sqlite_mutation_coordinator::Result<serde_json::Value> {
+    let directory = publication::Directory::open_or_create(destination, false)?;
+    sqlite_copy::copy(source, &directory, "recovered.sqlite", false)
+}
 use crate::sqlite_mutation_coordinator::clock::{MutationClockV1, iso};
 use crate::sqlite_mutation_coordinator::{Result, error, hash, hash_bytes, int, text, timestamp};
 use serde_json::{Value, json};

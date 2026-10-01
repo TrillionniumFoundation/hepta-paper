@@ -274,3 +274,74 @@ fn actual_worker_refusal_and_running_cancellation_close_existing_process_group()
     assert!(result.process.process_group_cleanup_verified);
     assert!(result.stdout.is_empty());
 }
+
+#[test]
+fn maintained_unicode_tables_observe_actual_cpython_version_and_preserve_explicit_scope_differences()
+ {
+    let fixture = Fixture::new();
+    let sources = [
+        "def café():\n    pass\n",
+        "变量=1\n",
+        "a\u{301}=1\n",
+        "\u{301}a=1\n",
+        "_=1\n",
+        "😀=1\n",
+        "\u{1c89}=1\n",
+        "\u{1e4d0}=1\n",
+        "\u{1f6dc}=1\n",
+        "\u{200c}=1\n",
+        "large=999999999999999999999999999999999999999999999999999999999999999999\n",
+    ];
+    let python = fs::canonicalize("/usr/bin/python3").unwrap();
+    // ast.parse observes syntax without executing any input. Python's actual
+    // Unicode version is evidence: current tables cannot imply all historical
+    // Python interpreters accept newer identifier code points.
+    let oracle = run(
+        &fixture,
+        &python,
+        vec!["-I".into(), "-c".into(), "import ast,json,sys,unicodedata\nr=[]\nfor s in json.load(sys.stdin):\n try:\n  ast.parse(s);r.append(True)\n except SyntaxError:\n  r.append(False)\nprint(json.dumps({'pythonVersion':sys.version.split()[0],'unicodeVersion':unicodedata.unidata_version,'accepted':r},sort_keys=True))".into()],
+        Some(serde_json::to_vec(&sources).unwrap()),
+        &AtomicBool::new(false),
+    );
+    exited(&oracle, 0);
+    let observed: Value = serde_json::from_slice(&oracle.stdout).unwrap();
+    let expected_native = [
+        true, true, true, false, true, true, true, true, true, false, true,
+    ];
+    let mut native_accepts = Vec::new();
+    for (source, accepted) in sources.iter().zip(expected_native) {
+        let input = serde_json::to_vec(&json!({"version":1,"kind":"NativePythonRetirementAstBatchRequest","cases":[{"version":1,"kind":"NativePythonRetirementAstRequest","profile":"build_package_v1","source":source}]})).unwrap();
+        let result = native(&fixture, input, &AtomicBool::new(false));
+        exited(&result, if accepted { 0 } else { 1 });
+        if accepted {
+            let output: Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(output["sourceExecuted"], false);
+            assert_eq!(output["productPythonDelegationPerformed"], false);
+        } else {
+            assert!(result.stdout.is_empty());
+        }
+        native_accepts.push(accepted);
+    }
+    let accepted = observed["accepted"].as_array().unwrap();
+    for index in [0, 1, 2, 3, 4, 7, 9, 10] {
+        assert_eq!(
+            accepted[index], expected_native[index],
+            "fixed XID/numeric boundary {index}"
+        );
+    }
+    assert_eq!(accepted[5], false);
+    assert_eq!(accepted[8], false);
+    let major: u32 = observed["unicodeVersion"]
+        .as_str()
+        .unwrap()
+        .split('.')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(accepted[6], major >= 16);
+    println!(
+        "{}",
+        json!({"kind":"ActualMaintainedParserUnicodeBoundaryObservationV1","pythonVersion":observed["pythonVersion"],"pythonUnicodeVersion":observed["unicodeVersion"],"nativeAccepted":native_accepts,"pythonAccepted":accepted,"generalHistoricalPythonUnicodeParityClaimed":false,"emojiIdentifierCompatibilityExtensionRetained":true,"sourceExecuted":false,"authorityGranted":false})
+    );
+}

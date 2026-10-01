@@ -749,3 +749,6 @@ fn ordinary_cli_publishes_exact_inputs_read_by_a_distinct_broker_principal() {
 
 #[path = "publication.rs"]
 mod publication;
+
+#[path = "budgets.rs"]
+mod budgets;

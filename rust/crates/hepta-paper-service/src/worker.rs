@@ -1,7 +1,7 @@
 use crate::{
     ObjectStoreV1, ServiceError,
     native_business::{
-        NativeBusinessJobV1, execute_native_business_for_capability_v1,
+        NativeBusinessJobV1, execute_native_business_with_objects_for_capability_v1,
         native_business_implementation_hash_v1,
     },
 };
@@ -446,9 +446,11 @@ impl ServiceExecutorV1 {
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::Business { job }) => {
-                let output = execute_native_business_for_capability_v1(
+                let output = execute_native_business_with_objects_for_capability_v1(
                     job,
                     &request.candidate.capability_id,
+                    &self.objects,
+                    &self.cancelled,
                 )
                 .map_err(|_| ServiceError::Execution)?;
                 let mut hashes = Vec::with_capacity(output.artifacts.len());

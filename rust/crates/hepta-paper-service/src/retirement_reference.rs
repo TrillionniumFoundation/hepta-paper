@@ -1,5 +1,5 @@
 //! Bounded read-only verification of the immutable legacy source snapshot.
-mod files;
+pub(crate) mod files;
 use files::{ReferenceRoot, ReferenceRootObservation, RetainedFile};
 use hepta_codex_runtime::{
     BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1, ProcessTerminationReason,

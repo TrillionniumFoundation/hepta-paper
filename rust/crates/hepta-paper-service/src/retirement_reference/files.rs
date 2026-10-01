@@ -88,17 +88,17 @@ impl Directory {
         Ok(())
     }
 }
-pub(super) struct ReferenceRoot {
+pub(crate) struct ReferenceRoot {
     directories: Vec<Directory>,
     path: PathBuf,
 }
-pub(super) enum ReferenceRootObservation {
+pub(crate) enum ReferenceRootObservation {
     Present(ReferenceRoot),
     Missing(MissingReferenceRoot),
 }
 /// A specific absent edge observed relative to the last retained ancestor.
 /// Both the edge and that parent's full metadata stay current through use.
-pub(super) struct MissingReferenceRoot {
+pub(crate) struct MissingReferenceRoot {
     directories: Vec<Directory>,
     edge: std::ffi::OsString,
 }
@@ -212,7 +212,7 @@ impl ReferenceRoot {
         }
         Ok(())
     }
-    pub fn open(&self, name: &str) -> Result<Option<RetainedFile>> {
+    pub(super) fn open(&self, name: &str) -> Result<Option<RetainedFile>> {
         Self::validate_name(name)?;
         self.assert_current()?;
         let mut parent = self

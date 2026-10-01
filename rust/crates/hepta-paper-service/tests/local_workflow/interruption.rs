@@ -162,6 +162,7 @@ fn check_signal(signal: Signal) {
     let binding = interruptible_binding(&cwd);
     let mut definition = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),

@@ -326,6 +326,7 @@ fn autonomous_executes_real_rust_workers_without_claiming_external_observation()
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),
@@ -366,6 +367,7 @@ fn autonomous_worker_crash_is_not_reexecuted_after_cli_restart() {
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),

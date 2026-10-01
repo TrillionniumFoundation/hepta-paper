@@ -1,4 +1,6 @@
-use hepta_paper_service::owner_status::inspect_owner_acceptance_status_v1;
+#[path = "shared/ordinary_readonly.rs"]
+mod ordinary_readonly;
+use hepta_paper_service::owner_status::inspect_owner_acceptance_status_with_cancellation_v1;
 use std::{
     env,
     path::{Component, Path, PathBuf},
@@ -71,8 +73,14 @@ fn run() -> Result<(), String> {
                 .join("hepta-paper-runtime/native-runtime")
         })
     });
-    let report = inspect_owner_acceptance_status_v1(&workspace_root, &runtime_root)
-        .map_err(|error| error.to_string())?;
+    let report = ordinary_readonly::with_node_termination_v1(|cancelled| {
+        Ok(inspect_owner_acceptance_status_with_cancellation_v1(
+            &workspace_root,
+            &runtime_root,
+            &cancelled,
+        )?)
+    })
+    .map_err(|error| error.to_string())?;
     println!(
         "{}",
         serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?

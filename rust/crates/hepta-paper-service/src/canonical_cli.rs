@@ -12,15 +12,39 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
         return Ok(None);
     }
     let name = args.get(1).map(String::as_str).ok_or("unknown_command")?;
+    if (group, name) == ("maintenance", "release-attest") {
+        if args.len() > 2 && args[2] != "--" {
+            return Err("command_arguments_require_separator".into());
+        }
+        if args.len() > 3 {
+            return Err("command_does_not_accept_arguments".into());
+        }
+        // The incumbent registry has no forwarding and already inserts the
+        // explicit execute flag in its fixed argv.
+        return Ok(Some(vec!["release-evidence".into(), "--execute".into()]));
+    }
     if (group, name) == ("operator", "autonomous-research") {
         if args.len() > 2 && args[2] != "--" {
             return Err("command_arguments_require_separator".into());
         }
         return canonical_research_arguments_v1(args.get(3..).unwrap_or_default()).map(Some);
     }
-    let (command, flags, maximum_positionals): (&str, &[&str], Option<usize>) = match (group, name)
-    {
-        ("operator", "workspace") => ("workspace-status", &["require-decoupled"], None),
+    if (group, name) == ("maintenance", "command-surface-sync") {
+        if args.len() > 2 && args[2] != "--" {
+            return Err("command_arguments_require_separator".into());
+        }
+        if !args.get(3..).unwrap_or_default().is_empty() {
+            return Err("command_does_not_accept_arguments".into());
+        }
+        return Ok(Some(vec!["ordinary-command-surface-sync".to_owned()]));
+    }
+    let (command, flags, maximum_positionals, forwarding_none): (
+        &str,
+        &[&str],
+        Option<usize>,
+        bool,
+    ) = match (group, name) {
+        ("operator", "workspace") => ("workspace-status", &["require-decoupled"], None, false),
         ("operator", "store") => (
             "store-status",
             &[
@@ -28,19 +52,27 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
                 "require-trust-clean",
             ],
             None,
+            false,
         ),
         ("verify", "repository-assets") => (
             "repository-assets",
             &["handoff", "require-externalized"],
             None,
+            false,
         ),
-        ("verify", "store") => ("ordinary-store-integrity", &[], Some(1)),
+        ("verify", "store") => ("ordinary-store-integrity", &[], Some(1), false),
+        ("verify", "owner") => ("ordinary-owner-acceptance-status", &[], None, true),
+        ("verify", "operational") => ("ordinary-operational-proof-status", &[], None, true),
+        ("retirement", "reference") => ("ordinary-retirement-reference", &[], None, true),
         _ => return Err("native_canonical_route_not_implemented".into()),
     };
     if args.len() > 2 && args[2] != "--" {
         return Err("command_arguments_require_separator".into());
     }
     let forwarded = args.get(3..).unwrap_or_default();
+    if forwarding_none && !forwarded.is_empty() {
+        return Err("command_does_not_accept_arguments".into());
+    }
     let mut seen = BTreeSet::new();
     let mut positionals = 0;
     for token in forwarded {

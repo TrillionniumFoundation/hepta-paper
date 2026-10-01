@@ -1,5 +1,7 @@
 //! Read-only imported operational and conformance proof inspector.
-use hepta_paper_service::operational_status::capability_operational_proof_status_v1;
+#[path = "shared/ordinary_readonly.rs"]
+mod ordinary_readonly;
+use hepta_paper_service::operational_status::capability_operational_proof_status_with_cancellation_v1;
 use std::{
     env,
     path::{Component, Path, PathBuf},
@@ -93,9 +95,15 @@ fn run() -> Result<(), String> {
     };
     let runtime_root = runtime_root.unwrap_or_else(|| default_runtime_root(&workspace_root));
     let asset_root = asset_root.unwrap_or_else(|| default_asset_root(&workspace_root));
-    let report =
-        capability_operational_proof_status_v1(&workspace_root, &runtime_root, &asset_root)
-            .map_err(|error| error.to_string())?;
+    let report = ordinary_readonly::with_node_termination_v1(|cancelled| {
+        Ok(capability_operational_proof_status_with_cancellation_v1(
+            &workspace_root,
+            &runtime_root,
+            &asset_root,
+            &cancelled,
+        )?)
+    })
+    .map_err(|error| error.to_string())?;
     println!(
         "{}",
         serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?

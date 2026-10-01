@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { declaresTestOwner, validateCommand } from '../bin/verify-source-implementation-evidence.mjs';
 import { stripRustInertText, rustSymbolMatches, rustSymbolCfgGated } from '../src/source-evidence-rust-symbols.mjs';
+import { captureCommittedSourceSubject, git } from '../src/source-evidence-git-inputs.mjs';
 
 export { stripRustInertText };
 
@@ -37,10 +38,6 @@ function run(program, args, options = {}) {
   if (result.error) fail('spawn_failed', `${program}: ${result.error.message}`);
   if (result.status !== 0) fail('command_failed', `${program} ${args.join(' ')}\n${result.stdout}\n${result.stderr}`);
   return result.stdout;
-}
-
-function git(root, args) {
-  return run('git', ['-C', root, ...args]).trim();
 }
 
 function sha256File(file) {
@@ -85,7 +82,7 @@ function assertClosedCheckout(root) {
 }
 
 function readJsonAt(root, ref, relative) {
-  return JSON.parse(run('git', ['-C', root, 'show', `${ref}:${relative}`]));
+  return JSON.parse(git(root, ['show', `${ref}:${relative}`]));
 }
 
 function canonical(value) {
@@ -284,7 +281,34 @@ function assertRustSymbolOwnership(root, entry) {
   }
 }
 
-function assertCargoBinding(root, bundleId, bundle, command, runtime) {
+function cargoDiscoveryIndex(stdout, label) {
+  const tests = new Set();
+  for (const raw of stdout.replace(/\x1b\[[0-9;]*m/gu, '').split(/\r?\n/u)) {
+    const row = raw.trim();
+    if (!row.endsWith(': test')) continue;
+    const selector = row.slice(0, -': test'.length);
+    if (!selector || tests.has(selector)) fail('cargo_discovery_inventory_invalid', label);
+    tests.add(selector);
+  }
+  if (tests.size === 0) fail('cargo_discovery_inventory_empty', label);
+  return tests;
+}
+
+function currentCargoTargetTests(root, runtime, discoveryPrefix, timeout, inventories) {
+  // Reuse only this process's actual compiled-target observation. No inventory
+  // is read from disk or reused across commits, tools, roots, or invocations.
+  const key = JSON.stringify([root, runtime.cargo.path, runtime.cargo.sha256, discoveryPrefix]);
+  if (!inventories.has(key)) {
+    const stdout = run(runtime.cargo.path, [...discoveryPrefix, '--', '--list'], {
+      cwd: path.join(root, 'rust'),
+      timeout,
+    });
+    inventories.set(key, cargoDiscoveryIndex(stdout, discoveryPrefix.join(' ')));
+  }
+  return inventories.get(key);
+}
+
+function assertCargoBinding(root, bundleId, bundle, command, runtime, inventories) {
   if (command.program !== 'cargo') return;
   const testPaths = new Set(bundle.files
     .filter(declaresTestOwner)
@@ -311,31 +335,41 @@ function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   const matches = rustSymbolMatches(source, symbol);
   if (matches.length !== 1) fail('cargo_declared_test_not_unique_live', `${entry.path}:${symbol.name}:${matches.length}`);
 
-  const discoveryArgs = [...discoveryPrefix, selector, '--', '--exact', '--list'];
   // Discovery may be the first Cargo command in a clean prospective-merge target.
-  // Keep the exact selector/list proof, but give cold dependency + test-harness
+  // Keep the exact selector ownership proof, but give cold dependency + test-harness
   // compilation enough time instead of inheriting a historical 300s per-test
   // execution budget. The enclosing workflow still has its independent job
   // deadline, so this does not turn a hung discovery into an unbounded pass.
   const discoveryTimeoutMs = Math.max(command.timeoutSeconds * 1000, 600_000);
-  const stdout = run(runtime.cargo.path, discoveryArgs, {
-    cwd: path.join(root, 'rust'),
-    timeout: discoveryTimeoutMs,
-  });
-  const discovered = stdout.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.endsWith(': test'));
-  if (discovered.length !== 1 || discovered[0] !== `${selector}: test`) {
-    fail('cargo_discovery_binding_failed', `${selector}:${JSON.stringify(discovered)}`);
+  const discovered = currentCargoTargetTests(root, runtime, discoveryPrefix, discoveryTimeoutMs, inventories);
+  if (!discovered.has(selector)) {
+    fail('cargo_discovery_binding_failed', `${selector}:absent_from_actual_target_inventory`);
   }
 }
 
-function validateEvidenceSemantics(root, evidence, runtime) {
+function validateEvidenceSemantics(root, evidence, runtime, inventories) {
   for (const [bundleId, bundle] of Object.entries(evidence.bundles ?? {})) {
     for (const entry of bundle.files ?? []) if (entry.language === 'rust') assertRustSymbolOwnership(root, entry);
-    for (const command of bundle.verificationCommands ?? []) assertCargoBinding(root, bundleId, bundle, command, runtime);
+    for (const command of bundle.verificationCommands ?? []) assertCargoBinding(root, bundleId, bundle, command, runtime, inventories);
   }
 }
 
 function selfTest() {
+  assert.deepEqual([...cargoDiscoveryIndex('module::first: test\nmodule::second: test\n2 tests, 0 benchmarks\n', 'ordinary')], ['module::first', 'module::second']);
+  assert.deepEqual([...cargoDiscoveryIndex('\u001b[32mmodule::first: test\u001b[0m\r\n', 'ansi')], ['module::first']);
+  assert.throws(() => cargoDiscoveryIndex('0 tests, 0 benchmarks\n', 'zero'), /cargo_discovery_inventory_empty/u);
+  assert.throws(() => cargoDiscoveryIndex('module::first: test\nmodule::first: test\n', 'duplicate'), /cargo_discovery_inventory_invalid/u);
+  assert.equal(cargoDiscoveryIndex('module::first: test\n', 'missing').has('module::absent'), false);
+  const inventories = new Map();
+  const fakeRuntime = { cargo: { path: '/qualified/cargo', sha256: 'sha256:original' } };
+  const prefix = ['test', '--locked', '-p', 'crate-a', '--lib'];
+  const existingKey = JSON.stringify(['/source', fakeRuntime.cargo.path, fakeRuntime.cargo.sha256, prefix]);
+  const observedTests = new Set(['module::first']);
+  inventories.set(existingKey, observedTests);
+  assert.equal(currentCargoTargetTests('/source', fakeRuntime, prefix, 30, inventories), observedTests);
+  assert.equal(inventories.has(JSON.stringify(['/other-source', fakeRuntime.cargo.path, fakeRuntime.cargo.sha256, prefix])), false);
+  assert.equal(inventories.has(JSON.stringify(['/source', fakeRuntime.cargo.path, 'sha256:changed', prefix])), false);
+  assert.equal(inventories.has(JSON.stringify(['/source', fakeRuntime.cargo.path, fakeRuntime.cargo.sha256, [...prefix.slice(0, -1), '--test', 'other-target']])), false);
   const generic = stripRustInertText('pub fn generic_owner<T: Clone>(value: T) -> T { value }');
   assert.equal(rustSymbolMatches(generic, { kind: 'function', name: 'generic_owner' }).length, 1,
     'a real generic function is a source owner, not a missing textual shape');
@@ -516,6 +550,10 @@ const root = git(process.cwd(), ['rev-parse', '--show-toplevel']);
 assertClosedCheckout(root);
 const targetHead = git(root, ['rev-parse', options.target]);
 const prBase = git(root, ['rev-parse', options.base]);
+const sourceSubject = captureCommittedSourceSubject(root);
+if (!sourceSubject.committedClean || sourceSubject.commit !== targetHead) {
+  fail('hardening_source_subject_mismatch', targetHead);
+}
 assertAncestor(root, prBase, targetHead, 'pr-base-to-target');
 assertAncestor(root, MAIN_BASE, APPROVED_PRODUCT, 'main-base-to-approved-product');
 assertAncestor(root, APPROVED_PRODUCT, MIG002_STAGE, 'approved-product-to-mig002-stage');
@@ -524,10 +562,13 @@ const runtime = runtimeAttestation();
 assertMig002Transition(root);
 assertAncestor(root, MIG002_STAGE, prBase, 'mig002-stage-to-pr-base');
 assertCandidateRegistryEvolution(root, prBase, targetHead);
+const cargoInventories = new Map();
 for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {
-  validateEvidenceSemantics(root, readJsonAt(root, targetHead, manifestPath), runtime);
+  validateEvidenceSemantics(root, readJsonAt(root, targetHead, manifestPath), runtime, cargoInventories);
 }
 assertClosedCheckout(root);
+if (!equal(captureCommittedSourceSubject(root), sourceSubject)) fail('hardening_source_subject_changed');
+if (!equal(runtimeAttestation(), runtime)) fail('hardening_runtime_changed');
 const receipt = {
   schemaVersion: 1,
   kind: 'RepositorySourceEvidenceHardeningReceipt',
@@ -535,9 +576,10 @@ const receipt = {
   target: targetHead,
   immutableStages: { mainBase: MAIN_BASE, approvedProduct: APPROVED_PRODUCT, mig002Stage: MIG002_STAGE },
   sourceEvidenceManifests: SOURCE_EVIDENCE_MANIFESTS,
+  sourceSubject,
   runtime,
   registryTransition: 'exact:MIG-002 historical transition;actual-PR-base multi-manifest evidence-declared forward-only design/source delta;authority stable',
-  sourceSemantics: 'comment-string-aware-unique-symbol-plus-cargo-discovery-binding',
+  sourceSemantics: 'comment-string-aware-unique-symbol-plus-current-process-cargo-target-inventory-binding',
   checkoutPolicy: 'no-untracked-and-no-ignored-repository-inputs',
   productionAuthorized: false,
   writerCutoverAuthorized: false,

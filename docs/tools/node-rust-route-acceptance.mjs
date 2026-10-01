@@ -7,7 +7,9 @@ import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { COMMAND_REGISTRY_ROUTES } from '../../paper-core/src/command-registry-routes.mjs';
+import { captureCommittedSourceSubject } from '../../paper-core/src/source-evidence-git-inputs.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { STORE_STATUS_PROFILES_V1, storeStatusFixtureV1, expectedStoreStatusV1, closeStoreStatusFixtureV1, observeStoreWalFilesV1, storeWalContentV1, validateStoreWalReadCoordinationV1, assertStoreWalReadCoordinationClaimV1, observeStoreClosedWalFilesV1, validateStoreClosedWalReadCoordinationV1, assertStoreClosedWalReadCoordinationClaimV1 } from './node-rust-store-route-acceptance.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const hash = value => `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -19,8 +21,8 @@ const verified = new WeakSet();
 const authority = Object.freeze({ productionActivation: false, targetHostQualification: false,
   releaseAuthority: false, submissionAuthority: false, writerCutover: false, nodeRetirement: false });
 const environmentKeys = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'USER', 'TMPDIR', 'CARGO_HOME',
-  'CARGO_TARGET_DIR', 'RUSTFLAGS', 'RUSTUP_HOME', 'CARGO_TERM_COLOR'];
-const safeEnvironment = () => Object.fromEntries(environmentKeys.filter(key => typeof process.env[key] === 'string')
+  'CARGO_TARGET_DIR', 'CARGO_BUILD_JOBS', 'RUSTFLAGS', 'RUSTUP_HOME', 'CARGO_TERM_COLOR', 'TZ'];
+export const safeEnvironment = () => Object.fromEntries(environmentKeys.filter(key => typeof process.env[key] === 'string')
   .map(key => [key, process.env[key]]));
 function run(program, args, options = {}) {
   const output = spawnSync(program, args, { cwd: ROOT, env: safeEnvironment(), encoding: 'utf8',
@@ -28,14 +30,8 @@ function run(program, args, options = {}) {
   if (output.error) throw output.error;
   return output;
 }
-function git(args) {
-  const result = run('git', args);
-  if (result.status !== 0) throw new Error(`route_acceptance_git_failed:${result.stderr}`);
-  return result.stdout.trim();
-}
 function sourceSubject() {
-  return { commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']),
-    committedClean: git(['status', '--porcelain=v1', '--untracked-files=all']) === '' };
+  return captureCommittedSourceSubject(ROOT);
 }
 function freeze(value) {
   if (value && typeof value === 'object') {
@@ -67,6 +63,12 @@ const grammar = flags => [
   ]),
 ];
 const contracts = [
+  { routeId: 'operator/store', binary: 'hepta-paper-rust', nativePrefix: ['operator', 'store'],
+    sqliteCoordination: 'validated-live-wal-header-and-closed-wal-exact-zero-frame-creation-v1', readerOrder: 'alternating-node-first-and-native-first-v1', inputNormalization: 'validated-wal-salt-checksum-only-v1',
+    flags: ['allow-isolated-verification-evidence', 'require-trust-clean'], profiles: STORE_STATUS_PROFILES_V1,
+    modes: [[], ['--allow-isolated-verification-evidence'], ['--require-trust-clean'],
+      ['--allow-isolated-verification-evidence', '--require-trust-clean'],
+      ['--require-trust-clean', '--allow-isolated-verification-evidence']] },
   { routeId: 'operator/workspace', binary: 'hepta-paper-rust', nativePrefix: ['operator', 'workspace'],
     flags: ['require-decoupled'], profiles: workspaceProfiles, modes: [[], ['--require-decoupled']] },
   { routeId: 'verify/repository-assets', binary: 'hepta-paper-rust', nativePrefix: ['verify', 'repository-assets'],
@@ -116,17 +118,24 @@ function normalize(value, fixture) {
     .map(([key, item]) => [key, normalize(item, fixture)]));
   return value;
 }
-function inventory(root, identities) {
+function inventory(root, identities, wal = null, purpose = null) {
   const rows = [];
   function visit(relative) {
     const full = path.join(root, relative);
     const stat = fs.lstatSync(full, { bigint: true });
     const row = { path: relative, mode: String(stat.mode), kind: stat.isSymbolicLink() ? 'symlink'
       : stat.isDirectory() ? 'directory' : 'file' };
-    if (identities) Object.assign(row, { dev: String(stat.dev), ino: String(stat.ino),
+    if (identities) Object.assign(row, { dev: String(stat.dev), ino: String(stat.ino), uid: String(stat.uid), gid: String(stat.gid),
       nlink: String(stat.nlink), size: String(stat.size), mtimeNs: String(stat.mtimeNs), ctimeNs: String(stat.ctimeNs) });
+    if (wal?.kind === 'SQLiteClosedWalPhysicalObservationV1' && purpose === 'effects') {
+      if (wal.coordinationPaths.includes(relative)) return;
+      if (relative === wal.parentPath) { delete row.size; delete row.mtimeNs; delete row.ctimeNs; }
+    }
+    if (identities && wal && relative === wal.shmPath && purpose === 'effects') {
+      delete row.mtimeNs; delete row.ctimeNs;
+    }
     if (stat.isSymbolicLink()) row.target = normalize(fs.readlinkSync(full), root);
-    else if (stat.isFile()) row.contentSha256 = hash(fs.readFileSync(full));
+    else if (stat.isFile()) row.contentSha256 = hash(wal && wal.kind !== 'SQLiteClosedWalPhysicalObservationV1' && storeWalContentV1(wal, relative, purpose) || fs.readFileSync(full));
     rows.push(row);
     if (stat.isDirectory()) for (const name of fs.readdirSync(full).sort()) visit(path.join(relative, name));
   }
@@ -178,7 +187,7 @@ function assetFixture(fixture, profile) {
     kind: 'RepositoryAssetExternalizationManifest', assets: profile === 'duplicate-id' ? [asset, asset] : [asset] };
   const manifestPath = path.join(deployed, 'paper-core/config/repository-asset-externalization.v1.json');
   if (profile !== 'manifest-missing') write(manifestPath, profile === 'manifest-malformed' ? '{not JSON' : JSON.stringify(manifest));
-  return { cwd: deployed, environment: {}, node: [path.join(deployed, 'paper-core/bin/hepta-paper.mjs'), 'verify', 'repository-assets'] };
+  return { cwd: deployed, environment: { HEPTA_PAPER_WORKSPACE_ROOT: deployed }, node: [path.join(deployed, 'paper-core/bin/hepta-paper.mjs'), 'verify', 'repository-assets'] };
 }
 function workspaceFixture(fixture, profile) {
   const environment = { HEPTA_PAPER_ASSET_ROOT: path.join(fixture, 'asset'),
@@ -213,16 +222,22 @@ function workspaceFixture(fixture, profile) {
   return { cwd: ROOT, environment, node: [path.join(ROOT, 'paper-core/bin/hepta-paper.mjs'), 'operator', 'workspace'] };
 }
 function describeCase(contract) {
+  const normalProfile = contract.routeId === 'operator/store' ? 'ready' : contract.routeId === 'operator/workspace' ? 'present' : 'pending';
+  const missingProfile = contract.routeId === 'operator/store' ? 'main-missing' : contract.routeId === 'operator/workspace' ? 'missing' : 'manifest-missing';
   return [
-    ...contract.profiles.flatMap(profile => contract.modes.map((argv, index) => ({
-      id: `${profile}/mode-${index}`, profile, argv, kind: 'normal' }))),
+    ...contract.profiles.flatMap(profile => contract.modes.flatMap((argv, index) => profile === 'closed-wal'
+      ? ['node', 'native'].map(firstReader => ({ id: `${profile}/mode-${index}/${firstReader}-first`, profile, argv, kind: 'normal', firstReader }))
+      : [{ id: `${profile}/mode-${index}`, profile, argv, kind: 'normal' }])),
     ...contract.grammar.flatMap(row => [false, true].map(missing => ({ id: `refuse/${row.id}/${missing ? 'missing-input' : 'present-input'}`,
-      profile: contract.routeId === 'operator/workspace' ? missing ? 'missing' : 'present' : missing ? 'manifest-missing' : 'pending',
+      profile: missing ? missingProfile : normalProfile,
       argv: row.argv, omitSeparator: row.omitSeparator === true, kind: 'grammar', expectedError: row.error }))),
-    { id: 'default-without-forwarding-separator', profile: contract.routeId === 'operator/workspace' ? 'present' : 'pending',
+    { id: 'default-without-forwarding-separator', profile: normalProfile,
       argv: [], omitSeparator: true, kind: 'normal' },
+    ...(contract.routeId === 'operator/store' ? contract.modes.flatMap((argv, index) => ['node', 'native'].flatMap(firstReader =>
+      ['SIGTERM', 'SIGKILL'].map(signal => ({ id: `closed-wal/mode-${index}/${firstReader}-first/${signal}/fresh-retry`,
+        profile: 'closed-wal', argv, kind: 'death', signal, firstReader })))) : []),
     ...['SIGTERM', 'SIGKILL'].map(signal => ({ id: `unknown-result/${signal}/fresh-retry`,
-      profile: contract.routeId === 'operator/workspace' ? 'present' : 'pending', argv: [], kind: 'death', signal })),
+      profile: normalProfile, argv: [], kind: 'death', signal })),
   ];
 }
 function diagnostic(output, fixture) {
@@ -232,6 +247,10 @@ function diagnostic(output, fixture) {
   let error;
   try { error = JSON.parse(output.stderr).error; } catch { /* Native diagnostics are plain text. */ }
   error ??= /(?:unknown_cli_option|boolean_cli_option_does_not_take_value|duplicate_cli_option|unexpected_cli_positional):[^\s"']+|unexpected_cli_argument_separator|command_arguments_require_separator|empty_cli_option|repository_asset_externalization_handoff_blocked:[^\s"']+/.exec(output.stderr)?.[0];
+  if (!error && /Read-only paper store missing:/.test(output.stderr)) error = 'store-database-missing';
+  if (!error && /file is not a database/.test(output.stderr)) error = 'sqlite-database-invalid';
+  if (!error && /no such table: ([^\s]+)/.test(output.stderr)) error = `sqlite-schema-missing:${/no such table: ([^\s]+)/.exec(output.stderr)[1]}`;
+  if (!error && /Value is too large to be represented as a JavaScript number:/.test(output.stderr)) error = 'sqlite-js-number-range';
   if (!error && /ENOENT|No such file or directory/.test(output.stderr)) error = 'input-unreadable';
   if (!error && /SyntaxError|key must be a string|expected value|expected ident|EOF while parsing/.test(output.stderr)) error = 'input-json-invalid';
   if (!error) throw new Error(`route_acceptance_unclassified_diagnostic:${normalize(output.stderr, fixture)}`);
@@ -268,6 +287,7 @@ function compatible(node, native, testCase) {
 }
 function expectedBehavior(contract, testCase, result) {
   if (testCase.kind === 'grammar') return result.outcome === 'refusal' && result.error === testCase.expectedError;
+  if (contract.routeId === 'operator/store') return expectedStoreStatusV1(testCase, result);
   if (contract.routeId === 'operator/workspace') {
     const decoupled = !['overlap', 'workspace-overlap', 'symlink-cycle', 'symlink-hop-limit', 'file-parent'].includes(testCase.profile);
     const expectedCode = testCase.argv.includes('--require-decoupled') && !decoupled ? 2 : 0;
@@ -298,31 +318,37 @@ function expectedBehavior(contract, testCase, result) {
       ? 'repository_asset_boundary_ready_externalization_pending' : 'repository_assets_externalized')
     && (!handoff || result.stdout.kind === 'RepositoryAssetExternalizationHandoff');
 }
-function buildNativeOwners() {
+export function buildNativeOwners({ extraBinaries = [] } = {}) {
+  const standalone = ['hepta-runtime-image-reproducibility', 'hepta-state-backup', 'hepta-automation-reconcile',
+    'hepta-operational-proof-status', 'hepta-owner-acceptance-status'];
+  if (!Array.isArray(extraBinaries) || new Set(extraBinaries).size !== extraBinaries.length
+    || extraBinaries.some(binary => !standalone.includes(binary))) throw new Error('route_acceptance_native_binary_selection_invalid');
+  const binaries = [...new Set([...contracts.map(row => row.binary), ...extraBinaries])];
   if (process.version !== 'v22.23.1') throw new Error('route_acceptance_node_runtime_unqualified');
   const version = run('cargo', ['--version']);
   if (version.status !== 0 || !/^cargo 1\.98\.0\b/.test(version.stdout)) throw new Error('route_acceptance_cargo_runtime_unqualified');
   const target = process.env.CARGO_TARGET_DIR || path.join(os.tmpdir(), 'hepta-route-acceptance-target');
   if (target === ROOT || target.startsWith(`${ROOT}${path.sep}`)) throw new Error('route_acceptance_build_cache_must_be_outside_checkout');
   const args = ['build', '--manifest-path', path.join(ROOT, 'rust/Cargo.toml'), '--locked', '-p', 'hepta-paper-service',
-    ...[...new Set(contracts.map(row => row.binary))].flatMap(binary => ['--bin', binary]), '--message-format=json'];
+    ...binaries.flatMap(binary => ['--bin', binary]), '--message-format=json'];
   const output = run('cargo', args, { env: { ...safeEnvironment(), CARGO_TARGET_DIR: target } });
   if (output.status !== 0) throw new Error(`route_acceptance_native_build_failed:${output.stderr}`);
   const owners = {};
   for (const line of output.stdout.split('\n').filter(Boolean)) {
     const row = JSON.parse(line);
-    if (row.reason === 'compiler-artifact' && contracts.some(contract => contract.binary === row.target.name) && row.executable) {
+    if (row.reason === 'compiler-artifact' && binaries.includes(row.target.name) && row.executable) {
       const binary = fs.realpathSync(row.executable);
       if (!fs.readFileSync(binary).subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) throw new Error('route_acceptance_native_owner_not_elf');
       owners[row.target.name] = { path: binary, sha256: hash(fs.readFileSync(binary)) };
     }
   }
-  if (contracts.some(contract => !owners[contract.binary])) throw new Error('route_acceptance_native_owner_missing');
+  if (binaries.some(binary => !owners[binary])) throw new Error('route_acceptance_native_owner_missing');
   return { owners, node: { version: process.version, sha256: hash(fs.readFileSync(process.execPath)) },
     cargoVersion: version.stdout.trim(), buildArgs: args.map(value => normalize(value, 'unused-fixture')) };
 }
 
-export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row => row.routeId) } = {}) {
+export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row => row.routeId), onCase } = {}) {
+  if (onCase !== undefined && typeof onCase !== 'function') throw new Error('route_acceptance_case_observer_invalid');
   if (!Array.isArray(routeIds) || routeIds.length === 0 || new Set(routeIds).size !== routeIds.length
     || routeIds.some(id => !contracts.some(row => row.routeId === id))) throw new Error('route_acceptance_route_selection_invalid');
   const before = sourceSubject();
@@ -334,35 +360,73 @@ export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row =>
     for (const testCase of describeCase(contract)) {
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-route-acceptance-'));
       try {
-        const prepared = contract.routeId === 'operator/workspace' ? workspaceFixture(fixture, testCase.profile) : assetFixture(fixture, testCase.profile);
+        const prepared = contract.routeId === 'operator/store' ? storeStatusFixtureV1(fixture, testCase.profile, safeEnvironment())
+          : contract.routeId === 'operator/workspace' ? workspaceFixture(fixture, testCase.profile) : assetFixture(fixture, testCase.profile);
         const env = { ...safeEnvironment(), ...prepared.environment };
         const nodeArgs = [...prepared.node, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
         const nativeArgs = [...contract.nativePrefix, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
-        const identity = inventory(fixture, true), inputs = inventory(fixture, false);
+        const coldWal = contract.routeId === 'operator/store' && testCase.profile === 'live-wal';
+        const closedWal = contract.routeId === 'operator/store' && testCase.profile === 'closed-wal';
+        const walBefore = coldWal ? observeStoreWalFilesV1(fixture)
+          : closedWal ? observeStoreClosedWalFilesV1(fixture) : null;
+        const identity = inventory(fixture, true), inputs = inventory(fixture, false, walBefore, 'input');
+        const durableIdentity = walBefore ? inventory(fixture, true, walBefore, 'effects') : identity;
         const execute = async (program, args) => testCase.kind === 'death'
           ? killed(program, args, { cwd: prepared.cwd, env }, testCase.signal)
           : run(program, args, { cwd: prepared.cwd, env, timeout: 30_000 });
-        const nodeRaw = await execute(process.execPath, nodeArgs);
-        const afterNode = inventory(fixture, true);
-        const nativeRaw = await execute(runtime.owners[contract.binary].path, nativeArgs);
-        const afterNative = inventory(fixture, true);
+        let nodeRaw, nativeRaw, afterNode, afterNative, walNode, walNative, durableNode, durableNative;
+        const first = testCase.firstReader || (coldWal && testCase.argv.length % 2 === 1 ? 'native' : 'node');
+        const stages = [];
+        const observe = (reader, phase, allowIncomplete = false) => {
+          const state = coldWal ? observeStoreWalFilesV1(fixture)
+            : closedWal ? observeStoreClosedWalFilesV1(fixture, { allowIncomplete }) : null;
+          if (closedWal) stages.push({ reader, phase, state });
+          return { identity: inventory(fixture, true), state,
+            durable: state ? inventory(fixture, true, state, 'effects') : inventory(fixture, true) };
+        };
+        const runNode = async () => {
+          nodeRaw = await execute(process.execPath, nodeArgs);
+          const observed = observe('node', testCase.kind === 'death' ? 'interrupted' : 'complete', testCase.kind === 'death');
+          afterNode = observed.identity; walNode = observed.state; durableNode = observed.durable;
+        };
+        const runNative = async () => {
+          nativeRaw = await execute(runtime.owners[contract.binary].path, nativeArgs);
+          const observed = observe('native', testCase.kind === 'death' ? 'interrupted' : 'complete', testCase.kind === 'death');
+          afterNative = observed.identity; walNative = observed.state; durableNative = observed.durable;
+        };
+        if (first === 'native') { await runNative(); await runNode(); }
+        else { await runNode(); await runNative(); }
         const node = diagnostic(nodeRaw, fixture), native = diagnostic(nativeRaw, fixture);
-        let retry = null;
+        let retry = null, durableRetry = true;
         if (testCase.kind === 'death') {
-          const nodeRetry = diagnostic(run(process.execPath, nodeArgs, { cwd: prepared.cwd, env }), fixture);
-          const nativeRetry = diagnostic(run(runtime.owners[contract.binary].path, nativeArgs, { cwd: prepared.cwd, env }), fixture);
-          retry = { node: nodeRetry, native: nativeRetry, effectsUnchanged: inventory(fixture, true) === identity };
+          let nodeRetry, nativeRetry;
+          const retryNode = () => {
+            nodeRetry = diagnostic(run(process.execPath, nodeArgs, { cwd: prepared.cwd, env }), fixture);
+            const afterRetry = observe('node', 'retry'); durableRetry = durableRetry && afterRetry.durable === durableIdentity;
+          };
+          const retryNative = () => {
+            nativeRetry = diagnostic(run(runtime.owners[contract.binary].path, nativeArgs, { cwd: prepared.cwd, env }), fixture);
+            const afterRetry = observe('native', 'retry'); durableRetry = durableRetry && afterRetry.durable === durableIdentity;
+          };
+          if (first === 'native') { retryNative(); retryNode(); } else { retryNode(); retryNative(); }
+          retry = { node: nodeRetry, native: nativeRetry, effectsUnchanged: inventory(fixture, true) === identity,
+            effectsSatisfied: durableRetry };
         }
         const effectsUnchanged = identity === afterNode && identity === afterNative && (!retry || retry.effectsUnchanged);
-        const passed = compatible(node, native, testCase) && effectsUnchanged
+        const readCoordination = coldWal ? validateStoreWalReadCoordinationV1(walBefore, walNode, walNative, first)
+          : closedWal ? validateStoreClosedWalReadCoordinationV1(walBefore, stages, first) : null;
+        const effectsSatisfied = walBefore ? durableIdentity === durableNode && durableIdentity === durableNative && durableRetry : effectsUnchanged;
+        if (readCoordination) readCoordination[closedWal ? 'databaseAndOtherPathsUnchanged' : 'databaseWalAndOtherPathsUnchanged'] = effectsSatisfied;
+        const passed = compatible(node, native, testCase) && effectsSatisfied
           && (testCase.kind === 'death' || (expectedBehavior(contract, testCase, node) && expectedBehavior(contract, testCase, native)))
           && (!retry || (node.signal === testCase.signal && native.signal === testCase.signal
             && expectedBehavior(contract, testCase, retry.node) && expectedBehavior(contract, testCase, retry.native)
             && JSON.stringify(canonical(retry.node)) === JSON.stringify(canonical(retry.native))));
         cases.push({ caseId: testCase.id, inputSha256: inputs,
           nodeArgv: normalize(nodeArgs, fixture), nativeArgv: nativeArgs,
-          environment: normalize(prepared.environment, fixture), node, native, retry, effectsUnchanged, passed });
-      } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
+          environment: normalize(prepared.environment, fixture), node, native, retry, effectsUnchanged, effectsSatisfied, readCoordination, passed });
+        if (onCase) onCase(freeze(structuredClone(cases.at(-1))));
+      } finally { closeStoreStatusFixtureV1(fixture); fs.rmSync(fixture, { recursive: true, force: true }); }
     }
     const requirement = requirements.find(row => row.routeId === contract.routeId);
     rows.push({ routeId: contract.routeId, argumentContractSha256: requirement.argumentContractSha256,
@@ -378,6 +442,44 @@ export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row =>
   return freeze({ ...payload, recordSha256: digest(payload) });
 }
 
+function assertRecordSchema(record) {
+  const instance = Buffer.from(JSON.stringify(record));
+  if (instance.length > 16 * 1024 * 1024) throw new Error('route_acceptance_record_schema_invalid');
+  const schemaSource = path.join(ROOT, 'docs/migration/node-rust-route-acceptance.v1.schema.json');
+  const checkerSource = path.join(ROOT, 'docs/rust/tools/strict_json_schema.py');
+  const schema = capturePinnedJsonBytes(schemaSource), checker = capturePinnedJsonBytes(checkerSource);
+  if (schema.bytes.length > 256 * 1024) throw new Error('route_acceptance_record_schema_invalid');
+  // File mode validates the complete captured document through the existing
+  // schema owner. The bounded batch protocol retains its separate 4 MiB limit.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-route-schema-'));
+  const descriptors = [];
+  try {
+    fs.chmodSync(directory, 0o700);
+    const schemaPath = path.join(directory, 'schema.json'), instancePath = path.join(directory, 'instance.json');
+    const captured = [];
+    for (const [file, bytes] of [[schemaPath, schema.bytes], [instancePath, instance]]) {
+      const descriptor = fs.openSync(file, fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+      descriptors.push(descriptor); fs.fchmodSync(descriptor, 0o600);
+      let written = 0;
+      while (written < bytes.length) written += fs.writeSync(descriptor, bytes, written, bytes.length - written, written);
+      const state = capturePinnedJsonBytes(file, descriptor);
+      if (!state.bytes.equals(bytes)) throw new Error('route_acceptance_record_schema_invalid');
+      captured.push([file, descriptor, state]);
+    }
+    const result = run('python3', [checkerSource, '--schema', schemaPath, '--instance', instancePath],
+      { timeout: 30_000, maxBuffer: 1024 * 1024 });
+    for (const [file, descriptor, state] of captured) {
+      const after = capturePinnedJsonBytes(file, descriptor);
+      if (after.sha256 !== state.sha256 || !after.bytes.equals(state.bytes) || JSON.stringify(after.identity) !== JSON.stringify(state.identity)) throw new Error('route_acceptance_record_schema_invalid');
+    }
+    for (const [file, state] of [[schemaSource, schema], [checkerSource, checker]]) {
+      const after = capturePinnedJsonBytes(file);
+      if (after.sha256 !== state.sha256 || !after.bytes.equals(state.bytes) || JSON.stringify(after.identity) !== JSON.stringify(state.identity)) throw new Error('route_acceptance_record_schema_invalid');
+    }
+    if (result.status !== 0 || result.error) throw new Error('route_acceptance_record_schema_invalid');
+  } finally { for (const descriptor of descriptors) fs.closeSync(descriptor); fs.rmSync(directory, { recursive: true, force: true }); }
+}
+
 function recordPayload(record) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('route_acceptance_record_invalid');
   const { recordSha256, ...payload } = record;
@@ -389,8 +491,6 @@ function recordPayload(record) {
     || !Array.isArray(record.rows) || record.rows.length < 1 || record.rows.length > contracts.length) {
     throw new Error('route_acceptance_record_scope_invalid');
   }
-  const current = sourceSubject();
-  if (!current.committedClean || JSON.stringify(record.subject) !== JSON.stringify(current)) throw new Error('route_acceptance_subject_not_current_clean_commit');
   const requirements = routeAcceptanceRequirementsV1();
   const seen = new Set();
   for (const row of record.rows) {
@@ -399,19 +499,59 @@ function recordPayload(record) {
     if (!contract || seen.has(row.routeId) || row.argumentContractSha256 !== requirement.argumentContractSha256
       || row.behaviorContractSha256 !== requirement.behaviorContractSha256
       || !Array.isArray(row.cases) || JSON.stringify(row.cases.map(value => value.caseId)) !== JSON.stringify(describeCase(contract).map(value => value.id))
-      || row.cases.some(value => value.passed !== true || value.effectsUnchanged !== true)) {
+      || row.cases.some(value => value.passed !== true || !(value.effectsUnchanged === true
+        || row.routeId === 'operator/store' && value.caseId.startsWith('live-wal/') && value.effectsUnchanged === false
+          && value.effectsSatisfied === true && value.readCoordination?.kind === 'SQLiteColdWalReadCoordinationV1'
+        || row.routeId === 'operator/store' && value.caseId.startsWith('closed-wal/') && value.effectsUnchanged === false
+          && value.effectsSatisfied === true && value.readCoordination?.kind === 'SQLiteClosedWalReadCoordinationV1'))) {
       throw new Error(`route_acceptance_complete_contract_missing:${row.routeId}`);
+    }
+    for (const entry of row.cases) {
+      if (row.routeId === 'operator/store' && entry.caseId.startsWith('live-wal/')) {
+        assertStoreWalReadCoordinationClaimV1(entry.readCoordination);
+      } else if (row.routeId === 'operator/store' && entry.caseId.startsWith('closed-wal/')) {
+        assertStoreClosedWalReadCoordinationClaimV1(entry.readCoordination);
+      }
     }
     seen.add(row.routeId);
   }
+  assertRecordSchema(record);
+  const current = sourceSubject();
+  if (!current.committedClean || JSON.stringify(record.subject) !== JSON.stringify(current)) throw new Error('route_acceptance_subject_not_current_clean_commit');
   return payload;
+}
+
+export function stableReplayPayload(payload) {
+  const stable = structuredClone(payload);
+  const stableIdentity = identity => Object.fromEntries(Object.entries(identity).filter(([key]) => !['dev', 'ino'].includes(key)));
+  const stableClosedState = state => ({ ...state, databaseIdentity: stableIdentity(state.databaseIdentity),
+    databaseTimes: undefined, parent: { ...state.parent, identity: stableIdentity(state.parent.identity), times: undefined },
+    files: state.files.map(file => file ? { ...file, identity: stableIdentity(file.identity), times: undefined } : null) });
+  // Compare geometry, namespace, principal, permission and deterministic bytes.
+  // Fresh fixtures have distinct inode/time identities and live-WAL salts.
+  // Unknown interruption points can have different partial creation progress;
+  // raw diagnostics are schema/cross-field checked, and actual retry states are
+  // compared in full apart from those volatile identities and clocks.
+  for (const row of stable.rows) for (const entry of row.cases) if (entry.readCoordination) {
+    const proof = entry.readCoordination, physical = proof.physicalObservations;
+    if (proof.kind === 'SQLiteClosedWalReadCoordinationV1') {
+      proof.physicalObservations = { before: stableClosedState(physical.before),
+        stages: physical.stages.filter(state => state.phase !== 'interrupted').map(stableClosedState) };
+    } else {
+      const state = value => ({ identity: stableIdentity(value.identity), walIdentity: stableIdentity(value.walIdentity) });
+      proof.physicalObservations = { before: state(physical.before), afterNode: state(physical.afterNode),
+        afterNative: state(physical.afterNative), byteChanges: physical.byteChanges.filter(byte =>
+          ![[40, 48], [88, 96]].some(([start, end]) => byte.offset >= start && byte.offset < end)) };
+    }
+  }
+  return stable;
 }
 
 export async function consumeRouteAcceptanceRecordV1(record) {
   record = freeze(structuredClone(record));
   recordPayload(record);
   const replayed = await observeRouteAcceptanceV1({ routeIds: record.rows.map(row => row.routeId) });
-  if (JSON.stringify(canonical(recordPayload(replayed))) !== JSON.stringify(canonical(recordPayload(record)))) {
+  if (JSON.stringify(canonical(stableReplayPayload(recordPayload(replayed)))) !== JSON.stringify(canonical(stableReplayPayload(recordPayload(record))))) {
     throw new Error('route_acceptance_actual_replay_differs');
   }
   const acceptedIds = replayed.rows.map(row => row.routeId);
@@ -424,7 +564,7 @@ export async function consumeRouteAcceptanceRecordV1(record) {
   return summary;
 }
 
-export function readRouteAcceptanceRecord(file) {
+function capturePinnedJsonBytes(file, suppliedDescriptor) {
   if (typeof file !== 'string' || !path.isAbsolute(file) || path.resolve(file) !== file) {
     throw new Error('route_acceptance_record_path_must_be_absolute');
   }
@@ -433,20 +573,34 @@ export function readRouteAcceptanceRecord(file) {
     current = path.join(current, part);
     if (fs.lstatSync(current).isSymbolicLink()) throw new Error('route_acceptance_record_symlink_refused');
   }
-  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const descriptor = suppliedDescriptor ?? fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   try {
     const before = fs.fstatSync(descriptor, { bigint: true });
-    if (!before.isFile() || before.nlink !== 1n || before.size === 0n || before.size > 4n * 1024n * 1024n) {
+    if (!before.isFile() || before.nlink !== 1n || before.size === 0n || before.size > 16n * 1024n * 1024n) {
       throw new Error('route_acceptance_record_file_invalid');
     }
-    const bytes = fs.readFileSync(descriptor);
+    const chunks = []; let length = 0;
+    while (true) {
+      const chunk = Buffer.alloc(64 * 1024);
+      const count = fs.readSync(descriptor, chunk, 0, chunk.length, length);
+      if (count === 0) break;
+      length += count;
+      if (length > 16 * 1024 * 1024) throw new Error('route_acceptance_record_file_invalid');
+      chunks.push(chunk.subarray(0, count));
+    }
+    const bytes = Buffer.concat(chunks);
     const after = fs.fstatSync(descriptor, { bigint: true });
     const named = fs.lstatSync(file, { bigint: true });
-    if (['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].some(key => before[key] !== after[key] || before[key] !== named[key])) {
+    const fields = ['dev', 'ino', 'uid', 'gid', 'mode', 'nlink', 'size', 'mtimeNs', 'ctimeNs'];
+    if (BigInt(bytes.length) !== before.size || fields.some(key => before[key] !== after[key] || before[key] !== named[key])) {
       throw new Error('route_acceptance_record_changed_during_read');
     }
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
-  } finally { fs.closeSync(descriptor); }
+    return { bytes, sha256: hash(bytes), identity: Object.fromEntries(fields.map(key => [key, String(before[key])])) };
+  } finally { if (suppliedDescriptor === undefined) fs.closeSync(descriptor); }
+}
+
+export function readRouteAcceptanceRecord(file) {
+  return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(capturePinnedJsonBytes(file).bytes));
 }
 
 export function assertVerifiedRouteAcceptanceV1(value) {

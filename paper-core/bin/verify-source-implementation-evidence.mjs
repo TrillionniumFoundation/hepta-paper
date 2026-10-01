@@ -604,6 +604,9 @@ function safeExecutionEnvironment() {
   }
   env.CI = '1';
   env.GIT_TERMINAL_PROMPT = '0';
+  // The test oracle receives the actual producer executable, never an ambient
+  // caller override or a path searched by a privileged test child.
+  env.HEPTA_TEST_NODE = fs.realpathSync(process.execPath);
   return env;
 }
 

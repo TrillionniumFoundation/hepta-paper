@@ -124,7 +124,7 @@ jobs:
             --shard-index "${{ matrix.shard }}" \
             --dry-run --json > "$evidence_root/impact-plan.json"
           cat "$evidence_root/impact-plan.json"
-          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n'+'native_route_acceptance='+p.shardTests.includes('paper-core/tests/node-rust-route-acceptance.test.mjs')+'\n')" \
+          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n'+'native_route_acceptance='+p.requiresNativeRouteToolchain+'\n')" \
             "$evidence_root/impact-plan.json" >> "$GITHUB_OUTPUT"
 
       - name: Install qualified native route toolchain

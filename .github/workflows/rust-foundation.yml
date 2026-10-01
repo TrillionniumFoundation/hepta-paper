@@ -46,6 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(node --version)" = "v22.23.1"
+          printf 'HEPTA_TEST_NODE=%s\n' "$(realpath "$(command -v node)")" >> "$GITHUB_ENV"
           node --input-type=module -e 'console.log(JSON.stringify({ node: process.version, versions: process.versions, collator: new Intl.Collator().resolvedOptions() }))'
 
       - name: Install locked Node oracle dependencies

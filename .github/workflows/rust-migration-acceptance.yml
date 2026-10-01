@@ -62,6 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(node --version)" = "v22.23.1"
+          printf 'HEPTA_TEST_NODE=%s\n' "$(realpath "$(command -v node)")" >> "$GITHUB_ENV"
           npm ci --ignore-scripts --no-audit --no-fund \
             2>&1 | tee "$EVIDENCE_ROOT/node-oracle-install.log"
           # Import the actual dependency closure before compiling Rust; otherwise

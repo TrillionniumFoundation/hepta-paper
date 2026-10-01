@@ -37,8 +37,8 @@ fn environment_path(name: &str) -> Option<PathBuf> {
     Some(lexical_absolute_path(path))
 }
 
-fn compiled_workspace_root() -> PathBuf {
-    lexical_absolute_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+fn default_workspace_root() -> Result<PathBuf, String> {
+    hepta_paper_service::native_workspace::current_native_command_workspace_root_v1(None)
 }
 
 fn default_asset_root(workspace_root: &Path) -> PathBuf {
@@ -87,9 +87,10 @@ fn run() -> Result<(), String> {
         }
         *target = Some(path);
     }
-    let workspace_root = workspace_root
-        .or_else(|| environment_path("HEPTA_WORKSPACE_ROOT"))
-        .unwrap_or_else(compiled_workspace_root);
+    let workspace_root = match workspace_root.or_else(|| environment_path("HEPTA_WORKSPACE_ROOT")) {
+        Some(root) => root,
+        None => default_workspace_root()?,
+    };
     let runtime_root = runtime_root.unwrap_or_else(|| default_runtime_root(&workspace_root));
     let asset_root = asset_root.unwrap_or_else(|| default_asset_root(&workspace_root));
     let report =

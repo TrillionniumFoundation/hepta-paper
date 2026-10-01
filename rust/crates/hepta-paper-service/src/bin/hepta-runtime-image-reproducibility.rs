@@ -70,17 +70,10 @@ fn run() -> Result<i32, String> {
         .get("root")
         .map(PathBuf::from)
         .unwrap_or_else(|| cwd.clone());
-    let compiled_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let runtime = flags
-        .get("runtime-root")
-        .map(PathBuf::from)
-        .or_else(|| {
-            environment["HEPTA_PAPER_RUNTIME_ROOT"]
-                .as_str()
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-        })
-        .unwrap_or_else(|| compiled_root.join("../hepta-paper-runtime/native-runtime"));
+    let runtime = match flags.get("runtime-root") {
+        Some(selected) => PathBuf::from(selected),
+        None => hepta_paper_service::native_workspace::current_native_command_runtime_root_v1()?,
+    };
     let report=runtime_image_reproducibility_report_v2(&json!({"action":action,"repositoryRoot":root,"runtimeRoot":runtime,"configPath":flags.get("config"),"receiptPath":flags.get("receipt"),"environment":environment})).map_err(|e|e.to_string())?;
     println!(
         "{}",

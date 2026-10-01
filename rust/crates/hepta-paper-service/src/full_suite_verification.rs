@@ -156,7 +156,8 @@ pub fn parse_full_suite_verification_arguments(
         return Err("full_suite_verification_node_differential_not_requested".into());
     }
     if options.workspace_root.is_none() {
-        options.workspace_root = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+        options.workspace_root =
+            Some(crate::native_workspace::current_native_command_workspace_root_v1(None)?);
     }
     let root = options
         .workspace_root

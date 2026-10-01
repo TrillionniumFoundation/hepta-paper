@@ -27,6 +27,7 @@ commands! {
     VerifyLegacyFreeze => "verify-legacy-freeze",
     InspectDb => "inspect-db",
     StoreIntegrity => "store-integrity",
+    OrdinaryStoreIntegrity => "ordinary-store-integrity",
     StoreStatus => "store-status",
     AutomationStatus => "automation-status",
     StoreMigrate => "store-migrate",
@@ -179,6 +180,21 @@ mod tests {
             let mut words = row["rustEntrypoint"].as_str().unwrap().split_whitespace();
             if words.next() == Some("hepta-paper-rust") {
                 let name = words.next().expect("missing Rust command");
+                let mut args = vec![name.to_owned()];
+                if CommandV1::parse(name).is_none() {
+                    args.push(
+                        words
+                            .next()
+                            .expect("missing canonical route name")
+                            .to_owned(),
+                    );
+                }
+                // Use the ordinary dispatcher's actual group/name resolver;
+                // documentation is checked against the compiled leaf command.
+                let resolved = crate::canonical_cli::resolve_canonical_cli_arguments_v1(&args)
+                    .expect("documented canonical route must resolve")
+                    .unwrap_or(args);
+                let name = resolved.first().expect("missing resolved Rust command");
                 assert!(
                     CommandV1::parse(name).is_some(),
                     "{id}: unknown command {name}"

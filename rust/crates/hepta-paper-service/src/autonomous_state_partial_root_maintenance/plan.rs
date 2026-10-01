@@ -298,7 +298,8 @@ fn validated_inputs(
     })?;
     let topic: Value = serde_json::from_slice(&topic_snapshot.bytes)?;
     let environment = BTreeMap::new();
-    let repository_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository_root =
+        crate::native_workspace::current_native_command_workspace_root_v1(None).map_err(error)?;
     let working_directory =
         std::env::current_dir().map_err(|_| error("autonomous_state_partial_root_cwd_invalid"))?;
     let owner =
@@ -328,7 +329,8 @@ fn validated_inputs(
 }
 
 pub(crate) fn build(options: &AutonomousStatePartialRootMaintenanceOptions) -> Result<PlanState> {
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let workspace_root =
+        crate::native_workspace::current_native_command_workspace_root_v1(None).map_err(error)?;
     let runtime = options.runtime_root.clone();
     let rescue = options.rescue_root.clone();
     let runtime_meta = safe_root(&runtime, "runtime_root")?;

@@ -961,7 +961,8 @@ fn cleanup_installed(installed: &[PathBuf]) {
 }
 
 fn current_manifest(plan_value: &Value) -> Result<Value> {
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let workspace_root =
+        crate::native_workspace::current_native_command_workspace_root_v1(None).map_err(error)?;
     let manifest = super::manifest(&workspace_root)?;
     let current_hash = record_hash("AutonomousResearchStateDatabaseManifest", &manifest)?;
     if plan_value["stateDatabaseManifestHash"].as_str() != Some(&current_hash) {

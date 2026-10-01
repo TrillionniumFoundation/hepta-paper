@@ -1,19 +1,23 @@
 use hepta_paper_service::{
     sqlite_mutation_coordinator::clock::SystemMutationClockV1,
     state_recoverability::cli::{
-        StateBackupCliContextV1, StateBackupCliOutputV1, state_backup_cli_v1,
+        StateBackupCliOutputV1, native_state_backup_cli_context_v1, state_backup_cli_v1,
     },
 };
-use std::path::PathBuf;
 fn run() -> Result<i32, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let context = StateBackupCliContextV1 {
-        workspace_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
-        working_directory: std::env::current_dir().map_err(|e| e.to_string())?,
-        environment: std::env::vars()
-            .filter(|(name, _)| name == "HEPTA_PAPER_RUNTIME_ROOT")
+    let context = native_state_backup_cli_context_v1(
+        &args,
+        std::env::current_dir().map_err(|e| e.to_string())?,
+        std::env::vars()
+            .filter(|(name, _)| {
+                matches!(
+                    name.as_str(),
+                    "HEPTA_PAPER_RUNTIME_ROOT" | "HEPTA_PAPER_WORKSPACE_ROOT"
+                )
+            })
             .collect(),
-    };
+    )?;
     match state_backup_cli_v1(&args, &context, &mut SystemMutationClockV1)? {
         StateBackupCliOutputV1::Help(usage) => {
             println!("{usage}");

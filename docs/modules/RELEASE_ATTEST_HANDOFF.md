@@ -126,24 +126,82 @@ diagnostic and does not close normal registry execution, signing, publication,
 recovery, host qualification or Node retirement.
 
 
+V11 `ReleaseAttestationNativeBuildPackagePolicyReplayRequest` nests V10 and adds
+`immutable_build_package_retirement_policy_v1`. It reads the fixed
+[build/package catalog](../../migration/build-package-retirements.mjs) as data,
+checks the matching archive AST and source references, and compares the actual
+local runner-contract artifact with the original fixed suite. V12
+`ReleaseAttestationNativeCommandDispositionPolicyReplayRequest` nests V11 and
+adds `immutable_760_command_disposition_policy_v1`. It regenerates the complete
+[command-disposition manifest](../../migration/P0_PAPERCTL_COMMAND_DISPOSITION.json)
+from the held parser/dispatch/mode sources and compares the whole original
+suite value. Matrix counts and accepted source rows come from the
+[canonical matrix](../../migration/legacy-semantic-migration-matrix.json) and
+actual `matrixPolicyReplay.nativeBuildPackageRetirementPolicy` /
+`matrixPolicyReplay.nativeCompleteCommandDispositionPolicy` report values.
+Neither a `native_route` disposition label nor a complete policy calculation
+establishes that command's Rust business implementation or release readiness.
+
+V13 `ReleaseAttestationNativeResearchRetirementPolicyReplayRequest` nests V12
+and adds `immutable_155_research_retirement_policy_v1`. The fixed
+[research retirement catalog](../../migration/research-verify-retirements.mjs)
+is read as data under its exact byte hash and a separate 64 KiB bound; older
+catalog profiles retain their 16 KiB bound. Actual archive bytes, public
+symbols, parse-only AST effects and current production references bind every
+retired source. The complete computed summary must match the original
+[research suite](../../migration/tests/p1-research-verify-retirements.mjs).
+Its two local execution harnesses remain explicitly retired: neither source
+body is executed and neither gains inherited execution or academic authority.
+The fixed missing-source fixture retains descriptor-held ENOENT edges before
+and after the Node observer; creation, deletion, symlink replacement and
+cancellation refuse. General research-adapter or arbitrary legacy harness API
+parity remains unclaimed. The isolated binary test fixture contains only this
+retirement subset; the production V13 owner still requires the original full
+245-source observation and all ten original Node suites.
+
+
 ## Ordinary blocked diagnostic composition
 
 `hepta-paper-rust maintenance release-attest` accepts no forwarded arguments;
 a bare `--` also selects the same fixed execute operation. Its native
 `release-evidence --execute` implementation derives the Git executable pin,
 actual HEAD/tree and release-state snapshot through the held V2 source owner,
-then selects `immutable_source_only_blocked_integrity_v1` from the versioned
-`migration/fixtures/native-release-replay-profile.v1.json`. That local profile
-binds the differential executable and immutable archive; it grants no external
-authority. The existing source/object checks, fixed V10 replay and original
-600,000 ms operation deadline remain enforced.
+then selects `immutable_source_only_blocked_integrity_v3` from the versioned
+`migration/fixtures/native-release-replay-profile.v3.json`. The closed profile
+contains exactly `version`, `kind`, `profile`, `nodeExecutable`,
+`nodeExecutableSha256`, `archivePath`, and `archiveSha256`; paths are absolute,
+tool hashes are lower-case SHA-256, and the archive identity is fixed. V1 and V2
+profiles are refused rather than reinterpreted. The profile grants no external
+authority and cannot select resource limits. The actual V13 research-retirement owner wraps V12 command disposition,
+V11 build/package, V10 retirement, V9 native AST, and V8 measured source replay. The existing source/object checks, 32 KiB profile, 4 MiB signed
+receipt and original 600,000 ms operation deadline remain enforced.
+
+This source-only ordinary profile still requires all ten fixed Node differential
+observers. It is not the Node-free product runtime or a completed release route;
+the remaining native calculations and separate production/development profiles
+must close before that claim becomes valid.
+
+Prepare a local V3 configuration by copying
+[`native-release-replay-profile.v3.example.json`](../../migration/fixtures/native-release-replay-profile.v3.example.json)
+to `migration/fixtures/native-release-replay-profile.v3.json`. Replace the two
+Node fields with the separately qualified absolute executable path and its
+actual `sha256:` byte pin; the example's placeholder path/hash are deliberately
+unusable. `version=3`, `kind=OrdinaryNativeReleaseReplayProfile`,
+`profile=immutable_source_only_blocked_integrity_v3` and the fixed archive hash
+remain unchanged. The archive path must name that actual immutable archive.
+Record the local configuration through the existing source/release-state
+workflow before capture, and preserve any older V1/V2 configuration. No template,
+configuration or private test key supplies release readiness or custody.
 
 The existing local integrity key signs the actual blocked payload. The owner
 recaptures source before and after signing/publication, verifies retained keys
 and profile metadata, and uses durable no-clobber publication for
 `NATIVE_BLOCKED_DRILL_v1_<payload-hash>.json`. Recovery verifies existing signed
-bytes and current source/key bindings. Unknown, competing, stale or tampered
-artifacts remain retained on refusal. A post-publication failure does not unlink
+bytes and current source/key bindings, and requires the V13 blocked payload.
+Earlier signed payload versions are retained and refused rather than silently
+upgraded or deleted. The public nine-field signature and version-1 diagnostic
+envelope remain unchanged. Unknown, competing, stale or tampered artifacts
+remain retained on refusal. A post-publication failure does not unlink
 an artifact with unproved ownership. This composition ends with
 `release_evidence_bundle_not_ready`; ready bundle/CURRENT publication, exact
 post-publication rollback and complete restored runtime remain unimplemented.
@@ -157,7 +215,8 @@ change, while the original Node signer canonicalizes it to integer zero.
 Repeated ordinary captures may produce different payloads because measured
 remaining time changes; this does not establish same-payload retry idempotency.
 
-The executable `release_evidence::tests` owners cover normal grammar, the actual
+The executable `release_evidence::tests` and `release_evidence::ordinary_tests`
+owners cover normal grammar, the actual
 original Node signature oracle, retained recovery, cancellation/deadlines,
 competing bytes, source/key revocation and resource refusals. Normal producer,
 retry and active source-child cancellation observations must be refreshed for
@@ -188,7 +247,13 @@ rustup run 1.98.0 cargo clippy --manifest-path rust/Cargo.toml -p hepta-paper-se
 rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --test release_attest_source_capture --test release_attest --test release_replay --test release_replay_referee --test release_replay_execution --test release_replay_policy --test native_python_ast_worker
 rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --test frontend_request_bounds
 rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --lib release_evidence:: -- --nocapture
+rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --lib release_replay::execution::policy::research_policy::tests -- --nocapture
 ```
+
+Run the Node differential owners with the separately qualified Node 22
+executable on `PATH`. The research fixture selector also accepts
+`HEPTA_TEST_NODE`; it does not change the existing signature oracle's `PATH`
+selection or supply runtime qualification.
 
 The V2 tests inspect actual private Git repositories and replay the qualified
 Node release-state/provenance owners. They cover readable corrupt Git objects,

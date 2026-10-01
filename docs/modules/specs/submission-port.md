@@ -62,6 +62,9 @@ Current implementation and contract roots:
 - `paper-domain/submission`
 - `paper-adapters`
 
+The Rust local artifact preparation owner and its exact worker/CAS boundaries
+are documented in the [development handoff](../../../rust/crates/hepta-paper-service/src/native_business/local_submission_preflight/HANDOFF.md).
+
 ## Concurrency and resources
 
 Consumes separately provisioned external concurrency, cost, rate-limit, and irreversible-action budgets. Local availability is not authority. Each call is admitted before release, journalled by idempotency identity, and reconciled from the external system after timeout or ambiguity.

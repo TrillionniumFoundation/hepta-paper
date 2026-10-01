@@ -959,3 +959,183 @@ fn final_pair_snapshot_rejects_private_mutation_while_public_is_read() {
         }
     }
 }
+
+#[test]
+fn retained_signing_guard_refuses_same_byte_private_rewrite_after_loading() {
+    let fixture = Fixture::new();
+    provision_local_release_integrity_key_v1(&fixture.context, true).unwrap();
+    let loaded = load_existing_local_release_integrity_key_v1(&fixture.context, true).unwrap();
+    loaded.assert_current().unwrap();
+    let path = fixture.key_root().join(PRIVATE);
+    let bytes = Zeroizing::new(fs::read(&path).unwrap());
+    fs::write(&path, bytes.as_slice()).unwrap();
+    assert!(
+        loaded.assert_current().is_err(),
+        "same-byte rewriting must revoke the retained observation"
+    );
+}
+#[test]
+fn retained_public_guard_refuses_key_root_namespace_transplant() {
+    let fixture = Fixture::new();
+    provision_local_release_integrity_key_v1(&fixture.context, true).unwrap();
+    let loaded = load_existing_local_release_integrity_key_v1(&fixture.context, false).unwrap();
+    assert!(loaded.private_key_pem().is_none());
+    loaded.assert_current().unwrap();
+    let root = fixture.key_root();
+    let backup = fixture.context.runtime_root.join("retained-old-key-root");
+    fs::rename(&root, &backup).unwrap();
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    for name in [PRIVATE, PUBLIC] {
+        fs::copy(backup.join(name), root.join(name)).unwrap();
+    }
+    assert!(
+        loaded.assert_current().is_err(),
+        "same key bytes in another namespace must not preserve the retained observation"
+    );
+}
+#[test]
+fn retained_reader_refuses_extra_key_root_names_without_scanning_unbounded_entries() {
+    let fixture = Fixture::new();
+    provision_local_release_integrity_key_v1(&fixture.context, true).unwrap();
+    for index in 0..8 {
+        fs::write(
+            fixture.key_root().join(format!("unexpected-{index}")),
+            b"fixture",
+        )
+        .unwrap();
+    }
+    let error = match load_existing_local_release_integrity_key_v1(&fixture.context, true) {
+        Ok(_) => panic!("extra key names accepted"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("pair_shape_invalid"));
+}
+
+#[test]
+fn copied_key_cli_defaults_require_explicit_real_deployment_workspace() {
+    let fixture = Fixture::new();
+    let copied_root = fixture.root.join("unknown-copy");
+    fs::create_dir(&copied_root).unwrap();
+    let copied = copied_root.join("hepta-release-integrity-key");
+    fs::copy(env!("CARGO_BIN_EXE_hepta-release-integrity-key"), &copied).unwrap();
+    let workspace = fixture.root.join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    let invoke = |explicit: bool| {
+        let mut command = Command::new(&copied);
+        command
+            .args(["--action=status"])
+            .current_dir(&fixture.root)
+            .env_clear()
+            .env("PATH", "/nonexistent")
+            .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
+            .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
+            .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root);
+        if explicit {
+            command.env("HEPTA_PAPER_WORKSPACE_ROOT", "workspace");
+        }
+        command.output().unwrap()
+    };
+    let missing = invoke(false);
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(missing.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(missing.stderr).unwrap().trim_end(),
+        "native_workspace_root_required"
+    );
+    assert!(!fixture.key_root().exists());
+    let selected = invoke(true);
+    assert_eq!(selected.status.code(), Some(2));
+    assert!(selected.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&selected.stdout).unwrap();
+    assert_eq!(
+        value["status"],
+        "local_release_integrity_key_not_provisioned"
+    );
+    assert_eq!(value["privateKeyRead"], false);
+    assert!(!fixture.key_root().exists());
+}
+
+#[test]
+fn standalone_key_refuses_nonunicode_selected_configuration_without_panicking() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let fixture = Fixture::new();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hepta-release-integrity-key"));
+    command
+        .args(["--action=status"])
+        .env_clear()
+        .env("PATH", "/nonexistent")
+        .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
+        .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
+        .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
+        .env("HEPTA_PAPER_WORKSPACE_ROOT", OsString::from_vec(vec![0xff]));
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap().trim_end(),
+        "release_integrity_key_environment_encoding_invalid:HEPTA_PAPER_WORKSPACE_ROOT"
+    );
+    assert!(!fixture.key_root().exists());
+}
+
+#[test]
+fn copied_deployed_key_frontend_uses_exact_root_bin_marker_without_cwd_or_source_fallback() {
+    let fixture = Fixture::new();
+    let deployment = fixture.root.join("actual-deployment");
+    let bin = deployment.join("bin");
+    for relative in ["bin", "paper-core/bin", "paper-core/config"] {
+        fs::create_dir_all(deployment.join(relative)).unwrap();
+    }
+    fs::write(
+        deployment.join("package.json"),
+        br#"{"name":"hepta-paper-workspace"}"#,
+    )
+    .unwrap();
+    let frontend = bin.join("hepta-release-integrity-key");
+    fs::copy(env!("CARGO_BIN_EXE_hepta-release-integrity-key"), &frontend).unwrap();
+    let invoke = |selected: &Path| {
+        Command::new(selected)
+            .args(["--action=status"])
+            .current_dir(&fixture.root)
+            .env_clear()
+            .env("PATH", "/nonexistent")
+            .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
+            .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
+            .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
+            .output()
+            .unwrap()
+    };
+    let accepted = invoke(&frontend);
+    assert_eq!(accepted.status.code(), Some(2));
+    assert!(accepted.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(
+        value["status"],
+        "local_release_integrity_key_not_provisioned"
+    );
+    assert_eq!(value["privateKeyRead"], false);
+    assert!(!fixture.key_root().exists());
+    let renamed = bin.join("unknown-key-copy");
+    fs::copy(&frontend, &renamed).unwrap();
+    let unknown = invoke(&renamed);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(unknown.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(unknown.stderr).unwrap().trim_end(),
+        "native_workspace_root_required"
+    );
+    fs::write(
+        deployment.join("package.json"),
+        br#"{"name":"another-package"}"#,
+    )
+    .unwrap();
+    let invalid_marker = invoke(&frontend);
+    assert_eq!(invalid_marker.status.code(), Some(1));
+    assert!(invalid_marker.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(invalid_marker.stderr).unwrap().trim_end(),
+        "native_workspace_root_required"
+    );
+    assert!(!fixture.key_root().exists());
+}

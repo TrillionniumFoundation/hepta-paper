@@ -148,6 +148,69 @@ impl Drop for NativeWorkspace {
 }
 
 #[test]
+fn git_source_observation_disables_repository_fsmonitor_hooks_before_cargo_execution() {
+    use std::os::unix::fs::PermissionsExt;
+    let workspace = NativeWorkspace::new();
+    let hook = workspace.0.join(".git/fsmonitor-hook");
+    let marker = workspace.0.join(".git/fsmonitor-ran");
+    fs::write(
+        &hook,
+        "#!/bin/sh\nprintf observed > .git/fsmonitor-ran\nprintf 'fixture-token\\0'\n",
+    )
+    .unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        Command::new("git")
+            .current_dir(&workspace.0)
+            .args(["config", "core.fsmonitor", hook.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    // Prove this is an actual executable Git hook, not a shape-only fixture.
+    assert!(
+        Command::new("git")
+            .current_dir(&workspace.0)
+            .args(["status", "--porcelain=v1"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(fs::read(&marker).unwrap(), b"observed");
+    fs::remove_file(&marker).unwrap();
+    let tree = Command::new("git")
+        .current_dir(&workspace.0)
+        .args(["rev-parse", "HEAD^{tree}"])
+        .output()
+        .unwrap();
+    assert!(tree.status.success());
+    let tree = String::from_utf8(tree.stdout).unwrap();
+    let output = workspace
+        .command()
+        .args([
+            "--expected-head",
+            &"a".repeat(40),
+            "--expected-tree",
+            tree.trim(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("full_suite_verification_subject_mismatch"),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        !marker.exists(),
+        "fixed source observation executed repository fsmonitor"
+    );
+    assert!(!workspace.0.join("rust/target").exists());
+}
+
+#[test]
 fn ordinary_native_verification_runs_real_rust_commands_and_binds_the_source() {
     let workspace = NativeWorkspace::new();
     let output = workspace.command().output().unwrap();
@@ -191,6 +254,157 @@ fn ordinary_native_verification_runs_real_rust_commands_and_binds_the_source() {
     assert!(dirty.stdout.is_empty());
     assert!(
         String::from_utf8_lossy(&dirty.stderr).contains("full_suite_verification_source_not_clean")
+    );
+}
+
+#[test]
+fn ordinary_native_verification_accepts_empty_gitlink_reference_and_refuses_nested_bytes() {
+    let workspace = NativeWorkspace::new();
+    let query = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(&workspace.0)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let oid = query(&["rev-parse", "HEAD"]);
+    let oid = oid.trim();
+    fs::write(workspace.0.join(".gitmodules"),"[submodule \"reference\"]\n\tpath = reference\n\turl = https://example.invalid/immutable-reference.git\n").unwrap();
+    query(&["add", ".gitmodules"]);
+    query(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{oid},reference"),
+    ]);
+    query(&[
+        "-c",
+        "user.name=Native Test",
+        "-c",
+        "user.email=native@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "-m",
+        "Unmaterialized reference",
+    ]);
+    fs::create_dir(workspace.0.join("reference")).unwrap();
+    let output = workspace.command().output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["source"]["gitlinkReferences"][0]["commit"], oid);
+    assert_eq!(
+        report["source"]["gitlinkReferences"][0]["state"],
+        "empty_directory"
+    );
+    assert_eq!(report["sourceCurrentAfterExecution"], true);
+    fs::write(
+        workspace.0.join("reference/.hidden"),
+        "unaccepted nested content",
+    )
+    .unwrap();
+    let output = workspace.command().output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("gitlink_materialized"));
+}
+
+#[test]
+fn ordinary_native_verification_refuses_same_empty_gitlink_directory_replacement_by_actual_child() {
+    let workspace = NativeWorkspace::new();
+    fs::write(
+        workspace.0.join("rust/src/lib.rs"),
+        r#"
+pub fn value() -> u8 { 7 }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn replace_empty_reference() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        std::fs::rename(root.join("reference"), root.join(".git/original-reference")).unwrap();
+        std::fs::create_dir(root.join("reference")).unwrap();
+        assert_eq!(super::value(), 7);
+    }
+}
+"#,
+    )
+    .unwrap();
+    assert!(
+        Command::new(env!("CARGO"))
+            .current_dir(&workspace.0)
+            .args(["fmt", "--manifest-path", "rust/Cargo.toml", "--all"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let query = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(&workspace.0)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    query(&["add", "rust/src/lib.rs"]);
+    let oid = query(&["rev-parse", "HEAD"]);
+    let oid = oid.trim();
+    fs::write(workspace.0.join(".gitmodules"), "[submodule \"reference\"]\n\tpath = reference\n\turl = https://example.invalid/immutable-reference.git\n").unwrap();
+    query(&["add", ".gitmodules"]);
+    query(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{oid},reference"),
+    ]);
+    query(&[
+        "-c",
+        "user.name=Native Test",
+        "-c",
+        "user.email=native@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--quiet",
+        "-m",
+        "Actual child swaps empty reference",
+    ]);
+    fs::create_dir(workspace.0.join("reference")).unwrap();
+    let output = workspace.command().output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["sourceCurrentAfterExecution"], false);
+    assert_eq!(
+        report["postObservationError"],
+        "full_suite_verification_gitlink_changed"
+    );
+    assert!(
+        report["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["passed"] == true)
     );
 }
 
@@ -445,6 +659,70 @@ fn real_suite_sigterm_and_deadline_keep_failure_receipts_and_reap_the_test_group
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
+
+#[test]
+fn real_suite_refuses_readable_corrupt_git_objects_before_running_rust() {
+    let workspace = NativeWorkspace::new();
+    let blob = Command::new("git")
+        .current_dir(&workspace.0)
+        .args(["rev-parse", "HEAD:rust/src/lib.rs"])
+        .output()
+        .unwrap();
+    assert!(blob.status.success());
+    let blob = String::from_utf8(blob.stdout).unwrap().trim().to_owned();
+    let object = workspace
+        .0
+        .join(".git/objects")
+        .join(&blob[..2])
+        .join(&blob[2..]);
+    let changed = Command::new("python3").args(["-c", "import pathlib,sys,zlib; p=pathlib.Path(sys.argv[1]); raw=zlib.decompress(p.read_bytes()); changed=raw.replace(b'    7\\n',b'    8\\n'); assert changed!=raw and len(changed)==len(raw); p.chmod(0o600); p.write_bytes(zlib.compress(changed))"])
+        .arg(object).status().unwrap();
+    assert!(changed.success());
+    let readable = Command::new("git")
+        .current_dir(&workspace.0)
+        .args(["cat-file", "blob", &blob])
+        .output()
+        .unwrap();
+    assert!(readable.status.success());
+    assert!(String::from_utf8_lossy(&readable.stdout).contains("    8\n"));
+    let output = workspace.command().output().unwrap();
+    assert!(!output.status.success() && output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("tree_object_integrity_failed"));
+    assert!(!workspace.0.join("rust/target").exists());
+}
+
+#[test]
+fn real_suite_refuses_integrity_bypass_in_common_and_worktree_git_configuration() {
+    for worktree in [false, true] {
+        let workspace = NativeWorkspace::new();
+        if worktree {
+            assert!(
+                Command::new("git")
+                    .current_dir(&workspace.0)
+                    .args(["config", "extensions.worktreeConfig", "true"])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let scope = if worktree { "--worktree" } else { "--local" };
+        assert!(
+            Command::new("git")
+                .current_dir(&workspace.0)
+                .args(["config", scope, "fsck.hashMismatch", "ignore"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let output = workspace.command().output().unwrap();
+        assert!(!output.status.success() && output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("git_configuration_can_bypass_integrity_or_fetch")
+        );
+        assert!(!workspace.0.join("rust/target").exists());
+    }
 }
 
 #[test]

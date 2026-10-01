@@ -75,6 +75,20 @@ fn native_attest_reads_real_schema25_and_stays_blocked_without_external_authorit
     let report = inspect_legacy_deletion_drill_attest_v1(request(&database, &archive))
         .expect("inspection report");
     assert!(report.local_freeze_verified);
+    assert_eq!(report.implementation_blockers.len(), 6);
+    assert_eq!(report.external_qualification_blockers.len(), 4);
+    assert!(
+        report
+            .implementation_blockers
+            .iter()
+            .all(|s| s.ends_with("_not_implemented"))
+    );
+    assert!(
+        report
+            .external_qualification_blockers
+            .iter()
+            .all(|s| s.ends_with("_external"))
+    );
     assert!(report.legacy_freeze_receipt_hash.is_some());
     assert!(!report.technical_release_ready);
     assert!(!report.physical_deletion_allowed);
@@ -85,7 +99,7 @@ fn native_attest_reads_real_schema25_and_stays_blocked_without_external_authorit
         report
             .blockers
             .iter()
-            .any(|value| value == "legacy_deletion_drill_node_differential_replay_external")
+            .any(|value| value == "legacy_deletion_drill_node_differential_replay_not_implemented")
     );
     assert!(
         report
@@ -153,7 +167,8 @@ fn native_attest_cli_prints_blocked_report_and_exits_nonzero() {
             .as_array()
             .expect("blockers")
             .iter()
-            .any(|value| value == "legacy_deletion_drill_release_signature_external")
+            .any(|value| value
+                == "legacy_deletion_drill_release_signing_integration_not_implemented")
     );
     let _ = fs::remove_dir_all(root);
 }

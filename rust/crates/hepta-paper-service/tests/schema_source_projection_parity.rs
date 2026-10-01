@@ -522,7 +522,7 @@ fn signed_maintenance_requires_exact_scope_fencing_fresh_final_clock_and_source_
         (
             "valid",
             60000,
-            "autonomous_research_online_schema_transition_quiescence_lease_insufficient",
+            "autonomous_research_online_schema_transition_reservation_invalid",
         ),
         (
             "valid",
@@ -533,9 +533,16 @@ fn signed_maintenance_requires_exact_scope_fencing_fresh_final_clock_and_source_
         *mode.borrow_mut() = scenario.into();
         let plan =
             build_schema_transition_plan_v1(options(), &authority, &mut || Ok(BASE)).unwrap();
-        let mut samples = vec![BASE, BASE, BASE, BASE, BASE + final_offset].into_iter();
+        // Advance at the actual authority call boundary, not after a fixed
+        // number of implementation clock samples. Every later guard sees the
+        // same final instant, including additional retained-source checks.
+        let before_call_count = calls.get();
         let Err(error) = reserve_schema_maintenance_v1(plan, &mut authority, &mut || {
-            Ok(samples.next().unwrap())
+            Ok(if calls.get() == before_call_count {
+                BASE
+            } else {
+                BASE + final_offset
+            })
         }) else {
             panic!("accepted {scenario}/{final_offset}")
         };
@@ -543,13 +550,31 @@ fn signed_maintenance_requires_exact_scope_fencing_fresh_final_clock_and_source_
     }
     *mode.borrow_mut() = "valid".into();
     let plan = build_schema_transition_plan_v1(options(), &authority, &mut || Ok(BASE)).unwrap();
-    let mut samples = vec![BASE, BASE, BASE, BASE, BASE + 59000].into_iter();
-    let mut maintenance =
-        reserve_schema_maintenance_v1(plan, &mut authority, &mut || Ok(samples.next().unwrap()))
-            .unwrap();
+    let before_call_count = calls.get();
+    let mut maintenance = reserve_schema_maintenance_v1(plan, &mut authority, &mut || {
+        Ok(if calls.get() == before_call_count {
+            BASE
+        } else {
+            BASE + 59000
+        })
+    })
+    .unwrap();
     assert_eq!(
         maintenance.reservation()["allRegisteredMutationsFenced"],
         true
+    );
+    // The RPC-delay cases above advance before retained signature validation.
+    // Separately expire only after the public token's source/key verification
+    // samples. Later rechecks stay expired; the injected clock never exhausts.
+    let mut late_after_io = [BASE + 59000, BASE + 59000]
+        .into_iter()
+        .chain(std::iter::repeat(BASE + 60000));
+    let error = maintenance
+        .assert_current(&authority, &mut || Ok(late_after_io.next().unwrap()))
+        .unwrap_err();
+    assert_eq!(
+        error.code, "autonomous_research_online_schema_transition_quiescence_lease_insufficient",
+        "post-I/O expiry must not mint a usable maintenance token"
     );
     let error = maintenance
         .assert_current(&authority, &mut || Ok(BASE + 60000))

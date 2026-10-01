@@ -364,7 +364,7 @@ fn ordinary_schema_execute_requires_independent_plan_pin_before_reading_inputs()
 fn ordinary_execute_and_recover_refuse_missing_physical_profile_without_runtime_changes() {
     let mut oracle = Oracle::new();
     let fixture = CliFixture::new(&mut oracle, 1);
-    for action in ["execute", "recover"] {
+    for action in ["execute", "recover", "rollback"] {
         let mut args = fixture.native_args();
         args[1] = action.into();
         args.extend([

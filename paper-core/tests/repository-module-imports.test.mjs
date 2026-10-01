@@ -303,8 +303,6 @@ function classifyRepositoryModules() {
     ...entrypoints.migrationSupport,
     ...packageScriptModuleEntries('retirement'),
   ]);
-  const allModules = moduleRoots.flatMap((root) => modulesUnder(path.join(workspaceRoot, root)))
-    .map((relative) => path.join(workspaceRoot, relative));
   const reachable = Object.freeze({
     production: productionReachable,
     compatibility: compatibilityReachable,
@@ -313,6 +311,13 @@ function classifyRepositoryModules() {
     maintenance: maintenanceReachable,
     migrationSupport: migrationSupportReachable,
   });
+  // JSON imports are tracked data modules, including resources outside code roots.
+  const allModules = [...new Set([
+    ...moduleRoots.flatMap((root) => modulesUnder(path.join(workspaceRoot, root)))
+      .map((relative) => path.join(workspaceRoot, relative)),
+    ...Object.values(reachable).flatMap((files) => [...files]
+      .filter((file) => file.endsWith('.json'))),
+  ])];
   const ownershipByCategory = Object.fromEntries(
     architectureCategories.map((category) => [category, new Set()]),
   );

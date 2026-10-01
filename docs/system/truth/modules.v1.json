@@ -840,7 +840,7 @@
       "paths": [
         "paper-domain/submission",
         "paper-adapters",
-        "rust/crates/hepta-paper-service/src/native_business/local_submission_preflight"
+        "rust/crates/hepta-paper-service/src/native_business/local_submission_preflight/mod.rs"
       ],
       "capabilityIds": [
         "CAP-SUBMIT",

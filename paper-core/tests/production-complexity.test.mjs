@@ -111,6 +111,22 @@ test('payload-like executable modules outside the exact allowlist stay inspected
   assert.ok(report.blockers.includes('production_complexity_source_lines_exceeded'));
 });
 
+test('declared JSON payloads must remain valid data rather than executable source', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-production-complexity-json-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const relative = 'store/schema/autonomous-research-online-mutation-marker.v1.json';
+  const graphReport = fixtureGraph([{ path: relative, dependencies: [] }]);
+  writeModule(root, relative, '["CREATE TABLE example (id INTEGER);"]\n');
+  const ready = inspectProductionComplexity({ workspaceRoot: root, graphReport });
+  assert.equal(ready.status, 'production_complexity_ready');
+  assert.equal(ready.excludedModuleCount, 1);
+
+  writeModule(root, relative, 'export const executable = true;\n');
+  const refused = inspectProductionComplexity({ workspaceRoot: root, graphReport });
+  assert.equal(refused.status, 'production_complexity_blocked');
+  assert.deepEqual(refused.blockers, ['production_complexity_payload_json_invalid']);
+});
+
 test('control-flow and export metrics come from syntax rather than source text fragments', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-production-complexity-syntax-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

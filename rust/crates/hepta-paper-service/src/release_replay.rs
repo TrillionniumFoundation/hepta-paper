@@ -1,5 +1,6 @@
 //! Native replay calculations. Differential evidence observes actual legacy
 //! reference bytes; these calculations grant no signing or release authority.
+pub mod command_disposition;
 pub(crate) mod local_signature;
 pub mod production_core;
 pub mod python_ast;
@@ -89,10 +90,16 @@ mod execution;
 pub use execution::{
     ReleaseAttestationMeasuredPolicyReplayRequestV8,
     ReleaseAttestationNativeAstPolicyReplayRequestV9,
+    ReleaseAttestationNativeBuildPackagePolicyReplayRequestV11,
+    ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12,
+    ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13,
     ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
     ReleaseAttestationPolicyReplayRequestV4, ReleaseAttestationReplayRequestV3,
     inspect_release_attestation_measured_policy_replay_with_cancellation_v8,
     inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9,
+    inspect_release_attestation_native_build_package_policy_replay_with_cancellation_v11,
+    inspect_release_attestation_native_command_disposition_policy_replay_with_cancellation_v12,
+    inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13,
     inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10,
     inspect_release_attestation_policy_replay_v4,
     inspect_release_attestation_policy_replay_with_cancellation_v4,

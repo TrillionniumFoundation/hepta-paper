@@ -54,7 +54,7 @@ fn verify(
         return Err(error("envelope_invalid"));
     }
     let payload = &value["payload"];
-    if payload["version"] != 10
+    if payload["version"] != 13
         || payload["kind"] != "ReleaseAttestationPolicyReplayInspection"
         || payload["sourceBound"] != true
         || payload["status"] != "release_attestation_blocked"

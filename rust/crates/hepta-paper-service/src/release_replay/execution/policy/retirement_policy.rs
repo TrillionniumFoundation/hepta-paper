@@ -124,9 +124,16 @@ fn strings(node: &Value) -> Result<Vec<String>, String> {
     elements.iter().map(literal).collect()
 }
 fn fixed_tree(profile: &Profile, bytes: &[u8]) -> Result<Value, String> {
+    fixed_tree_with_limit(profile, bytes, 16 * 1024)
+}
+fn fixed_tree_with_limit(
+    profile: &Profile,
+    bytes: &[u8],
+    source_limit: usize,
+) -> Result<Value, String> {
     // Exact immutable identities are checked before allocation or parsing. The
     // caller cannot enlarge this parser profile or choose a different program.
-    if bytes.is_empty() || bytes.len() > 16 * 1024 || digest(bytes) != profile.catalog_hash {
+    if bytes.is_empty() || bytes.len() > source_limit || digest(bytes) != profile.catalog_hash {
         return Err(error("native_retirement_fixed_catalog_changed"));
     }
     let source = std::str::from_utf8(bytes).map_err(|_| invalid())?;
@@ -280,13 +287,13 @@ fn audit_matches(entry: &Entry, audit: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn production_path(path: &str) -> bool {
+pub(super) fn production_path(path: &str) -> bool {
     path.ends_with(".mjs")
         && ["paper-core/src/", "paper-core/bin/", "paper-adapters/"]
             .iter()
             .any(|root| path.starts_with(root))
 }
-fn referenced(bytes: &[u8], needle: &str) -> bool {
+pub(super) fn referenced(bytes: &[u8], needle: &str) -> bool {
     // The original observer escapes every regexp metacharacter and searches an
     // ASCII source path. Searching the exact bytes is equivalent, including
     // Node UTF-8 replacement semantics and its inserted newline boundaries.
@@ -298,6 +305,61 @@ pub(super) struct Observed {
     pub summaries: BTreeMap<String, Value>,
     pub accepted_source_paths: BTreeSet<String>,
     pub receipt: Value,
+}
+// A fixed source-bound symbol object reuses the exact catalog parser and
+// initializer grammar; callers cannot choose a program or parser executable.
+pub(super) fn fixed_symbol_table(
+    bytes: &[u8],
+    sha256: &'static str,
+    declaration: &'static str,
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    let profile = Profile {
+        catalog: "migration/build-package-retirements.mjs",
+        catalog_hash: sha256,
+        suite: "",
+        suite_hash: "",
+        declaration,
+        kind: "",
+        disposition: "",
+        migration_action: "",
+        unknown_path: "",
+        source_count: 0,
+        minimum_reason_length: 0,
+        ast_profile: "",
+    };
+    let tree = fixed_tree(&profile, bytes)?;
+    let fields = properties(first_initializer(&profile, &tree)?)?;
+    fields
+        .into_iter()
+        .map(|(path, values)| Ok((path.into(), strings(values)?)))
+        .collect()
+}
+// The 54,299-byte research catalog has one fixed hash and initializer. Older
+// profiles retain their original sixteen KiB cap; no external input chooses
+// this bound, declaration, source program or parser.
+pub(super) fn fixed_research_symbol_table(
+    bytes: &[u8],
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    let profile = Profile {
+        catalog: "migration/research-verify-retirements.mjs",
+        catalog_hash: "sha256:ad5ca54eb2b0a6ba881123b018d281d933ed52b0cd204013d722122dcb39576f",
+        suite: "",
+        suite_hash: "",
+        declaration: "PUBLIC_SYMBOLS",
+        kind: "",
+        disposition: "",
+        migration_action: "",
+        unknown_path: "",
+        source_count: 0,
+        minimum_reason_length: 0,
+        ast_profile: "",
+    };
+    let tree = fixed_tree_with_limit(&profile, bytes, 64 * 1024)?;
+    let fields = properties(first_initializer(&profile, &tree)?)?;
+    fields
+        .into_iter()
+        .map(|(path, values)| Ok((path.into(), strings(values)?)))
+        .collect()
 }
 pub(super) fn inspect(
     owner: &mut Owner<'_>,

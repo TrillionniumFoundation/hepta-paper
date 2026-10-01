@@ -2,9 +2,9 @@
 //! each consumer must open and validate its own manifest and retained inputs.
 use std::{
     collections::BTreeMap,
-    fs::{self, OpenOptions},
+    fs::{self, File, Metadata},
     io::Read,
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    os::{fd::AsFd, unix::fs::MetadataExt},
     path::{Component, Path, PathBuf},
 };
 
@@ -227,17 +227,151 @@ pub(crate) fn read_native_workspace_package_bytes_with_limit_v1(
     root: &Path,
     maximum_bytes: u64,
 ) -> Result<Vec<u8>, String> {
+    Ok(hold_native_workspace_package_v1(root, maximum_bytes)?.bytes)
+}
+
+/// Retained ordinary metadata, not an authority-file or deployment receipt.
+/// The publisher uses the same bounded reader and keeps its descriptors across
+/// parsing and publication instead of reopening the pathname for truncation.
+pub(crate) struct NativeWorkspacePackageGuardV1 {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) file: File,
+    pub(crate) metadata: Metadata,
+    directories: Vec<(PathBuf, File, Metadata)>,
+}
+fn package_snapshot(a: &Metadata, b: &Metadata) -> bool {
+    (
+        a.dev(),
+        a.ino(),
+        a.uid(),
+        a.gid(),
+        a.mode(),
+        a.nlink(),
+        a.len(),
+        a.mtime(),
+        a.mtime_nsec(),
+        a.ctime(),
+        a.ctime_nsec(),
+    ) == (
+        b.dev(),
+        b.ino(),
+        b.uid(),
+        b.gid(),
+        b.mode(),
+        b.nlink(),
+        b.len(),
+        b.mtime(),
+        b.mtime_nsec(),
+        b.ctime(),
+        b.ctime_nsec(),
+    )
+}
+impl NativeWorkspacePackageGuardV1 {
+    pub(crate) fn root(&self) -> &Path {
+        self.directories
+            .last()
+            .map_or(Path::new("/"), |value| value.0.as_path())
+    }
+    pub(crate) fn parent(&self) -> &File {
+        self.directories.last().map_or(&self.file, |value| &value.1)
+    }
+    pub(crate) fn assert_parent_current(&self) -> Result<(), String> {
+        for (path, held, before) in &self.directories {
+            for current in [
+                held.metadata()
+                    .map_err(|_| "native_workspace_marker_changed")?,
+                fs::symlink_metadata(path).map_err(|_| "native_workspace_marker_changed")?,
+            ] {
+                if !current.is_dir()
+                    || current.is_symlink()
+                    || (
+                        current.dev(),
+                        current.ino(),
+                        current.uid(),
+                        current.gid(),
+                        current.mode(),
+                    ) != (
+                        before.dev(),
+                        before.ino(),
+                        before.uid(),
+                        before.gid(),
+                        before.mode(),
+                    )
+                {
+                    return Err("native_workspace_marker_changed".into());
+                }
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn assert_current(&self) -> Result<(), String> {
+        self.assert_parent_current()?;
+        let held = self
+            .file
+            .metadata()
+            .map_err(|_| "native_workspace_marker_changed")?;
+        let named = fs::symlink_metadata(self.root().join("package.json"))
+            .map_err(|_| "native_workspace_marker_changed")?;
+        if !named.is_file()
+            || named.is_symlink()
+            || !package_snapshot(&self.metadata, &held)
+            || !package_snapshot(&self.metadata, &named)
+        {
+            return Err("native_workspace_marker_changed".into());
+        }
+        Ok(())
+    }
+}
+pub(crate) fn hold_native_workspace_package_v1(
+    root: &Path,
+    maximum_bytes: u64,
+) -> Result<NativeWorkspacePackageGuardV1, String> {
+    use nix::{
+        fcntl::{OFlag, open, openat},
+        sys::stat::Mode,
+    };
     if maximum_bytes == 0
         || maximum_bytes > crate::command_surface::COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1
     {
         return Err("native_workspace_marker_invalid".into());
     }
-    let marker = root.join("package.json");
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
-        .open(&marker)
+    let cwd = std::env::current_dir().map_err(|_| "native_workspace_marker_unreadable")?;
+    let absolute = resolve_native_workspace_root_v1(&cwd, root, Some(root))?;
+    let flags = OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC;
+    let mut directory = File::from(
+        open(Path::new("/"), flags | OFlag::O_DIRECTORY, Mode::empty())
+            .map_err(|_| "native_workspace_marker_unreadable")?,
+    );
+    let mut cursor = PathBuf::from("/");
+    let mut directories = Vec::new();
+    for part in absolute.components().filter_map(|part| match part {
+        Component::Normal(name) => Some(name),
+        _ => None,
+    }) {
+        let next = File::from(
+            openat(
+                directory.as_fd(),
+                Path::new(part),
+                flags | OFlag::O_DIRECTORY,
+                Mode::empty(),
+            )
+            .map_err(|_| "native_workspace_marker_unreadable")?,
+        );
+        let metadata = directory
+            .metadata()
+            .map_err(|_| "native_workspace_marker_unreadable")?;
+        directories.push((cursor.clone(), directory, metadata));
+        cursor.push(part);
+        directory = next;
+    }
+    let metadata = directory
+        .metadata()
         .map_err(|_| "native_workspace_marker_unreadable")?;
+    let mut file = File::from(
+        openat(directory.as_fd(), "package.json", flags, Mode::empty())
+            .map_err(|_| "native_workspace_marker_unreadable")?,
+    );
+    directories.push((cursor, directory, metadata));
     let before = file
         .metadata()
         .map_err(|_| "native_workspace_marker_unreadable")?;
@@ -250,30 +384,15 @@ pub(crate) fn read_native_workspace_package_bytes_with_limit_v1(
         .take(maximum_bytes + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| "native_workspace_marker_unreadable")?;
-    let after = file
-        .metadata()
-        .map_err(|_| "native_workspace_marker_unreadable")?;
-    let named = fs::symlink_metadata(&marker).map_err(|_| "native_workspace_marker_changed")?;
-    let identity = |value: &fs::Metadata| {
-        (
-            value.dev(),
-            value.ino(),
-            value.uid(),
-            value.gid(),
-            value.mode(),
-            value.nlink(),
-            value.len(),
-            value.mtime(),
-            value.mtime_nsec(),
-            value.ctime(),
-            value.ctime_nsec(),
-        )
-    };
-    if bytes.len() as u64 != before.len()
-        || identity(&before) != identity(&after)
-        || identity(&before) != identity(&named)
-    {
+    if bytes.len() as u64 != before.len() {
         return Err("native_workspace_marker_changed".into());
     }
-    Ok(bytes)
+    let result = NativeWorkspacePackageGuardV1 {
+        bytes,
+        file,
+        metadata: before,
+        directories,
+    };
+    result.assert_current()?;
+    Ok(result)
 }

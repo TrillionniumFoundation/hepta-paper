@@ -1,15 +1,21 @@
 //! Native matrix policy calculations over independently captured source bytes.
 //! Fixed Node suites are explicit differential observers, never product owners.
 mod archive;
+mod build_package_policy;
+mod command_policy;
 mod current_worker;
 mod facts;
+#[cfg(test)]
+mod fixture_test_support;
 mod measured_profile;
 mod native_profile;
 mod node_assets;
 mod node_packages;
 mod private_tree;
 mod pure_matching;
+mod research_policy;
 mod retirement_policy;
+mod runner_contract;
 use super::{Owner, ReleaseAttestationReplayRequestV3, SourceGraph, Tool, digest, error};
 use archive::PinnedArchive;
 use facts::{Matrix, Reference, graph_paths, inspect_rows, validate_contract};
@@ -22,6 +28,9 @@ pub use measured_profile::ReleaseAttestationMeasuredPolicyReplayRequestV8;
 use measured_profile::SourceLimits;
 pub use native_profile::{
     ReleaseAttestationNativeAstPolicyReplayRequestV9,
+    ReleaseAttestationNativeBuildPackagePolicyReplayRequestV11,
+    ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12,
+    ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13,
     ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
 };
 use private_tree::PrivateTree;
@@ -193,6 +202,7 @@ pub fn inspect_release_attestation_policy_replay_with_cancellation_v4(
         4,
         false,
         false,
+        false,
     )
 }
 pub fn inspect_release_attestation_measured_policy_replay_with_cancellation_v8(
@@ -205,6 +215,7 @@ pub fn inspect_release_attestation_measured_policy_replay_with_cancellation_v8(
         cancelled,
         SourceLimits::Measured263V1,
         8,
+        false,
         false,
         false,
     )
@@ -221,6 +232,7 @@ pub fn inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9
         9,
         true,
         false,
+        false,
     )
 }
 pub fn inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10(
@@ -235,6 +247,52 @@ pub fn inspect_release_attestation_native_retirement_policy_replay_with_cancella
         10,
         true,
         true,
+        false,
+    )
+}
+pub fn inspect_release_attestation_native_build_package_policy_replay_with_cancellation_v11(
+    request: ReleaseAttestationNativeBuildPackagePolicyReplayRequestV11,
+    cancelled: &AtomicBool,
+) -> Result<Value, String> {
+    native_profile::validate_build_package(&request)?;
+    inspect_policy(
+        request.policy.policy.policy.policy,
+        cancelled,
+        SourceLimits::Measured263V1,
+        11,
+        true,
+        true,
+        true,
+    )
+}
+pub fn inspect_release_attestation_native_command_disposition_policy_replay_with_cancellation_v12(
+    request: ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12,
+    cancelled: &AtomicBool,
+) -> Result<Value, String> {
+    native_profile::validate_command_disposition(&request)?;
+    inspect_policy(
+        request.policy.policy.policy.policy.policy,
+        cancelled,
+        SourceLimits::Measured263V1,
+        12,
+        true,
+        true,
+        true,
+    )
+}
+pub fn inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13(
+    request: ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13,
+    cancelled: &AtomicBool,
+) -> Result<Value, String> {
+    native_profile::validate_research_retirement(&request)?;
+    inspect_policy(
+        request.policy.policy.policy.policy.policy.policy,
+        cancelled,
+        SourceLimits::Measured263V1,
+        13,
+        true,
+        true,
+        true,
     )
 }
 fn inspect_policy(
@@ -244,6 +302,7 @@ fn inspect_policy(
     output_version: u16,
     native_ast_enabled: bool,
     native_retirement_enabled: bool,
+    native_build_package_enabled: bool,
 ) -> Result<Value, String> {
     if request.version != 4
         || request.kind != "ReleaseAttestationPolicyReplayRequest"
@@ -327,6 +386,40 @@ fn inspect_policy(
     } else {
         None
     };
+    let mut native_build_package = if native_build_package_enabled {
+        Some(build_package_policy::inspect(
+            &mut owner,
+            &mut graph,
+            &matrix,
+            native_ast
+                .as_ref()
+                .ok_or_else(|| error("native_build_package_ast_required"))?,
+            &mut tree,
+            &python,
+        )?)
+    } else {
+        None
+    };
+    // Only the closed V12 entry above selects this internal observation. The
+    // caller cannot choose a scope or grant authority through an output version.
+    let mut native_command = if matches!(output_version, 12 | 13) {
+        Some(command_policy::inspect(&mut owner, &mut graph, &tree)?)
+    } else {
+        None
+    };
+    let mut native_research = if output_version == 13 {
+        Some(research_policy::inspect(
+            &mut owner,
+            &mut graph,
+            &matrix,
+            native_ast
+                .as_ref()
+                .ok_or_else(|| error("native_research_retirement_ast_required"))?,
+            &tree,
+        )?)
+    } else {
+        None
+    };
     let mut executions = BTreeMap::new();
     for (index, (suite, kind)) in SUITES.iter().enumerate() {
         owner.remaining()?;
@@ -392,6 +485,15 @@ fn inspect_policy(
     if let Some(observed) = &mut native_retirement {
         retirement_policy::compare(observed, &executions)?;
     }
+    if let Some(observed) = &mut native_build_package {
+        build_package_policy::compare(observed, &executions)?;
+    }
+    if let Some(observed) = &mut native_command {
+        command_policy::compare(observed, &executions)?;
+    }
+    if let Some(observed) = &mut native_research {
+        research_policy::compare(observed, &executions)?;
+    }
     for row in &mut rows {
         let actual = row["behaviorTests"]
             .as_array()
@@ -419,6 +521,25 @@ fn inspect_policy(
                 json!("native_complete_explicit_retirement_policy_and_full_node_suite_matched");
         }
 
+        if native_build_package.as_ref().is_some_and(|observed| {
+            row["sourcePath"]
+                .as_str()
+                .is_some_and(|path| observed.accepted_source_paths.contains(path))
+        }) {
+            row["nativeExplicitRetirementPolicyComplete"] = json!(true);
+            row["status"] =
+                json!("native_complete_explicit_retirement_policy_and_full_node_suite_matched");
+        }
+
+        if native_research.as_ref().is_some_and(|observed| {
+            row["sourcePath"]
+                .as_str()
+                .is_some_and(|path| observed.accepted_source_paths.contains(path))
+        }) {
+            row["nativeExplicitRetirementPolicyComplete"] = json!(true);
+            row["status"] =
+                json!("native_complete_explicit_retirement_policy_and_full_node_suite_matched");
+        }
         row["rustFixedCorpusMatches"] = json!(
             row["behaviorTests"]
                 .as_array()
@@ -471,6 +592,30 @@ fn inspect_policy(
             json!(observed.summaries.len());
         report["matrixPolicyReplay"]["scope"] = json!(
             "263_source_facts_245_native_ast_matches_two_native_pure_corpora_and_24_complete_explicit_retirement_policies"
+        );
+    }
+    if let Some(observed) = native_build_package {
+        report["matrixPolicyReplay"]["nativeBuildPackageRetirementPolicy"] = observed.receipt;
+        report["matrixPolicyReplay"]["verifiedNativeExplicitRetirementCount"] =
+            json!(24 + observed.accepted_source_paths.len());
+        report["matrixPolicyReplay"]["completeNativeExplicitRetirementSuiteCount"] = json!(3);
+        report["matrixPolicyReplay"]["scope"] = json!(
+            "263_source_facts_245_native_ast_matches_two_native_pure_corpora_and_60_complete_explicit_retirement_policies"
+        );
+    }
+    if let Some(observed) = native_command {
+        report["matrixPolicyReplay"]["nativeCompleteCommandDispositionPolicy"] = observed.receipt;
+        report["matrixPolicyReplay"]["scope"] = json!(
+            "263_source_facts_245_native_ast_matches_two_native_pure_corpora_complete_explicit_retirement_policies_and_source_bound_760_command_disposition"
+        );
+    }
+    if let Some(observed) = native_research {
+        report["matrixPolicyReplay"]["nativeResearchRetirementPolicy"] = observed.receipt;
+        report["matrixPolicyReplay"]["verifiedNativeExplicitRetirementCount"] =
+            json!(60 + observed.accepted_source_paths.len());
+        report["matrixPolicyReplay"]["completeNativeExplicitRetirementSuiteCount"] = json!(4);
+        report["matrixPolicyReplay"]["scope"] = json!(
+            "263_source_facts_245_native_ast_two_pure_corpora_215_explicit_retirements_and_760_command_disposition"
         );
     }
     let mut blockers = implementation;

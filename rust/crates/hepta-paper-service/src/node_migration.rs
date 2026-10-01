@@ -7,7 +7,8 @@
 //! that lock. No production authority is granted.
 
 use hepta_readonly_control::node_schema::{
-    NODE_MIGRATIONS_V1, validate_node_migration_structure_v1,
+    KnownInstalledNodeProfileV1, KnownInstalledNodeStructureV1, NODE_MIGRATIONS_V1,
+    recognize_known_installed_node_migration_structure_v1,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
@@ -72,6 +73,9 @@ pub struct NodeMigrationReceiptV1 {
     pub database_sha256: String,
     pub production_activation: bool,
     pub node_retirement_verified: bool,
+    /// Structural compatibility only; old authority rows remain unadopted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recognized_installed_schema: Option<KnownInstalledNodeStructureV1>,
 }
 
 fn canonical_private_database(path: &Path) -> Result<(PathBuf, fs::Metadata), NodeMigrationError> {
@@ -216,15 +220,33 @@ fn read_history(connection: &Connection) -> Result<Vec<(u32, String, String)>, N
     let mut statement = connection.prepare(
         "SELECT version,name,migration_sha256 FROM schema_migrations ORDER BY version LIMIT 26",
     )?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, u32>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut cursor = statement.query([])?;
+    let mut rows = Vec::new();
+    while let Some(row) = cursor.next()? {
+        use rusqlite::types::ValueRef;
+        let ValueRef::Integer(version) = row.get_ref(0)? else {
+            return Err(NodeMigrationError::History);
+        };
+        let ValueRef::Text(name) = row.get_ref(1)? else {
+            return Err(NodeMigrationError::History);
+        };
+        let ValueRef::Text(hash) = row.get_ref(2)? else {
+            return Err(NodeMigrationError::History);
+        };
+        if !(1..=25).contains(&version) || name.len() > 512 || hash.len() != 71 || rows.len() >= 25
+        {
+            return Err(NodeMigrationError::History);
+        }
+        rows.push((
+            u32::try_from(version).map_err(|_| NodeMigrationError::History)?,
+            std::str::from_utf8(name)
+                .map_err(|_| NodeMigrationError::History)?
+                .to_owned(),
+            std::str::from_utf8(hash)
+                .map_err(|_| NodeMigrationError::History)?
+                .to_owned(),
+        ));
+    }
     Ok(rows)
 }
 
@@ -253,9 +275,9 @@ fn validate_structure(
     connection: &Connection,
     version: u32,
     control: &MigrationControl,
-) -> Result<(), NodeMigrationError> {
+) -> Result<KnownInstalledNodeStructureV1, NodeMigrationError> {
     control.check()?;
-    let result = validate_node_migration_structure_v1(connection, version);
+    let result = recognize_known_installed_node_migration_structure_v1(connection, version);
     control.check()?;
     result.map_err(|_| NodeMigrationError::History)
 }
@@ -396,7 +418,7 @@ fn migrate_controlled(
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .map_err(|error| control.translate(error.into()))?;
     let rollback_progress = RollbackProgressGuard(progress);
-    let prepared = (|| -> Result<(u32, Vec<u32>), NodeMigrationError> {
+    let prepared = (|| -> Result<(u32, Vec<u32>, Option<KnownInstalledNodeStructureV1>), NodeMigrationError> {
         control.check()?;
         source.assert_current()?;
         reject_sidecars(&canonical)?;
@@ -408,11 +430,21 @@ fn migrate_controlled(
         if active_leases(&transaction)? {
             return Err(NodeMigrationError::ActiveLease);
         }
-        if before > 0 {
+        let initial_structure = if before > 0 {
             // Known history must match actual schema before a new migration
             // or an idempotent receipt; never silently repair source drift.
-            validate_structure(&transaction, before, control)?;
-        }
+            Some(validate_structure(&transaction, before, control)?)
+        } else {
+            // A missing migration ledger cannot authorize provisioning around
+            // existing online authority records, even if their names are known.
+            if table_exists(&transaction, "autonomous_research_online_mutation_authority_metadata")?
+                || table_exists(&transaction, "autonomous_research_online_mutation_authority_marker")?
+                || table_exists(&transaction, "autonomous_research_online_mutation_finalization_receipt")?
+            {
+                return Err(NodeMigrationError::History);
+            }
+            None
+        };
         #[cfg(test)]
         checkpoint("after_admission", &transaction);
         let mut applied_versions = Vec::new();
@@ -437,7 +469,14 @@ fn migrate_controlled(
         }
         // Also covers version-zero bootstrap: extra foreign SQL objects cannot
         // survive into a success receipt. Failure rolls back the entire range.
-        validate_structure(&transaction, target, control)?;
+        let final_structure = validate_structure(&transaction, target, control)?;
+        let expected_profile = initial_structure.as_ref().map_or(
+            KnownInstalledNodeProfileV1::NodeMigrationBase,
+            |initial| initial.profile,
+        );
+        if final_structure.profile != expected_profile {
+            return Err(NodeMigrationError::History);
+        }
         let integrity: String =
             transaction.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         let foreign_keys = transaction
@@ -451,9 +490,12 @@ fn migrate_controlled(
         control.check()?;
         source.assert_current()?;
         control.check()?;
-        Ok((before, applied_versions))
+        let recognized_installed = (final_structure.profile
+            == KnownInstalledNodeProfileV1::NodeMigrationOnlineMutationMarker)
+            .then_some(final_structure);
+        Ok((before, applied_versions, recognized_installed))
     })();
-    let (before, applied_versions) = match prepared {
+    let (before, applied_versions, recognized_installed_schema) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             rollback_progress.disarm();
@@ -498,6 +540,7 @@ fn migrate_controlled(
         database_sha256,
         production_activation: false,
         node_retirement_verified: false,
+        recognized_installed_schema,
     })
 }
 

@@ -61,7 +61,7 @@ impl Drop for Fixture {
     }
 }
 fn payload() -> Value {
-    let mut value = json!({"version":10,"kind":"ReleaseAttestationPolicyReplayInspection","status":"release_attestation_blocked","sourceBound":true,"releaseEvidenceReady":false,"physicalDeletionAllowed":false,"nodeRetirement":false,"externalActionPerformed":false,"nativeSourceCapture":{"version":2,"kind":"UnitSourceBindingOnlyNoQualification","commit":"test_source_a"},"matrixPolicyReplay":{"policyReplayComplete":false,"rustBehavioralSuiteMatchingComplete":false,"fullRestoredArchiveAndRuntimeReplayComplete":false,"fullRustProductImplementationClaimed":false},"wireCorpus":{"10":"integer-key-order","2":"integer-key-order","emoji":"🛰️","nul":"\u{0}","quote":"\"\\\n","small":1e-7,"large":1e21,"zero":0}});
+    let mut value = json!({"version":13,"kind":"ReleaseAttestationPolicyReplayInspection","status":"release_attestation_blocked","sourceBound":true,"releaseEvidenceReady":false,"physicalDeletionAllowed":false,"nodeRetirement":false,"externalActionPerformed":false,"nativeSourceCapture":{"version":2,"kind":"UnitSourceBindingOnlyNoQualification","commit":"test_source_a"},"matrixPolicyReplay":{"policyReplayComplete":false,"rustBehavioralSuiteMatchingComplete":false,"fullRestoredArchiveAndRuntimeReplayComplete":false,"fullRustProductImplementationClaimed":false},"wireCorpus":{"10":"integer-key-order","2":"integer-key-order","emoji":"🛰️","nul":"\u{0}","quote":"\"\\\n","small":1e-7,"large":1e21,"zero":0}});
     value["reportHash"] = json!(
         hepta_control_plane::canonical_hash_v1(&json!({"kind":value["kind"],"value":value}))
             .unwrap()
@@ -377,4 +377,86 @@ fn producer_rejects_non_json_stable_typed_numbers_instead_of_silently_rewriting_
             .contains("payload_wire_value_changed")
     );
     assert!(!f.context.runtime_root.join("legacy-retirement").exists());
+}
+
+#[test]
+fn ordinary_v3_profile_is_closed_and_refuses_old_versions_authority_and_unbound_inputs() {
+    let f = Fixture::new();
+    let path = f.context.workspace_root.join(PROFILE_PATH);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let valid = json!({"version":3,"kind":"OrdinaryNativeReleaseReplayProfile","profile":"immutable_source_only_blocked_integrity_v3","nodeExecutable":"/qualified/node22/bin/node","nodeExecutableSha256":format!("sha256:{}", "a".repeat(64)),"archivePath":"/qualified/reference/archive.tar.gz","archiveSha256":"sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d"});
+    fs::write(&path, serde_json::to_vec(&valid).unwrap()).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(profile(&f.context.workspace_root).unwrap().0.version, 3);
+    for (field, value) in [
+        ("version", json!(1)),
+        ("version", json!(2)),
+        (
+            "profile",
+            json!("immutable_source_only_blocked_integrity_v1"),
+        ),
+        (
+            "profile",
+            json!("immutable_source_only_blocked_integrity_v2"),
+        ),
+        ("nodeExecutable", json!("relative/node")),
+        (
+            "nodeExecutableSha256",
+            json!(format!("sha256:{}", "z".repeat(64))),
+        ),
+        ("archiveSha256", json!(format!("sha256:{}", "b".repeat(64)))),
+        ("releaseAuthority", json!(true)),
+        ("timeoutMs", json!(600001)),
+    ] {
+        let mut invalid = valid.clone();
+        invalid[field] = value;
+        fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(
+            profile(&f.context.workspace_root)
+                .err()
+                .unwrap()
+                .contains("release_evidence_profile_invalid"),
+            "{field}"
+        );
+        assert!(
+            !f.context
+                .runtime_root
+                .join("legacy-retirement/deletion-drills")
+                .exists()
+        );
+    }
+    fs::write(&path, b"{\"version\":3,\"version\":3}").unwrap();
+    assert!(
+        profile(&f.context.workspace_root)
+            .err()
+            .unwrap()
+            .contains("release_evidence_profile_invalid")
+    );
+}
+
+#[test]
+fn v13_recovery_preserves_and_refuses_predecessor_receipts_without_reinterpretation() {
+    for version in [3, 10, 11, 12] {
+        let f = Fixture::new();
+        let key = f.key();
+        let directory = f.directory();
+        let mut old = payload();
+        old.as_object_mut().unwrap().remove("reportHash");
+        old["version"] = json!(version);
+        old["reportHash"] = json!(
+            hepta_control_plane::canonical_hash_v1(&json!({"kind":old["kind"],"value":old}))
+                .unwrap()
+                .to_string()
+        );
+        let (signature, wire) = sign_blocked_replay_diagnostic_v1(&old, &key).unwrap();
+        let name = final_name(&signature);
+        directory.write_new(&name, &wire).unwrap();
+        assert!(
+            recover(&f, &payload())
+                .unwrap_err()
+                .contains("source_or_scope_mismatch")
+        );
+        assert_eq!(fs::read(directory.path.join(name)).unwrap(), wire);
+        assert!(!directory.path.join("CURRENT.json").exists());
+    }
 }

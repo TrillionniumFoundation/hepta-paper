@@ -1,3 +1,4 @@
+mod installed_compatibility;
 mod invocation;
 mod temp {
     use super::*;

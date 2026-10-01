@@ -13,9 +13,12 @@ use crate::release_integrity_key::{
 use crate::release_replay::{
     ReleaseAttestationMeasuredPolicyReplayRequestV8,
     ReleaseAttestationNativeAstPolicyReplayRequestV9,
+    ReleaseAttestationNativeBuildPackagePolicyReplayRequestV11,
+    ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12,
+    ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13,
     ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
     ReleaseAttestationPolicyReplayRequestV4, ReleaseAttestationReplayRequestV3,
-    inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10,
+    inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13,
     local_signature::sign_blocked_replay_diagnostic_v1,
 };
 use crate::state_recoverability::{
@@ -36,7 +39,7 @@ use std::{
 pub const RELEASE_EVIDENCE_USAGE: &str = "Usage: release-evidence --execute\n\n  --execute  Explicitly attest the deletion drill and publish signed release evidence.\n  --help     Show this help without reading keys or writing runtime evidence.";
 const TIMEOUT_MS: u64 = 600_000;
 const RECEIPT_BYTES: u64 = 4 * 1024 * 1024;
-const PROFILE_PATH: &str = "migration/fixtures/native-release-replay-profile.v1.json";
+const PROFILE_PATH: &str = "migration/fixtures/native-release-replay-profile.v3.json";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReleaseEvidenceOptionsV1 {
     pub help: bool,
@@ -114,9 +117,18 @@ fn profile(root: &Path) -> Result<(ReplayProfile, ObservedFile), String> {
     .map_err(|e| e.to_string())?;
     let profile: ReplayProfile =
         serde_json::from_value(value).map_err(|_| "release_evidence_profile_invalid".to_owned())?;
-    if profile.version != 1
+    if profile.version != 3
         || profile.kind != "OrdinaryNativeReleaseReplayProfile"
-        || profile.profile != "immutable_source_only_blocked_integrity_v1"
+        || profile.profile != "immutable_source_only_blocked_integrity_v3"
+        || !profile
+            .node_executable_sha256
+            .strip_prefix("sha256:")
+            .is_some_and(|value| {
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
         || !profile.node_executable.is_absolute()
         || !profile.archive_path.is_absolute()
         || profile.archive_sha256
@@ -127,7 +139,7 @@ fn profile(root: &Path) -> Result<(ReplayProfile, ObservedFile), String> {
     held.assert_current().map_err(|e| e.to_string())?;
     Ok((profile, held))
 }
-fn replay(
+fn retirement_replay(
     profile: ReplayProfile,
     source: ReleaseAttestationSourceRequestV2,
     timeout_ms: u64,
@@ -160,6 +172,35 @@ fn replay(
                 },
             },
         },
+    }
+}
+fn command_replay(
+    profile: ReplayProfile,
+    source: ReleaseAttestationSourceRequestV2,
+    timeout_ms: u64,
+) -> ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12 {
+    ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12 {
+        version: 12,
+        kind: "ReleaseAttestationNativeCommandDispositionPolicyReplayRequest".into(),
+        native_profile: "immutable_760_command_disposition_policy_v1".into(),
+        policy: ReleaseAttestationNativeBuildPackagePolicyReplayRequestV11 {
+            version: 11,
+            kind: "ReleaseAttestationNativeBuildPackagePolicyReplayRequest".into(),
+            native_profile: "immutable_build_package_retirement_policy_v1".into(),
+            policy: retirement_replay(profile, source, timeout_ms),
+        },
+    }
+}
+fn replay(
+    profile: ReplayProfile,
+    source: ReleaseAttestationSourceRequestV2,
+    timeout_ms: u64,
+) -> ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13 {
+    ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13 {
+        version: 13,
+        kind: "ReleaseAttestationNativeResearchRetirementPolicyReplayRequest".into(),
+        native_profile: "immutable_155_research_retirement_policy_v1".into(),
+        policy: command_replay(profile, source, timeout_ms),
     }
 }
 fn recapture(
@@ -219,7 +260,7 @@ pub fn execute_release_evidence_with_cancellation_v1(
     let source = prepared.request;
     let (profile, profile_guard) = profile(&context.workspace_root)?;
     let payload =
-        inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10(
+        inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13(
             replay(profile, source.clone(), checkpoint(cancelled, started)?),
             cancelled,
         )?;

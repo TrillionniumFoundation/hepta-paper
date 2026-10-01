@@ -1,0 +1,682 @@
+{
+  "kind": "NativePythonAstSameInputCorpus",
+  "version": 1,
+  "scope": "synthetic fixed retirement AST semantics; does not qualify archive/product behavior",
+  "cases": [
+    {
+      "id": "function_order_and_private-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "def zebra():\n pass\ndef _hidden():\n pass\nasync def alpha():\n pass\nclass Omega:\n pass\n"
+      }
+    },
+    {
+      "id": "function_order_and_private-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "def zebra():\n pass\ndef _hidden():\n pass\nasync def alpha():\n pass\nclass Omega:\n pass\n"
+      }
+    },
+    {
+      "id": "function_order_and_private-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "def zebra():\n pass\ndef _hidden():\n pass\nasync def alpha():\n pass\nclass Omega:\n pass\n"
+      }
+    },
+    {
+      "id": "function_order_and_private-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "def zebra():\n pass\ndef _hidden():\n pass\nasync def alpha():\n pass\nclass Omega:\n pass\n"
+      }
+    },
+    {
+      "id": "function_order_and_private-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "def zebra():\n pass\ndef _hidden():\n pass\nasync def alpha():\n pass\nclass Omega:\n pass\n"
+      }
+    },
+    {
+      "id": "import_aliases-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "import urllib.request as req, subprocess as sp\nfrom sqlite3.dbapi2 import connect\nfrom . import relative\n"
+      }
+    },
+    {
+      "id": "import_aliases-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "import urllib.request as req, subprocess as sp\nfrom sqlite3.dbapi2 import connect\nfrom . import relative\n"
+      }
+    },
+    {
+      "id": "import_aliases-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "import urllib.request as req, subprocess as sp\nfrom sqlite3.dbapi2 import connect\nfrom . import relative\n"
+      }
+    },
+    {
+      "id": "import_aliases-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "import urllib.request as req, subprocess as sp\nfrom sqlite3.dbapi2 import connect\nfrom . import relative\n"
+      }
+    },
+    {
+      "id": "import_aliases-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "import urllib.request as req, subprocess as sp\nfrom sqlite3.dbapi2 import connect\nfrom . import relative\n"
+      }
+    },
+    {
+      "id": "nested_annotation_defaults-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "def f(a: factory().annotation = subprocess.run(), *, b=open(\"x\", \"w\")):\n return a\n"
+      }
+    },
+    {
+      "id": "nested_annotation_defaults-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "def f(a: factory().annotation = subprocess.run(), *, b=open(\"x\", \"w\")):\n return a\n"
+      }
+    },
+    {
+      "id": "nested_annotation_defaults-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "def f(a: factory().annotation = subprocess.run(), *, b=open(\"x\", \"w\")):\n return a\n"
+      }
+    },
+    {
+      "id": "nested_annotation_defaults-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "def f(a: factory().annotation = subprocess.run(), *, b=open(\"x\", \"w\")):\n return a\n"
+      }
+    },
+    {
+      "id": "nested_annotation_defaults-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "def f(a: factory().annotation = subprocess.run(), *, b=open(\"x\", \"w\")):\n return a\n"
+      }
+    },
+    {
+      "id": "keyword_nested_call-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "f(k=os.system(\"x\"))\n"
+      }
+    },
+    {
+      "id": "keyword_nested_call-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "f(k=os.system(\"x\"))\n"
+      }
+    },
+    {
+      "id": "keyword_nested_call-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "f(k=os.system(\"x\"))\n"
+      }
+    },
+    {
+      "id": "keyword_nested_call-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "f(k=os.system(\"x\"))\n"
+      }
+    },
+    {
+      "id": "keyword_nested_call-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "f(k=os.system(\"x\"))\n"
+      }
+    },
+    {
+      "id": "with_context-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "with pathlib.Path(\"x\").open(\"w\") as output:\n output.write(\"x\")\n"
+      }
+    },
+    {
+      "id": "with_context-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "with pathlib.Path(\"x\").open(\"w\") as output:\n output.write(\"x\")\n"
+      }
+    },
+    {
+      "id": "with_context-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "with pathlib.Path(\"x\").open(\"w\") as output:\n output.write(\"x\")\n"
+      }
+    },
+    {
+      "id": "with_context-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "with pathlib.Path(\"x\").open(\"w\") as output:\n output.write(\"x\")\n"
+      }
+    },
+    {
+      "id": "with_context-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "with pathlib.Path(\"x\").open(\"w\") as output:\n output.write(\"x\")\n"
+      }
+    },
+    {
+      "id": "comprehension_filters-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "[x for x in subprocess.check_output() if open(\"x\", \"a\")]\n"
+      }
+    },
+    {
+      "id": "comprehension_filters-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "[x for x in subprocess.check_output() if open(\"x\", \"a\")]\n"
+      }
+    },
+    {
+      "id": "comprehension_filters-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "[x for x in subprocess.check_output() if open(\"x\", \"a\")]\n"
+      }
+    },
+    {
+      "id": "comprehension_filters-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "[x for x in subprocess.check_output() if open(\"x\", \"a\")]\n"
+      }
+    },
+    {
+      "id": "comprehension_filters-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "[x for x in subprocess.check_output() if open(\"x\", \"a\")]\n"
+      }
+    },
+    {
+      "id": "match_guards-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "match obj:\n case x if os.system(\"check\"):\n  x.write_text(\"hello\")\n"
+      }
+    },
+    {
+      "id": "match_guards-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "match obj:\n case x if os.system(\"check\"):\n  x.write_text(\"hello\")\n"
+      }
+    },
+    {
+      "id": "match_guards-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "match obj:\n case x if os.system(\"check\"):\n  x.write_text(\"hello\")\n"
+      }
+    },
+    {
+      "id": "match_guards-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "match obj:\n case x if os.system(\"check\"):\n  x.write_text(\"hello\")\n"
+      }
+    },
+    {
+      "id": "match_guards-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "match obj:\n case x if os.system(\"check\"):\n  x.write_text(\"hello\")\n"
+      }
+    },
+    {
+      "id": "open_dynamic_override-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "open(\"path\", \"w\", mode=selected)\n"
+      }
+    },
+    {
+      "id": "open_dynamic_override-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "open(\"path\", \"w\", mode=selected)\n"
+      }
+    },
+    {
+      "id": "open_dynamic_override-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "open(\"path\", \"w\", mode=selected)\n"
+      }
+    },
+    {
+      "id": "open_dynamic_override-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "open(\"path\", \"w\", mode=selected)\n"
+      }
+    },
+    {
+      "id": "open_dynamic_override-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "open(\"path\", \"w\", mode=selected)\n"
+      }
+    },
+    {
+      "id": "open_constant_override-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "open(\"path\", \"w\", mode=None)\n"
+      }
+    },
+    {
+      "id": "open_constant_override-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "open(\"path\", \"w\", mode=None)\n"
+      }
+    },
+    {
+      "id": "open_constant_override-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "open(\"path\", \"w\", mode=None)\n"
+      }
+    },
+    {
+      "id": "open_constant_override-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "open(\"path\", \"w\", mode=None)\n"
+      }
+    },
+    {
+      "id": "open_constant_override-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "open(\"path\", \"w\", mode=None)\n"
+      }
+    },
+    {
+      "id": "attribute_unknown_root-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "get_file().parent.mkdir()\n"
+      }
+    },
+    {
+      "id": "attribute_unknown_root-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "get_file().parent.mkdir()\n"
+      }
+    },
+    {
+      "id": "attribute_unknown_root-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "get_file().parent.mkdir()\n"
+      }
+    },
+    {
+      "id": "attribute_unknown_root-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "get_file().parent.mkdir()\n"
+      }
+    },
+    {
+      "id": "attribute_unknown_root-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "get_file().parent.mkdir()\n"
+      }
+    },
+    {
+      "id": "process_roots-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "subprocess.run([])\nos.system(\"true\")\nobj.run()\n"
+      }
+    },
+    {
+      "id": "process_roots-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "subprocess.run([])\nos.system(\"true\")\nobj.run()\n"
+      }
+    },
+    {
+      "id": "process_roots-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "subprocess.run([])\nos.system(\"true\")\nobj.run()\n"
+      }
+    },
+    {
+      "id": "process_roots-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "subprocess.run([])\nos.system(\"true\")\nobj.run()\n"
+      }
+    },
+    {
+      "id": "process_roots-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "subprocess.run([])\nos.system(\"true\")\nobj.run()\n"
+      }
+    },
+    {
+      "id": "write_set_profile-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "p.write(1)\np.writestr(1)\np.copy(1)\np.copy2(1)\np.move(1)\np.mkdir()\n"
+      }
+    },
+    {
+      "id": "write_set_profile-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "p.write(1)\np.writestr(1)\np.copy(1)\np.copy2(1)\np.move(1)\np.mkdir()\n"
+      }
+    },
+    {
+      "id": "write_set_profile-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "p.write(1)\np.writestr(1)\np.copy(1)\np.copy2(1)\np.move(1)\np.mkdir()\n"
+      }
+    },
+    {
+      "id": "write_set_profile-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "p.write(1)\np.writestr(1)\np.copy(1)\np.copy2(1)\np.move(1)\np.mkdir()\n"
+      }
+    },
+    {
+      "id": "write_set_profile-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "p.write(1)\np.writestr(1)\np.copy(1)\np.copy2(1)\np.move(1)\np.mkdir()\n"
+      }
+    },
+    {
+      "id": "nested_private_def-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "def outer():\n def nested():\n  return p.unlink()\n return nested\n"
+      }
+    },
+    {
+      "id": "nested_private_def-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "def outer():\n def nested():\n  return p.unlink()\n return nested\n"
+      }
+    },
+    {
+      "id": "nested_private_def-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "def outer():\n def nested():\n  return p.unlink()\n return nested\n"
+      }
+    },
+    {
+      "id": "nested_private_def-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "def outer():\n def nested():\n  return p.unlink()\n return nested\n"
+      }
+    },
+    {
+      "id": "nested_private_def-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "def outer():\n def nested():\n  return p.unlink()\n return nested\n"
+      }
+    },
+    {
+      "id": "unicode_symbols-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "def 科学():\n return 请求.write_bytes(b\"x\")\n"
+      }
+    },
+    {
+      "id": "unicode_symbols-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "def 科学():\n return 请求.write_bytes(b\"x\")\n"
+      }
+    },
+    {
+      "id": "unicode_symbols-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "def 科学():\n return 请求.write_bytes(b\"x\")\n"
+      }
+    },
+    {
+      "id": "unicode_symbols-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "def 科学():\n return 请求.write_bytes(b\"x\")\n"
+      }
+    },
+    {
+      "id": "unicode_symbols-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "def 科学():\n return 请求.write_bytes(b\"x\")\n"
+      }
+    },
+    {
+      "id": "numeric_modes-build_package_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "build_package_v1",
+        "source": "open(\"x\", 1)\np.open(\"w\")\np.open(\"path\", \"w\")\n"
+      }
+    },
+    {
+      "id": "numeric_modes-referee_revise_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "referee_revise_v1",
+        "source": "open(\"x\", 1)\np.open(\"w\")\np.open(\"path\", \"w\")\n"
+      }
+    },
+    {
+      "id": "numeric_modes-venue_resolve_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "venue_resolve_v1",
+        "source": "open(\"x\", 1)\np.open(\"w\")\np.open(\"path\", \"w\")\n"
+      }
+    },
+    {
+      "id": "numeric_modes-submission_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "submission_v1",
+        "source": "open(\"x\", 1)\np.open(\"w\")\np.open(\"path\", \"w\")\n"
+      }
+    },
+    {
+      "id": "numeric_modes-research_verify_v1",
+      "request": {
+        "version": 1,
+        "kind": "NativePythonRetirementAstRequest",
+        "profile": "research_verify_v1",
+        "source": "open(\"x\", 1)\np.open(\"w\")\np.open(\"path\", \"w\")\n"
+      }
+    }
+  ]
+}

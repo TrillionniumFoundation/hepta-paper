@@ -1,6 +1,6 @@
 //! Bounded read-only verification of the immutable legacy source snapshot.
 mod files;
-use files::{ReferenceRoot, RetainedFile};
+use files::{ReferenceRoot, ReferenceRootObservation, RetainedFile};
 use hepta_codex_runtime::{
     BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1, ProcessTerminationReason,
     run_bounded_process_capturing_stdout_with_cancellation,
@@ -193,7 +193,25 @@ pub fn verify_retirement_reference_with_cancellation_v1(
         remaining: MAX_TOTAL_BYTES,
     };
     budget.current()?;
-    let observation = ReferenceRoot::load(root)?;
+    let observation = match ReferenceRoot::observe(root)? {
+        ReferenceRootObservation::Present(observation) => observation,
+        ReferenceRootObservation::Missing(missing) => {
+            budget.current()?;
+            missing.assert_current()?;
+            let result = json!({
+                "version": 1, "kind": "LegacyRetirementReferenceVerification",
+                "status": "retirement_reference_blocked", "referenceRoot": root,
+                "runtimeDependencyAllowed": false,
+                "liveLegacyRootExists": Path::new("/data/home-data/paper_factory").exists(),
+                "archiveCount": 0,
+                "blockers": ["retirement_snapshot_receipt_missing_or_invalid",
+                    "immutability_receipt_missing_or_invalid"],
+            });
+            missing.assert_current()?;
+            budget.current()?;
+            return Ok(result);
+        }
+    };
     let mut retained = Vec::new();
     let mut blockers = Vec::new();
     let receipt = read_json(

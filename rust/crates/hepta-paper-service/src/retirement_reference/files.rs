@@ -92,8 +92,55 @@ pub(super) struct ReferenceRoot {
     directories: Vec<Directory>,
     path: PathBuf,
 }
+pub(super) enum ReferenceRootObservation {
+    Present(ReferenceRoot),
+    Missing(MissingReferenceRoot),
+}
+/// A specific absent edge observed relative to the last retained ancestor.
+/// Both the edge and that parent's full metadata stay current through use.
+pub(super) struct MissingReferenceRoot {
+    directories: Vec<Directory>,
+    edge: std::ffi::OsString,
+}
+impl MissingReferenceRoot {
+    pub fn assert_current(&self) -> Result<()> {
+        for directory in &self.directories {
+            directory.current()?;
+        }
+        let parent = self.directories.last().ok_or_else(refused)?;
+        if !same(&parent.metadata, &parent.held.metadata()?)
+            || !same(&parent.metadata, &fs::symlink_metadata(&parent.path)?)
+        {
+            return Err(refused());
+        }
+        match openat(
+            parent.held.as_fd(),
+            Path::new(&self.edge),
+            FLAGS | OFlag::O_DIRECTORY,
+            Mode::empty(),
+        ) {
+            Err(nix::errno::Errno::ENOENT) => (),
+            _ => return Err(refused()),
+        }
+        for directory in &self.directories {
+            directory.current()?;
+        }
+        if !same(&parent.metadata, &parent.held.metadata()?)
+            || !same(&parent.metadata, &fs::symlink_metadata(&parent.path)?)
+        {
+            return Err(refused());
+        }
+        Ok(())
+    }
+}
 impl ReferenceRoot {
     pub fn load(root: &Path) -> Result<Self> {
+        match Self::observe(root)? {
+            ReferenceRootObservation::Present(root) => Ok(root),
+            ReferenceRootObservation::Missing(_) => Err(refused()),
+        }
+    }
+    pub fn observe(root: &Path) -> Result<ReferenceRootObservation> {
         let absolute = if root.is_absolute() {
             root.to_owned()
         } else {
@@ -120,21 +167,29 @@ impl ReferenceRoot {
             }
         }) {
             let previous = directories.last().ok_or_else(refused)?;
-            let file = File::from(
-                openat(
-                    previous.held.as_fd(),
-                    Path::new(part),
-                    FLAGS | OFlag::O_DIRECTORY,
-                    Mode::empty(),
-                )
-                .map_err(|_| refused())?,
-            );
+            let file = match openat(
+                previous.held.as_fd(),
+                Path::new(part),
+                FLAGS | OFlag::O_DIRECTORY,
+                Mode::empty(),
+            ) {
+                Ok(file) => File::from(file),
+                Err(nix::errno::Errno::ENOENT) => {
+                    let observation = MissingReferenceRoot {
+                        directories,
+                        edge: part.to_owned(),
+                    };
+                    observation.assert_current()?;
+                    return Ok(ReferenceRootObservation::Missing(observation));
+                }
+                Err(_) => return Err(refused()),
+            };
             directories.push(Directory::new(previous.path.join(part), file)?);
         }
         let path = directories.last().ok_or_else(refused)?.path.clone();
         let result = Self { directories, path };
         result.assert_current()?;
-        Ok(result)
+        Ok(ReferenceRootObservation::Present(result))
     }
     pub fn path(&self) -> &Path {
         &self.path
@@ -316,6 +371,80 @@ impl RetainedFile {
 mod tests {
     use super::*;
     use std::{io::Write, os::unix::fs::symlink};
+    #[test]
+    fn missing_reference_root_retains_first_and_last_absent_edges_and_rejects_creation() {
+        let root =
+            std::env::temp_dir().join(format!("hepta-reference-missing-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        for selected in [root.join("first/leaf"), root.join("leaf")] {
+            let ReferenceRootObservation::Missing(missing) =
+                ReferenceRoot::observe(&selected).unwrap()
+            else {
+                panic!("expected an actual absent edge");
+            };
+            missing.assert_current().unwrap();
+            let edge = missing.directories.last().unwrap().path.join(&missing.edge);
+            fs::create_dir(&edge).unwrap();
+            assert!(missing.assert_current().is_err());
+            fs::remove_dir(&edge).unwrap();
+            // Even an edge created and removed before this check changes the
+            // retained parent's metadata; the old observation cannot revive.
+            assert!(missing.assert_current().is_err());
+            let ReferenceRootObservation::Missing(fresh) =
+                ReferenceRoot::observe(&selected).unwrap()
+            else {
+                panic!("fresh retry must observe the missing edge again");
+            };
+            fresh.assert_current().unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn missing_reference_root_rejects_parent_replacement_symlink_and_non_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "hepta-reference-missing-replace-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let parent = root.join("parent");
+        fs::create_dir(&parent).unwrap();
+        let selected = parent.join("absent");
+        let ReferenceRootObservation::Missing(missing) = ReferenceRoot::observe(&selected).unwrap()
+        else {
+            panic!("expected missing final edge");
+        };
+        fs::rename(&parent, root.join("old-parent")).unwrap();
+        fs::create_dir(&parent).unwrap();
+        assert!(missing.assert_current().is_err());
+        symlink(root.join("old-parent"), &selected).unwrap();
+        assert!(ReferenceRoot::observe(&selected).is_err());
+        fs::remove_file(&selected).unwrap();
+        fs::write(&selected, b"regular parent").unwrap();
+        assert!(ReferenceRoot::observe(&selected.join("child")).is_err());
+        fs::remove_file(&selected).unwrap();
+        // A final symlink to a missing destination still cannot become ENOENT
+        // evidence, because the named edge itself is not an absent directory.
+        symlink(root.join("missing-target"), &selected).unwrap();
+        assert!(ReferenceRoot::observe(&selected).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn missing_reference_root_permission_denial_is_never_absence_evidence() {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("hepta-reference-permission-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let denied = root.join("denied");
+        fs::create_dir(&denied).unwrap();
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0o0)).unwrap();
+        // A privileged test process cannot create an EACCES observation. The
+        // ordinary unprivileged source lane checks the actual kernel refusal.
+        if !nix::unistd::geteuid().is_root() {
+            assert!(ReferenceRoot::observe(&denied.join("missing")).is_err());
+        }
+        fs::set_permissions(&denied, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn retained_archive_rejects_replacement_same_bytes_rewrite_and_parent_alias() {
         let root =

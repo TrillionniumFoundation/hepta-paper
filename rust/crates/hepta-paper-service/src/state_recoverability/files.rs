@@ -35,7 +35,7 @@ fn safe(m: &Metadata, maximum: u64) -> bool {
         && m.len() <= maximum
         && [0, nix::unistd::getuid().as_raw()].contains(&m.uid())
 }
-pub(super) struct ObservedFile {
+pub(crate) struct ObservedFile {
     pub file: File,
     pub path: PathBuf,
     metadata: Metadata,

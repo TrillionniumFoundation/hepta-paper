@@ -5,7 +5,7 @@ mod backup;
 mod backup_recovery;
 pub mod controller;
 mod drill;
-mod files;
+pub(crate) mod files;
 pub mod observation;
 pub(crate) mod publication;
 mod reconciliation;

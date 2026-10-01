@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod local_submission_preflight;
+
 mod author;
 mod build;
 mod empirical;
@@ -53,6 +55,13 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("native_business/numerical.rs"),
             include_bytes!("native_business/build.rs"),
             include_bytes!("native_business/submission.rs"),
+            include_bytes!("native_business/local_submission_preflight/mod.rs"),
+            include_bytes!("native_business/local_submission_preflight/records.rs"),
+            include_bytes!("native_business/local_submission_preflight/semantic.rs"),
+            include_bytes!("native_business/local_submission_preflight/workflow.rs"),
+            include_bytes!("native_business/local_submission_preflight/delivery.rs"),
+            include_bytes!("native_business/local_submission_preflight/lifecycle.rs"),
+            include_bytes!("native_business/local_submission_preflight/cas.rs"),
             include_bytes!("native_business/legacy_submission_v1/mod.rs"),
             include_bytes!("native_business/legacy_submission_v1/manifest.rs"),
             include_bytes!("native_business/legacy_submission_v1/intent.rs"),
@@ -73,11 +82,35 @@ pub fn execute_native_business_for_capability_v1(
     execute_native_business_v1(job)
 }
 
+/// Route a typed CAS preparation through the existing worker-owned store.
+/// Other jobs retain their exact pure capability executor and output contract.
+pub fn execute_native_business_with_objects_for_capability_v1(
+    job: NativeBusinessJobV1,
+    capability_id: &str,
+    objects: &crate::ObjectStoreV1,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<NativeBusinessOutputV1, NativeBusinessError> {
+    if job.capability_id() != capability_id {
+        return Err(NativeBusinessError::Contract);
+    }
+    match job {
+        NativeBusinessJobV1::PrepareLocalSubmissionFromCasV1 { request } => {
+            local_submission_preflight::prepare_local_submission_from_cas_v1(
+                objects, request, cancelled,
+            )
+        }
+        other => execute_native_business_for_capability_v1(other, capability_id),
+    }
+}
+
 /// Execute one bounded Rust-native business capability.
 pub fn execute_native_business_v1(
     job: NativeBusinessJobV1,
 ) -> Result<NativeBusinessOutputV1, NativeBusinessError> {
     let output = match job {
+        NativeBusinessJobV1::PrepareLocalSubmissionFromCasV1 { .. } => {
+            return Err(NativeBusinessError::Contract);
+        }
         NativeBusinessJobV1::AuthorDraft {
             title,
             abstract_text,

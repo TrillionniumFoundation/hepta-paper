@@ -124,6 +124,10 @@ pub enum NativeBusinessJobV1 {
         metadata: std::collections::BTreeMap<String, String>,
         idempotency_key: String,
     },
+    /// Read actual CAS artifacts and prepare a non-authorizing local dry-run.
+    PrepareLocalSubmissionFromCasV1 {
+        request: super::local_submission_preflight::CasLocalSubmissionPreparationRequestV1,
+    },
     /// Prepare a deterministic submission package without external-effect authority.
     PrepareSubmission {
         venue_id: String,
@@ -152,7 +156,8 @@ impl NativeBusinessJobV1 {
             Self::EmpiricalAggregate { .. } | Self::EmpiricalInference { .. } => "CAP-EMPIRICAL",
             Self::NumericalLinearSolve { .. } => "CAP-NUMERICAL",
             Self::BuildPackage { .. } => "CAP-BUILD",
-            Self::PrepareSubmission { .. }
+            Self::PrepareLocalSubmissionFromCasV1 { .. }
+            | Self::PrepareSubmission { .. }
             | Self::LegacySubmissionManifestV1 { .. }
             | Self::LegacySubmissionIntentV1 { .. } => "CAP-SUBMIT",
         }

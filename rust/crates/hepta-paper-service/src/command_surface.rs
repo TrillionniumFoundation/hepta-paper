@@ -12,6 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+mod publication;
 
 /// Closed ordinary package input/output budget; never a runtime authority.
 pub const COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1: u64 = 16 * 1024 * 1024;
@@ -134,6 +135,8 @@ pub enum CommandSurfaceError {
     Io(#[from] std::io::Error),
     #[error("package.json JSON is invalid")]
     Json(#[from] serde_json::Error),
+    #[error("{0}")]
+    Publication(&'static str),
 }
 
 fn package_path(root: &Path) -> PathBuf {
@@ -691,12 +694,17 @@ pub fn synchronize_command_surface_v1(
     root: &Path,
     write_package: bool,
 ) -> Result<Value, CommandSurfaceError> {
-    let path = package_path(root);
-    let source = crate::native_workspace::read_native_workspace_package_bytes_with_limit_v1(
-        root,
-        COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1,
-    )
-    .map_err(|_| CommandSurfaceError::InvalidPackage)?;
+    let publication = write_package
+        .then(|| publication::PackagePublication::open(root))
+        .transpose()?;
+    let source = match &publication {
+        Some(publication) => publication.input.bytes.clone(),
+        None => crate::native_workspace::read_native_workspace_package_bytes_with_limit_v1(
+            root,
+            COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1,
+        )
+        .map_err(|_| CommandSurfaceError::InvalidPackage)?,
+    };
     let mut ordered = parse_ordered_node_package_v1(&source)?;
     let mut package = ordered.clone().into_value();
     if write_package {
@@ -723,7 +731,10 @@ pub fn synchronize_command_surface_v1(
         if bytes.len() as u64 > COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1 {
             return Err(CommandSurfaceError::InvalidPackage);
         }
-        fs::write(&path, bytes.as_bytes())?;
+        publication
+            .as_ref()
+            .ok_or(CommandSurfaceError::InvalidPackage)?
+            .commit(bytes.as_bytes())?;
         package = ordered.into_value();
     }
     inspection(&package)

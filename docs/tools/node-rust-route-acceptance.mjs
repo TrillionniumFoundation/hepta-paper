@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { COMMAND_REGISTRY_ROUTES } from '../../paper-core/src/command-registry-routes.mjs';
 import { captureCommittedSourceSubject } from '../../paper-core/src/source-evidence-git-inputs.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { REFERENCE_STATUS_PROFILES_V1, referenceStatusFixtureV1, closeReferenceStatusFixtureV1, expectedReferenceStatusV1 } from './node-rust-reference-route-acceptance.mjs';
 import { STORE_STATUS_PROFILES_V1, storeStatusFixtureV1, expectedStoreStatusV1, closeStoreStatusFixtureV1, observeStoreWalFilesV1, storeWalContentV1, validateStoreWalReadCoordinationV1, assertStoreWalReadCoordinationClaimV1, observeStoreClosedWalFilesV1, validateStoreClosedWalReadCoordinationV1, assertStoreClosedWalReadCoordinationClaimV1 } from './node-rust-store-route-acceptance.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -80,19 +81,41 @@ const contracts = [
   inputRefusal: 'same-error-category-and-exit-2',
   recovery: 'SIGTERM-and-SIGKILL-at-an-unknown-process-execution-point-then-fresh-retry',
   grammar: grammar(contract.flags) }));
-export const ROUTE_ACCEPTANCE_CONTRACTS_V1 = freeze(contracts);
+// Newly observed routes remain explicit opt-in candidates until their complete
+// argument/input/effect/recovery matrix actually passes independent replay.
+// The default keeps the three previously closed local behavior contracts.
+const noneGrammar = ['--', '--help', '--unknown', '', 'unexpected', '-', '-h', '--=x', '--root',
+  '--flag=true'].flatMap((token, index) => [
+    { id: `none-forwarded-${index}`, argv: [token], error: 'command_does_not_accept_arguments' },
+    ...(token === '--' ? [] : [{ id: `none-unseparated-${index}`, argv: [token], omitSeparator: true,
+      error: 'command_arguments_require_separator' }]),
+  ]).concat([
+  { id: 'none-multiple-positionals', argv: ['first', 'second'], error: 'command_does_not_accept_arguments' },
+  { id: 'none-repeated-separator', argv: ['--', '--'], error: 'command_does_not_accept_arguments' },
+]);
+const candidates = [{ routeId: 'retirement/reference', binary: 'hepta-paper-rust',
+  nativePrefix: ['retirement', 'reference'], flags: [], forwardingPolicy: 'none',
+  profiles: REFERENCE_STATUS_PROFILES_V1, modes: [[]],
+  strategy: 'semantic-readonly-utf8-v1', normalization: 'fixture-and-workspace-path-prefixes-only-v1',
+  inputRefusal: 'same-error-category-and-exit-2',
+  recovery: 'SIGTERM-and-SIGKILL-at-an-unknown-process-execution-point-then-fresh-retry', grammar: noneGrammar,
+}];
+const allContracts = [...contracts, ...candidates];
+export const ROUTE_ACCEPTANCE_CONTRACTS_V1 = freeze(allContracts);
+export const DEFAULT_ROUTE_ACCEPTANCE_IDS_V1 = freeze(contracts.map(row => row.routeId));
 
 export function routeAcceptanceRequirementsV1(routes = COMMAND_REGISTRY_ROUTES) {
   return routes.map(route => {
     const id = `${route.group}/${route.name}`;
-    const contract = contracts.find(value => value.routeId === id);
+    const contract = allContracts.find(value => value.routeId === id);
     const argumentContract = structuredClone({ nodeArgv: route.argv, forwardingPolicy: route.forwardingPolicy,
       forwardedArgumentSchema: route.forwardedArgumentSchema, unsupportedModes: route.unsupportedModes,
       mutability: route.mutability, effects: route.effects });
     if (contract && (route.mutability !== 'read-only'
-      || route.forwardedArgumentSchema?.positional !== false
-      || (route.forwardedArgumentSchema?.valueFlags?.length || 0) !== 0
-      || JSON.stringify([...route.forwardedArgumentSchema.booleanFlags].sort()) !== JSON.stringify([...contract.flags].sort())
+      || (contract.forwardingPolicy === 'none' ? route.forwardingPolicy !== 'none' || route.forwardedArgumentSchema !== null
+        : route.forwardedArgumentSchema?.positional !== false
+          || (route.forwardedArgumentSchema?.valueFlags?.length || 0) !== 0
+          || JSON.stringify([...(route.forwardedArgumentSchema?.booleanFlags || [])].sort()) !== JSON.stringify([...contract.flags].sort()))
       || route.effects.localMutation !== 'read-only'
       || Object.entries(route.effects).some(([key, effect]) => key !== 'localMutation' && effect !== 'none'))) {
       throw new Error(`route_acceptance_contract_drift:${id}`);
@@ -222,8 +245,8 @@ function workspaceFixture(fixture, profile) {
   return { cwd: ROOT, environment, node: [path.join(ROOT, 'paper-core/bin/hepta-paper.mjs'), 'operator', 'workspace'] };
 }
 function describeCase(contract) {
-  const normalProfile = contract.routeId === 'operator/store' ? 'ready' : contract.routeId === 'operator/workspace' ? 'present' : 'pending';
-  const missingProfile = contract.routeId === 'operator/store' ? 'main-missing' : contract.routeId === 'operator/workspace' ? 'missing' : 'manifest-missing';
+  const normalProfile = contract.routeId === 'retirement/reference' ? 'verified' : contract.routeId === 'operator/store' ? 'ready' : contract.routeId === 'operator/workspace' ? 'present' : 'pending';
+  const missingProfile = contract.routeId === 'retirement/reference' ? 'missing-first-edge' : contract.routeId === 'operator/store' ? 'main-missing' : contract.routeId === 'operator/workspace' ? 'missing' : 'manifest-missing';
   return [
     ...contract.profiles.flatMap(profile => contract.modes.flatMap((argv, index) => profile === 'closed-wal'
       ? ['node', 'native'].map(firstReader => ({ id: `${profile}/mode-${index}/${firstReader}-first`, profile, argv, kind: 'normal', firstReader }))
@@ -246,7 +269,8 @@ function diagnostic(output, fixture) {
     stdout: normalize(JSON.parse(output.stdout), fixture), diagnostic: output.stderr.trim() ? normalize(output.stderr.trim(), fixture) : null };
   let error;
   try { error = JSON.parse(output.stderr).error; } catch { /* Native diagnostics are plain text. */ }
-  error ??= /(?:unknown_cli_option|boolean_cli_option_does_not_take_value|duplicate_cli_option|unexpected_cli_positional):[^\s"']+|unexpected_cli_argument_separator|command_arguments_require_separator|empty_cli_option|repository_asset_externalization_handoff_blocked:[^\s"']+/.exec(output.stderr)?.[0];
+  error ??= /(?:unknown_cli_option|boolean_cli_option_does_not_take_value|duplicate_cli_option|unexpected_cli_positional):[^\s"']+|unexpected_cli_argument_separator|command_arguments_require_separator|command_does_not_accept_arguments|empty_cli_option|repository_asset_externalization_handoff_blocked:[^\s"']+/.exec(output.stderr)?.[0];
+  if (!error && /retirement_reference_[a-z_]+/.test(output.stderr)) error = /retirement_reference_[a-z_]+/.exec(output.stderr)[0];
   if (!error && /Read-only paper store missing:/.test(output.stderr)) error = 'store-database-missing';
   if (!error && /file is not a database/.test(output.stderr)) error = 'sqlite-database-invalid';
   if (!error && /no such table: ([^\s]+)/.test(output.stderr)) error = `sqlite-schema-missing:${/no such table: ([^\s]+)/.exec(output.stderr)[1]}`;
@@ -288,6 +312,7 @@ function compatible(node, native, testCase) {
 function expectedBehavior(contract, testCase, result) {
   if (testCase.kind === 'grammar') return result.outcome === 'refusal' && result.error === testCase.expectedError;
   if (contract.routeId === 'operator/store') return expectedStoreStatusV1(testCase, result);
+  if (contract.routeId === 'retirement/reference') return expectedReferenceStatusV1(testCase, result);
   if (contract.routeId === 'operator/workspace') {
     const decoupled = !['overlap', 'workspace-overlap', 'symlink-cycle', 'symlink-hop-limit', 'file-parent'].includes(testCase.profile);
     const expectedCode = testCase.argv.includes('--require-decoupled') && !decoupled ? 2 : 0;
@@ -350,20 +375,26 @@ export function buildNativeOwners({ extraBinaries = [] } = {}) {
 export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row => row.routeId), onCase } = {}) {
   if (onCase !== undefined && typeof onCase !== 'function') throw new Error('route_acceptance_case_observer_invalid');
   if (!Array.isArray(routeIds) || routeIds.length === 0 || new Set(routeIds).size !== routeIds.length
-    || routeIds.some(id => !contracts.some(row => row.routeId === id))) throw new Error('route_acceptance_route_selection_invalid');
+    || routeIds.some(id => !allContracts.some(row => row.routeId === id))) throw new Error('route_acceptance_route_selection_invalid');
   const before = sourceSubject();
   const requirements = routeAcceptanceRequirementsV1();
   const runtime = buildNativeOwners();
   const rows = [];
-  for (const contract of contracts.filter(row => routeIds.includes(row.routeId))) {
+  for (const contract of allContracts.filter(row => routeIds.includes(row.routeId))) {
     const cases = [];
+    const referenceFixture = contract.routeId === 'retirement/reference'
+      ? fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-route-acceptance-reference-')) : null;
+    try {
     for (const testCase of describeCase(contract)) {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-route-acceptance-'));
+      const fixture = referenceFixture || fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-route-acceptance-'));
       try {
-        const prepared = contract.routeId === 'operator/store' ? storeStatusFixtureV1(fixture, testCase.profile, safeEnvironment())
+        const prepared = contract.routeId === 'retirement/reference'
+          ? referenceStatusFixtureV1(fixture, testCase.profile, ROOT, runtime.owners[contract.binary])
+          : contract.routeId === 'operator/store' ? storeStatusFixtureV1(fixture, testCase.profile, safeEnvironment())
           : contract.routeId === 'operator/workspace' ? workspaceFixture(fixture, testCase.profile) : assetFixture(fixture, testCase.profile);
         const env = { ...safeEnvironment(), ...prepared.environment };
         const nodeArgs = [...prepared.node, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
+        const nativeExecutable = prepared.executable || runtime.owners[contract.binary].path;
         const nativeArgs = [...contract.nativePrefix, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
         const coldWal = contract.routeId === 'operator/store' && testCase.profile === 'live-wal';
         const closedWal = contract.routeId === 'operator/store' && testCase.profile === 'closed-wal';
@@ -390,7 +421,7 @@ export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row =>
           afterNode = observed.identity; walNode = observed.state; durableNode = observed.durable;
         };
         const runNative = async () => {
-          nativeRaw = await execute(runtime.owners[contract.binary].path, nativeArgs);
+          nativeRaw = await execute(nativeExecutable, nativeArgs);
           const observed = observe('native', testCase.kind === 'death' ? 'interrupted' : 'complete', testCase.kind === 'death');
           afterNative = observed.identity; walNative = observed.state; durableNative = observed.durable;
         };
@@ -405,7 +436,7 @@ export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row =>
             const afterRetry = observe('node', 'retry'); durableRetry = durableRetry && afterRetry.durable === durableIdentity;
           };
           const retryNative = () => {
-            nativeRetry = diagnostic(run(runtime.owners[contract.binary].path, nativeArgs, { cwd: prepared.cwd, env }), fixture);
+            nativeRetry = diagnostic(run(nativeExecutable, nativeArgs, { cwd: prepared.cwd, env }), fixture);
             const afterRetry = observe('native', 'retry'); durableRetry = durableRetry && afterRetry.durable === durableIdentity;
           };
           if (first === 'native') { retryNative(); retryNode(); } else { retryNode(); retryNative(); }
@@ -422,11 +453,15 @@ export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row =>
           && (!retry || (node.signal === testCase.signal && native.signal === testCase.signal
             && expectedBehavior(contract, testCase, retry.node) && expectedBehavior(contract, testCase, retry.native)
             && JSON.stringify(canonical(retry.node)) === JSON.stringify(canonical(retry.native))));
+        if (prepared.assertCurrent) prepared.assertCurrent();
         cases.push({ caseId: testCase.id, inputSha256: inputs,
           nodeArgv: normalize(nodeArgs, fixture), nativeArgv: nativeArgs,
           environment: normalize(prepared.environment, fixture), node, native, retry, effectsUnchanged, effectsSatisfied, readCoordination, passed });
         if (onCase) onCase(freeze(structuredClone(cases.at(-1))));
-      } finally { closeStoreStatusFixtureV1(fixture); fs.rmSync(fixture, { recursive: true, force: true }); }
+      } finally { closeStoreStatusFixtureV1(fixture); if (!referenceFixture) fs.rmSync(fixture, { recursive: true, force: true }); }
+    }
+    } finally {
+      if (referenceFixture) { closeReferenceStatusFixtureV1(referenceFixture); fs.rmSync(referenceFixture, { recursive: true, force: true }); }
     }
     const requirement = requirements.find(row => row.routeId === contract.routeId);
     rows.push({ routeId: contract.routeId, argumentContractSha256: requirement.argumentContractSha256,
@@ -488,13 +523,13 @@ function recordPayload(record) {
     || record.version !== 1 || record.kind !== 'NodeRustRouteAcceptanceRecordV1'
     || record.scope !== 'local-readonly-command-behavior-no-external-authority'
     || JSON.stringify(canonical(record.authority)) !== JSON.stringify(canonical(authority))
-    || !Array.isArray(record.rows) || record.rows.length < 1 || record.rows.length > contracts.length) {
+    || !Array.isArray(record.rows) || record.rows.length < 1 || record.rows.length > allContracts.length) {
     throw new Error('route_acceptance_record_scope_invalid');
   }
   const requirements = routeAcceptanceRequirementsV1();
   const seen = new Set();
   for (const row of record.rows) {
-    const contract = contracts.find(value => value.routeId === row.routeId);
+    const contract = allContracts.find(value => value.routeId === row.routeId);
     const requirement = requirements.find(value => value.routeId === row.routeId);
     if (!contract || seen.has(row.routeId) || row.argumentContractSha256 !== requirement.argumentContractSha256
       || row.behaviorContractSha256 !== requirement.behaviorContractSha256

@@ -119,6 +119,7 @@ test('migration installs the locked oracle closure before Rust and propagates in
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-migration-oracle-'));
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const trace = path.join(temporary, 'trace');
+  const environment = path.join(temporary, 'environment');
   fs.writeFileSync(path.join(temporary, 'npm'), '#!/bin/sh\nprintf "npm:%s\\n" "$*" >> "$TRACE"\nexit "$INSTALL_EXIT"\n', { mode: 0o755 });
   fs.writeFileSync(path.join(temporary, 'node'), [
     '#!/bin/sh',
@@ -131,12 +132,15 @@ test('migration installs the locked oracle closure before Rust and propagates in
     ['v22.23.1', 0, 23, 23], ['v22.16.0', 0, 0, 1],
   ]) {
     fs.writeFileSync(trace, '');
+    fs.writeFileSync(environment, '');
     const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', runBlock(file, name)], {
       cwd: root, encoding: 'utf8', timeout: 5000,
-      env: { PATH: `${temporary}:/usr/bin:/bin`, TRACE: trace, EVIDENCE_ROOT: temporary,
+      env: { PATH: `${temporary}:/usr/bin:/bin`, TRACE: trace, EVIDENCE_ROOT: temporary, GITHUB_ENV: environment,
         NODE_VERSION: version, INSTALL_EXIT: String(install), IMPORT_EXIT: String(imported) },
     });
     assert.equal(result.status, expectedExit, result.stderr);
+    assert.equal(fs.readFileSync(environment, 'utf8'), version === 'v22.23.1'
+      ? `HEPTA_TEST_NODE=${fs.realpathSync(path.join(temporary, 'node'))}\n` : '');
     const calls = fs.readFileSync(trace, 'utf8').trim().split('\n').filter(Boolean);
     if (version !== 'v22.23.1') assert.deepEqual(calls, []);
     else {

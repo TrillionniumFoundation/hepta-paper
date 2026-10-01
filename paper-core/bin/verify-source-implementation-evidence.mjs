@@ -7,7 +7,7 @@ import path from 'node:path';
 import {
   fail, run, git, trackedBlob, readPinnedSource, assertSourceSubject,
 } from '../src/source-evidence-git-inputs.mjs';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_COMMAND_DIAGNOSTIC_BYTES = 8 * 1024;
@@ -18,6 +18,7 @@ const CAPABILITY_PATTERN = /^CAP-[A-Z0-9-]+$/;
 const WORK_ITEM_PATTERN = /^[A-Z][A-Z0-9-]*$/;
 const BUNDLE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SYMBOL_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const NODE_TEST_TITLE_PATTERN = /^[^\u0000-\u001f\u007f]{1,512}$/u;
 const SAFE_PACKAGE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_RUST_TEST_PATTERN = /^[A-Za-z0-9_:]+$/;
 const AUTHORITY_KEYS = Object.freeze([
@@ -325,7 +326,12 @@ function checkedFile(root, entry, globalPaths, bundleLabel) {
     if (!['constant', 'function', 'test', 'type'].includes(symbol.kind)) {
       fail('symbol_kind_invalid', `${relative}:${symbol.kind}`);
     }
-    requireString(symbol.name, `${relative}.symbols[${index}].name`, SYMBOL_PATTERN);
+    // Node test identity is its actual readable title; Rust declarations and
+    // JavaScript code symbols still require identifiers. Every selected title
+    // must exist in pinned source and in the complete successful TAP transcript.
+    requireString(symbol.name, `${relative}.symbols[${index}].name`,
+      entry.language === 'javascript' && symbol.kind === 'test'
+        ? NODE_TEST_TITLE_PATTERN : SYMBOL_PATTERN);
     const identity = `${symbol.kind}:${symbol.name}`;
     if (seenSymbols.has(identity)) fail('duplicate_symbol', `${relative}:${identity}`);
     seenSymbols.add(identity);
@@ -656,54 +662,320 @@ function assertTestExecution(command, bundle, stdout, label) {
   }
 }
 
-function executeCommands(root, bundles) {
-  const observations = [];
-  const env = safeExecutionEnvironment();
-  for (const [bundleId, bundle] of bundles.entries()) {
-    for (const [index, command] of bundle.commands.entries()) {
-      const cwd = command.workdir === '.' ? root : path.resolve(root, command.workdir);
-      const cwdReal = fs.realpathSync(cwd);
-      const rootReal = fs.realpathSync(root);
-      if (cwdReal !== rootReal && !cwdReal.startsWith(`${rootReal}${path.sep}`)) {
-        fail('command_workdir_escape', `${bundleId}:${index}`);
+export function assertExactCargoOwnerExecution(selector, stdout, label) {
+  if (typeof selector !== 'string' || !SAFE_RUST_TEST_PATTERN.test(selector)) fail('verification_selector_invalid', label);
+  const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
+  const rows = text.split(/\r?\n/u).filter((line) => line.startsWith('test ') && !line.startsWith('test result:'));
+  const summaryLines = text.split(/\r?\n/u).filter((line) => line.startsWith('test result:'));
+  const summaries = [...text.matchAll(
+    /^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;[^\r\n]*$/gmu,
+  )];
+  const counts = summaries.map((row) => row.slice(1, 6).map(Number));
+  const expected = `test ${selector} ... ok`;
+  if (rows.length !== 1 || rows[0] !== expected || summaryLines.length !== 1 || counts.length !== 1
+      || counts[0].some((value) => !Number.isSafeInteger(value))
+      || counts[0][0] !== 1 || counts[0].slice(1, 4).some((value) => value !== 0)) {
+    fail('verification_test_execution_incomplete', `${label}:exact_owner`);
+  }
+  return { rows, counts: Object.fromEntries(['passed', 'failed', 'ignored', 'measured', 'filteredOut'].map((key, index) => [key, counts[0][index]])) };
+}
+
+function artifactPin(executable, root) {
+  if (!path.isAbsolute(executable) || fs.realpathSync(executable) !== executable
+      || executable === root || executable.startsWith(`${root}${path.sep}`)) {
+    fail('verification_artifact_path_invalid', executable);
+  }
+  const descriptor = fs.openSync(executable, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const identity = (value) => [value.dev, value.ino, value.mode, value.uid, value.gid,
+    value.nlink, value.size, value.mtimeNs, value.ctimeNs].map(String);
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile() || before.size < 4n || before.size > 1024n * 1024n * 1024n
+        || (before.mode & 0o111n) === 0n) fail('verification_artifact_file_invalid', executable);
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.alloc(65536);
+    let offset = 0;
+    while (true) {
+      const count = fs.readSync(descriptor, buffer, 0, buffer.length, offset);
+      if (count === 0) break;
+      if (offset === 0 && !buffer.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) {
+        fail('verification_artifact_not_elf', executable);
       }
-      const result = run(command.program, command.args, {
-        cwd: cwdReal,
-        env,
-        timeout: command.timeoutSeconds * 1000,
-      });
-      const observation = {
-        args: command.args,
-        bundleId,
-        expectedExitCode: command.expectedExitCode,
-        index,
-        program: command.program,
-        status: result.status,
-        stderrSha256: hashBytes(Buffer.from(result.stderr ?? '', 'utf8')),
-        stdoutSha256: hashBytes(Buffer.from(result.stdout ?? '', 'utf8')),
-        timedOut: result.signal === 'SIGTERM' && result.status === null,
-        workdir: command.workdir,
-      };
-      observations.push(observation);
-      if (result.status !== command.expectedExitCode) {
-        fail('verification_command_failed', JSON.stringify({
-          args: command.args,
-          bundleId,
-          expectedExitCode: command.expectedExitCode,
-          index,
-          program: command.program,
-          signal: result.signal ?? null,
-          status: result.status,
-          stderr: commandDiagnostic(result.stderr),
-          stdout: commandDiagnostic(result.stdout),
-          timedOut: result.signal === 'SIGTERM' && result.status === null,
-          workdir: command.workdir,
-        }));
+      offset += count;
+      if (offset > Number(before.size)) fail('verification_artifact_changed', executable);
+      hash.update(buffer.subarray(0, count));
+    }
+    const named = fs.lstatSync(executable, { bigint: true });
+    if (!named.isFile() || named.isSymbolicLink()) fail('verification_artifact_path_invalid', executable);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (offset !== Number(before.size) || JSON.stringify(identity(before)) !== JSON.stringify(identity(after))
+        || identity(before).some((value, index) => value !== identity(named)[index])) {
+      fail('verification_artifact_changed', executable);
+    }
+    return { path: executable, sha256: `sha256:${hash.digest('hex')}`, identity: identity(before) };
+  } finally { fs.closeSync(descriptor); }
+}
+
+export function cargoTargetObservation(root, binding, stdout, label) {
+  const artifacts = [];
+  const tests = new Set();
+  for (const line of stdout.replace(/\x1b\[[0-9;]*m/gu, '').split(/\r?\n/u)) {
+    if (line.startsWith('{')) {
+      let row;
+      try { row = JSON.parse(line); } catch { fail('verification_artifact_json_invalid', label); }
+      if (row.reason !== 'compiler-artifact' || row.profile?.test !== true || !row.executable) continue;
+      const expectedManifest = path.join(root, 'rust/crates', binding.packageName, 'Cargo.toml');
+      const expectedKind = binding.targetKind === 'library' ? 'lib' : 'test';
+      if (row.manifest_path === expectedManifest && row.target?.kind?.length === 1
+          && row.target.kind[0] === expectedKind
+          && (binding.targetKind === 'library' || row.target?.name === binding.testTarget)) {
+        const packageRoot = path.dirname(expectedManifest);
+        const expectedSources = binding.targetKind === 'library'
+          ? [path.join(packageRoot, 'src/lib.rs')]
+          : [path.join(packageRoot, 'tests', `${binding.testTarget}.rs`),
+            path.join(packageRoot, 'tests', binding.testTarget, 'main.rs')];
+        if (!expectedSources.includes(row.target.src_path)) fail('verification_artifact_source_invalid', label);
+        artifacts.push({ executable: row.executable, manifestPath: row.manifest_path,
+          targetName: row.target.name, targetKind: row.target.kind, sourcePath: row.target.src_path });
       }
-      assertTestExecution(command, bundle, result.stdout ?? '', `${bundleId}:${index}`);
+    } else if (line.endsWith(': test')) {
+      const selector = line.slice(0, -': test'.length);
+      if (!SAFE_RUST_TEST_PATTERN.test(selector) || tests.has(selector)) fail('verification_discovery_invalid', label);
+      tests.add(selector);
     }
   }
-  return observations;
+  if (artifacts.length !== 1) fail('verification_artifact_cardinality', `${label}:${artifacts.length}`);
+  return { artifact: { ...artifacts[0], ...artifactPin(artifacts[0].executable, root) }, tests: [...tests] };
+}
+
+function producerPin(root) {
+  const paths = ['paper-core/bin/verify-source-implementation-evidence.mjs',
+    'paper-core/src/source-evidence-git-inputs.mjs', 'paper-core/src/source-evidence-rust-symbols.mjs'];
+  return paths.map((relative) => {
+    const bound = trackedBlob(root, relative);
+    const bytes = readPinnedSource(root, relative, bound);
+    const loaded = relative === paths[0] ? fileURLToPath(import.meta.url)
+      : fileURLToPath(new URL(`../src/${path.basename(relative)}`, import.meta.url));
+    if (!bytes.equals(fs.readFileSync(loaded))) fail('verification_capture_producer_mismatch', relative);
+    return { path: relative, mode: bound.mode, gitBlob: bound.blob, sha256: hashBytes(bytes) };
+  });
+}
+
+export function cargoEnvironmentObservation(root, binding, artifact, stdout, cargoPid, runtime, label, expectedEnvironment) {
+  const captures = [];
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (!line.startsWith('{')) continue;
+    const row = parseStrictJson(line, label);
+    if (row.kind === 'CargoOwnerEnvironmentCaptureV1') captures.push(row);
+  }
+  if (captures.length !== 1) fail('verification_capture_cardinality', label);
+  const row = captures[0];
+  const fields = ['kind', 'version', 'processId', 'parentProcessId', 'script', 'node', 'cwd', 'executable', 'args', 'environment'];
+  const actualFields = Object.keys(row).sort();
+  const env = row.environment;
+  const cwd = path.dirname(path.join(root, 'rust/crates', binding.packageName, 'Cargo.toml'));
+  const cargoEnvironmentKeys = new Set(['CARGO', 'CARGO_MANIFEST_DIR', 'CARGO_MANIFEST_PATH',
+    'CARGO_PKG_AUTHORS', 'CARGO_PKG_DESCRIPTION', 'CARGO_PKG_HOMEPAGE', 'CARGO_PKG_LICENSE',
+    'CARGO_PKG_LICENSE_FILE', 'CARGO_PKG_NAME', 'CARGO_PKG_README', 'CARGO_PKG_REPOSITORY',
+    'CARGO_PKG_RUST_VERSION', 'CARGO_PKG_VERSION', 'CARGO_PKG_VERSION_MAJOR', 'CARGO_PKG_VERSION_MINOR',
+    'CARGO_PKG_VERSION_PATCH', 'CARGO_PKG_VERSION_PRE', 'LD_LIBRARY_PATH', 'SSL_CERT_FILE', 'SSL_CERT_DIR']);
+  if (JSON.stringify(actualFields) !== JSON.stringify(fields.sort()) || row.version !== 1
+      || !Number.isSafeInteger(row.processId) || row.processId < 1 || row.parentProcessId !== cargoPid
+      || row.script !== path.join(root, 'paper-core/bin/verify-source-implementation-evidence.mjs')
+      || row.node !== runtime.node.path || row.cwd !== cwd || row.executable !== artifact.path
+      || JSON.stringify(row.args) !== '["--list"]'
+      || !env || Array.isArray(env) || typeof env !== 'object' || Object.keys(env).length > 128
+      || Object.entries(env).some(([key, value]) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || typeof value !== 'string' || value.includes('\0'))
+      || !expectedEnvironment
+      || Object.entries(expectedEnvironment).some(([key, value]) => !cargoEnvironmentKeys.has(key) && env[key] !== value)
+      || Object.keys(env).some((key) => !Object.hasOwn(expectedEnvironment, key) && !cargoEnvironmentKeys.has(key))
+      || Buffer.byteLength(JSON.stringify(env)) > 1024 * 1024
+      || env.CARGO !== runtime.cargo.path || env.CARGO_MANIFEST_DIR !== cwd || env.CARGO_PKG_NAME !== binding.packageName
+      || (env.CARGO_MANIFEST_PATH !== undefined && env.CARGO_MANIFEST_PATH !== path.join(cwd, 'Cargo.toml'))) {
+    fail('verification_capture_binding_invalid', label);
+  }
+  return { cwd, environment: env, processId: row.processId, parentProcessId: row.parentProcessId,
+    environmentSha256: hashBytes(Buffer.from(JSON.stringify(env))) };
+}
+
+export function exactCargoTestInventory(stdout, label) {
+  const tests = [];
+  const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
+  for (const line of text.split(/\r?\n/u)) {
+    if (!line.endsWith(': test')) continue;
+    const name = line.slice(0, -': test'.length);
+    if (!SAFE_RUST_TEST_PATTERN.test(name) || tests.includes(name)) fail('verification_discovery_invalid', label);
+    tests.push(name);
+  }
+  const summary = [...text.matchAll(/^(\d+) tests?, (\d+) benchmarks?$/gmu)];
+  if (summary.length !== 1 || Number(summary[0][1]) !== tests.length || Number(summary[0][2]) !== 0) {
+    fail('verification_discovery_invalid', label);
+  }
+  return tests;
+}
+
+export function executeCommands(root, bundles, source) {
+  const observations = [];
+  const targets = [];
+  const inventories = new Map();
+  const env = safeExecutionEnvironment();
+  const rootReal = fs.realpathSync(root);
+  let runtime;
+  let producer;
+  let finalRemaining;
+  for (const [bundleId, bundle] of bundles.entries()) {
+    for (const [index, command] of bundle.commands.entries()) {
+      const label = `${bundleId}:${index}`;
+      const started = process.hrtime.bigint();
+      const remaining = () => {
+        const milliseconds = command.timeoutSeconds * 1000 - Number((process.hrtime.bigint() - started) / 1000000n);
+        if (milliseconds <= 0) fail('verification_command_budget_exhausted', label);
+        return milliseconds;
+      };
+      finalRemaining = remaining;
+      const cwd = command.workdir === '.' ? root : path.resolve(root, command.workdir);
+      const cwdReal = fs.realpathSync(cwd);
+      if (cwdReal !== rootReal && !cwdReal.startsWith(`${rootReal}${path.sep}`)) fail('command_workdir_escape', label);
+      const binding = command.ownerBinding;
+      let executable = command.program;
+      let args = command.args;
+      let executionEnv = env;
+      let executionCwd = cwdReal;
+      let inventory;
+      if (binding) {
+        if (!runtime) {
+          let cargo;
+          for (const directory of String(env.PATH ?? '').split(path.delimiter)) {
+            const candidate = path.join(directory, 'cargo');
+            try {
+              const value = fs.statSync(candidate);
+              if (!value.isFile() || (value.mode & 0o111) === 0) continue;
+              const pin = artifactPin(fs.realpathSync(candidate), rootReal);
+              const qualificationTimeoutMs = remaining();
+              const version = run(pin.path, ['--version', '--verbose'], { cwd: cwdReal, env, timeout: qualificationTimeoutMs });
+              const host = /^host: ([A-Za-z0-9_-]+)$/mu.exec(version.stdout ?? '')?.[1];
+              if (version.status !== 0 || !/^cargo 1\.98\.0\b/u.test(version.stdout ?? '') || !host) {
+                fail('verification_cargo_runtime_unqualified', label);
+              }
+              cargo = { ...pin, version: version.stdout.trim(), host, qualification: { args: ['--version', '--verbose'],
+                cwd: cwdReal, timeoutMs: qualificationTimeoutMs, processId: version.pid, status: version.status, stdoutSha256: hashBytes(Buffer.from(version.stdout ?? '')), stderrSha256: hashBytes(Buffer.from(version.stderr ?? '')) } };
+              break;
+            } catch (error) { if (error.code !== 'ENOENT') throw error; }
+          }
+          if (!cargo) fail('verification_cargo_runtime_missing');
+          if (process.version !== 'v22.23.1') fail('verification_capture_node_unqualified');
+          runtime = { cargo, node: { ...artifactPin(fs.realpathSync(process.execPath), rootReal), version: process.version } };
+          producer = producerPin(rootReal);
+        }
+        const key = JSON.stringify([cwdReal, binding.discoveryPrefix]);
+        if (!inventories.has(key)) {
+          if (JSON.stringify(producerPin(rootReal)) !== JSON.stringify(producer)) fail('verification_capture_producer_changed', label);
+          const script = path.join(rootReal, 'paper-core/bin/verify-source-implementation-evidence.mjs');
+          const runner = [runtime.node.path, script, '--capture-cargo-owner-environment'];
+          const config = `target.${JSON.stringify(runtime.cargo.host)}.runner=${JSON.stringify(runner)}`;
+          const discoveryArgs = [...binding.discoveryPrefix, '--message-format=json', '--config', config, '--', '--list'];
+          for (const pin of [runtime.cargo, runtime.node]) {
+            if (JSON.stringify(artifactPin(pin.path, rootReal)) !== JSON.stringify({ path: pin.path, sha256: pin.sha256, identity: pin.identity })) fail('verification_runtime_changed');
+          }
+          const discoveryTimeoutMs = remaining();
+          const captured = run(runtime.cargo.path, discoveryArgs, { cwd: cwdReal, env, timeout: discoveryTimeoutMs });
+          if (captured.status !== 0) fail('verification_discovery_failed', label);
+          const actual = cargoTargetObservation(rootReal, binding, captured.stdout ?? '', label);
+          const capture = cargoEnvironmentObservation(rootReal, binding, actual.artifact, captured.stdout ?? '', captured.pid, runtime, label, env);
+          if (JSON.stringify(producerPin(rootReal)) !== JSON.stringify(producer)) fail('verification_capture_producer_changed', label);
+          for (const pin of [runtime.cargo, runtime.node]) {
+            if (JSON.stringify(artifactPin(pin.path, rootReal)) !== JSON.stringify({ path: pin.path, sha256: pin.sha256, identity: pin.identity })) fail('verification_runtime_changed');
+          }
+          const listTimeoutMs = remaining();
+          const listed = run(actual.artifact.path, ['--list'], { cwd: capture.cwd, env: capture.environment, timeout: listTimeoutMs });
+          if (listed.status !== 0) fail('verification_discovery_failed', label);
+          const tests = exactCargoTestInventory(listed.stdout ?? '', label);
+          const targetId = `cargo-target-${targets.length}`;
+          const target = { kind: 'SourceOwnerCargoTargetReuseV1', version: 1, targetId, source,
+            binding: { discoveryPrefix: binding.discoveryPrefix, packageName: binding.packageName, targetKind: binding.targetKind, ...(binding.testTarget ? { testTarget: binding.testTarget } : {}) },
+            artifact: actual.artifact, runtime, producer,
+            discovery: { program: runtime.cargo.path, args: discoveryArgs, cwd: cwdReal, processId: captured.pid, status: captured.status,
+              timeoutMs: discoveryTimeoutMs, stdoutSha256: hashBytes(Buffer.from(captured.stdout ?? '')), stderrSha256: hashBytes(Buffer.from(captured.stderr ?? '')) },
+            capture: { script, args: ['--capture-cargo-owner-environment', actual.artifact.path, '--list'],
+              processId: capture.processId, parentProcessId: capture.parentProcessId, cwd: capture.cwd, environmentSha256: capture.environmentSha256, environmentKeys: Object.keys(capture.environment).sort() },
+            inventory: { program: actual.artifact.path, args: ['--list'], cwd: capture.cwd, processId: listed.pid, status: listed.status, timeoutMs: listTimeoutMs,
+              stdoutSha256: hashBytes(Buffer.from(listed.stdout ?? '')), stderrSha256: hashBytes(Buffer.from(listed.stderr ?? '')), tests },
+            firstLogicalOwner: { bundleId, index }, elapsedMs: Number((process.hrtime.bigint() - started) / 1000000n) };
+          targets.push(target);
+          inventories.set(key, { target, environment: capture.environment });
+        }
+        inventory = inventories.get(key);
+        if (!inventory.target.inventory.tests.includes(binding.selector)) fail('verification_discovery_selector_missing', label);
+        const artifact = inventory.target.artifact;
+        if (JSON.stringify(artifactPin(artifact.path, rootReal)) !== JSON.stringify({ path: artifact.path, sha256: artifact.sha256, identity: artifact.identity })) {
+          fail('verification_artifact_changed', label);
+        }
+        executable = artifact.path;
+        args = [binding.selector, '--exact', ...(command.args.includes('--ignored') ? ['--ignored'] : []), '--nocapture'];
+        executionCwd = inventory.target.capture.cwd;
+        executionEnv = inventory.environment;
+      }
+      const timeoutMs = remaining();
+      const result = run(executable, args, { cwd: executionCwd, env: executionEnv, timeout: timeoutMs });
+      if (result.status !== command.expectedExitCode) {
+        fail('verification_command_failed', JSON.stringify({ args: command.args, bundleId, index,
+          expectedExitCode: command.expectedExitCode, program: command.program, signal: result.signal ?? null, status: result.status,
+          stderr: commandDiagnostic(result.stderr), stdout: commandDiagnostic(result.stdout),
+          timedOut: result.signal === 'SIGTERM' && result.status === null, workdir: command.workdir }));
+      }
+      let actualOwner;
+      if (binding) {
+        actualOwner = assertExactCargoOwnerExecution(binding.selector, result.stdout ?? '', label);
+        const artifact = inventory.target.artifact;
+        if (JSON.stringify(artifactPin(artifact.path, rootReal)) !== JSON.stringify({ path: artifact.path, sha256: artifact.sha256, identity: artifact.identity })) {
+          fail('verification_artifact_changed', label);
+        }
+      } else assertTestExecution(command, bundle, result.stdout ?? '', label);
+      remaining();
+      observations.push({ args: command.args, bundleId, expectedExitCode: command.expectedExitCode, index,
+        program: command.program, status: result.status, timedOut: false, workdir: command.workdir,
+        stdoutSha256: hashBytes(Buffer.from(result.stdout ?? '')), stderrSha256: hashBytes(Buffer.from(result.stderr ?? '')),
+        ...(binding ? { executionTargetId: inventory.target.targetId, actualTestSelector: binding.selector,
+          actualTestRows: actualOwner.rows, actualTestCounts: actualOwner.counts,
+          physicalInvocation: { program: executable, args, cwd: executionCwd, environmentSha256: inventory.target.capture.environmentSha256,
+            processId: result.pid, timeoutMs, status: result.status },
+          sourcePins: bundle.files.filter((file) => command.expectedTargets.includes(file.path)).map((file) => ({ path: file.path, mode: file.mode, gitBlob: file.gitBlob })) } : {}),
+        elapsedMs: Number((process.hrtime.bigint() - started) / 1000000n) });
+    }
+  }
+  if (runtime) {
+    for (const pin of [runtime.cargo, runtime.node]) {
+      if (JSON.stringify(artifactPin(pin.path, rootReal)) !== JSON.stringify({ path: pin.path, sha256: pin.sha256, identity: pin.identity })) fail('verification_runtime_changed');
+    }
+    if (JSON.stringify(producerPin(rootReal)) !== JSON.stringify(producer)) fail('verification_capture_producer_changed');
+    const lastBudgetRemaining = finalRemaining();
+    observations.at(-1).elapsedMs = bundles.get(observations.at(-1).bundleId).commands[observations.at(-1).index].timeoutSeconds * 1000 - lastBudgetRemaining;
+  }
+  return { observations, targets };
+}
+
+function captureCargoOwnerEnvironment(argv) {
+  if (argv.length !== 2 || !path.isAbsolute(argv[0]) || argv[1] !== '--list') fail('verification_capture_arguments_invalid');
+  const executable = fs.realpathSync(argv[0]);
+  if (executable !== argv[0]) fail('verification_capture_arguments_invalid');
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const cwd = fs.realpathSync(process.cwd());
+  const cargo = process.env.CARGO;
+  if (typeof cargo !== 'string' || !path.isAbsolute(cargo) || fs.realpathSync(cargo) !== cargo
+      || fs.realpathSync(`/proc/${process.ppid}/exe`) !== cargo
+      || !SAFE_PACKAGE_PATTERN.test(process.env.CARGO_PKG_NAME ?? '')
+      || cwd !== path.join(root, 'rust/crates', process.env.CARGO_PKG_NAME)
+      || process.env.CARGO_MANIFEST_DIR !== cwd || process.env.CARGO_MANIFEST_PATH !== path.join(cwd, 'Cargo.toml')) {
+    fail('verification_capture_parent_invalid');
+  }
+  artifactPin(executable, root);
+  const environment = Object.fromEntries(Object.entries(process.env));
+  if (Object.keys(environment).length > 128 || Buffer.byteLength(JSON.stringify(environment)) > 1024 * 1024) {
+    fail('verification_capture_environment_limit');
+  }
+  process.stdout.write(`${JSON.stringify({ kind: 'CargoOwnerEnvironmentCaptureV1', version: 1,
+    processId: process.pid, parentProcessId: process.ppid, script: fs.realpathSync(fileURLToPath(import.meta.url)),
+    node: fs.realpathSync(process.execPath), cwd: process.cwd(), executable, args: ['--list'], environment })}\n`);
 }
 
 function parseArguments(argv) {
@@ -774,15 +1046,16 @@ export function verifyRepositorySourceEvidence(options = {}) {
   // Complete semantic validation can itself span source changes. Admit all
   // commands only against the captured subject and with the same bound inputs.
   if (options.execute) assertSourceSubject(root, { head, tree }, inputs);
-  const commandObservations = options.execute
-    ? executeCommands(root, validation.bundles)
-    : [];
+  const execution = options.execute
+    ? executeCommands(root, validation.bundles, { head, tree })
+    : { observations: [], targets: [] };
   // No successful receipt is constructed or published after observed drift.
   // Do not re-run tests or mint an updated subject from concurrent bytes.
   assertSourceSubject(root, { head, tree }, inputs);
   const receipt = {
     authorityClaims: Object.fromEntries(AUTHORITY_KEYS.map((key) => [key, false])),
-    commandObservations,
+    commandObservations: execution.observations,
+    executionTargets: execution.targets,
     evidence: {
       gitBlob: evidenceBlob.blob,
       mode: evidenceBlob.mode,
@@ -810,6 +1083,10 @@ export function verifyRepositorySourceEvidence(options = {}) {
 }
 
 function main() {
+  if (process.argv[2] === '--capture-cargo-owner-environment') {
+    captureCargoOwnerEnvironment(process.argv.slice(3));
+    return;
+  }
   const args = parseArguments(process.argv.slice(2));
   const receipt = verifyRepositorySourceEvidence(args);
   process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);

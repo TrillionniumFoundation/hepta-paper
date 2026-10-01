@@ -46,6 +46,9 @@ function createFixture(mutator = () => {}) {
   command(root, 'git', 'init', '--quiet');
   command(root, 'git', 'config', 'user.name', 'Hepta Source Evidence Test');
   command(root, 'git', 'config', 'user.email', 'source-evidence@example.invalid');
+  for (const relative of ['paper-core/bin/verify-source-implementation-evidence.mjs', 'paper-core/src/source-evidence-git-inputs.mjs', 'paper-core/src/source-evidence-rust-symbols.mjs']) {
+    write(root, relative, fs.readFileSync(new URL(`../../${relative}`, import.meta.url)));
+  }
 
   write(root, 'src/feature.mjs', 'export function feature() { return 1; }\n');
   write(root, 'src/orphan.mjs', 'export function orphanFeature() { return 2; }\n');
@@ -571,18 +574,15 @@ for (const [name, transcript] of [
     const fixture = executableCargoFixture(t, transcript);
     const receipt = path.join(os.tmpdir(), `hepta-rejected-receipt-${path.basename(fixture.root)}.json`);
     assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true, receipt }),
-      /verification_test_execution_incomplete/u);
+      /verification_artifact_not_elf/u);
     assert.equal(fs.existsSync(receipt), false, 'failure must not publish an acceptance receipt');
   });
 }
 
-test('Cargo exact selected execution permits other binaries with zero matching tests', (t) => {
+test('synthetic Cargo launcher cannot manufacture exact selected execution from zero summaries', (t) => {
   const fixture = executableCargoFixture(t,
     `${zeroCargoSummary}\u001b[32mtest selected_owner_test ... ok\u001b[0m\n${oneCargoSummary}${zeroCargoSummary}`);
-  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
-  assert.equal(receipt.commandObservations.length, 1);
-  assert.equal(receipt.commandObservations[0].status, 0);
-  assert.deepEqual(receipt.authorityClaims, authorityClaims());
+  assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true }), /verification_artifact_not_elf/u);
 });
 
 test('Cargo owner commands cannot fall back to package-wide unscoped execution', (t) => {
@@ -597,6 +597,10 @@ function nestedScopedCargoFixture(t, testTarget = 'owner_suite') {
   const expectedTarget = 'rust/crates/fixture/tests/owner_suite/nested.rs';
   const fixture = createFixture((evidence, root) => {
     write(root, expectedTarget, '#[test]\nfn selected_owner_test() {}\n');
+    write(root, 'rust/Cargo.toml', '[workspace]\nmembers = ["crates/fixture"]\nresolver = "3"\n');
+    write(root, 'rust/crates/fixture/Cargo.toml', '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n');
+    write(root, 'rust/Cargo.lock', 'version = 4\n\n[[package]]\nname = "fixture"\nversion = "0.1.0"\n');
+    write(root, 'rust/crates/fixture/tests/owner_suite.rs', '#[path = "owner_suite/nested.rs"] mod nested;\n');
     const bundle = evidence.bundles['example-source'];
     bundle.files[1] = {
       path: expectedTarget, role: 'test', mode: '100644', language: 'rust',
@@ -607,25 +611,20 @@ function nestedScopedCargoFixture(t, testTarget = 'owner_suite') {
       program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 10,
       args: [
         'test', '--locked', '-p', 'fixture', '--test', testTarget,
-        'selected_owner_test', '--', '--exact', '--nocapture',
+        'nested::selected_owner_test', '--', '--exact', '--nocapture',
       ],
       expectedTargets: [expectedTarget],
     };
   });
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-nested-test-transcript-'));
-  const launcher = path.join(bin, 'cargo');
-  const transcript = `test selected_owner_test ... ok\n${oneCargoSummary}`;
-  fs.writeFileSync(
-    launcher,
-    `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(transcript)});\n`,
-    { mode: 0o700 },
-  );
-  const oldPath = process.env.PATH;
-  process.env.PATH = `${bin}${path.delimiter}${oldPath ?? ''}`;
+  const cargo = command(fixture.root, 'rustup', 'which', '--toolchain', '1.98.0', 'cargo');
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-nested-rust-owner-target-'));
+  const oldPath = process.env.PATH, oldTarget = process.env.CARGO_TARGET_DIR;
+  process.env.PATH = `${path.dirname(cargo)}${path.delimiter}${oldPath ?? ''}`;
+  process.env.CARGO_TARGET_DIR = target;
   t.after(() => {
-    if (oldPath === undefined) delete process.env.PATH;
-    else process.env.PATH = oldPath;
-    fs.rmSync(bin, { recursive: true, force: true });
+    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+    if (oldTarget === undefined) delete process.env.CARGO_TARGET_DIR; else process.env.CARGO_TARGET_DIR = oldTarget;
+    fs.rmSync(target, { recursive: true, force: true });
     fs.rmSync(fixture.root, { recursive: true, force: true });
   });
   return fixture;
@@ -992,3 +991,28 @@ test('committed CLI replay refuses Git configuration which can skip object integ
   command(fixture.root, 'git', 'config', '--worktree', 'fsck.hashMismatch', 'ignore');
   assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_git_integrity_bypass_configuration/u);
 });
+
+
+test('readable Node owner title remains exact source and execution identity', t => {
+  const title = 'owner title with spaces, exact punctuation (v1)';
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', `import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest(${JSON.stringify(title)}, () => assert.equal(2 + 3, 5));\n`);
+    const file = evidence.bundles['example-source'].files[1];
+    file.symbols = [{ kind: 'test', name: title }];
+    file.gitBlob = command(root, 'git', 'hash-object', file.path);
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+  assert.deepEqual(receipt.authorityClaims, authorityClaims());
+});
+for (const title of ['bad\ntitle', 'x'.repeat(513)]) {
+  test('unbounded or control-bearing Node title refuses before executing its owner '+title.length, t => {
+    const fixture = createFixture(evidence => {
+      evidence.bundles['example-source'].files[1].symbols[0].name = title;
+    });
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true }), /string_domain_invalid/u);
+  });
+}

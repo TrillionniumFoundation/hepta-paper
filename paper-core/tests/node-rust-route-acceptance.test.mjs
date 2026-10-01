@@ -269,9 +269,10 @@ test('actual_closed_wal_objects_refuse_nonempty_wal_shm_byte_mutation_file_alias
     fs.writeFileSync(wal, 'unexpected product frame');
     assert.throws(() => observeStoreClosedWalFilesV1(fixture), /held_file/u);
     fs.writeFileSync(wal, Buffer.alloc(0));
-    fs.chmodSync(shm, 0o640);
+    const originalMode = fs.statSync(shm).mode & 0o777;
+    fs.chmodSync(shm, originalMode ^ 0o020);
     assert.throws(() => observeStoreClosedWalFilesV1(fixture), /closed_created_ownership_or_mode/u);
-    fs.chmodSync(shm, 0o660);
+    fs.chmodSync(shm, originalMode);
     const link = path.join(fixture, 'shm-hardlink'); fs.linkSync(shm, link);
     assert.throws(() => observeStoreClosedWalFilesV1(fixture), /held_file/u); fs.unlinkSync(link);
     fs.writeFileSync(path.join(fixture, 'runtime/foreign-output'), 'unrelated');

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import {
   buildTestImpactGraph,
+  requiresNativeRouteToolchain,
   selectImpactedTests,
   shardImpactedTests,
 } from '../src/test-impact-graph.mjs';
@@ -138,6 +139,7 @@ const report = Object.freeze({
   shardIndex,
   shardTestCount: shardTests.length,
   shardTests,
+  requiresNativeRouteToolchain: requiresNativeRouteToolchain({ graph, tests: shardTests }),
 });
 
 if (options.json || options['dry-run']) {

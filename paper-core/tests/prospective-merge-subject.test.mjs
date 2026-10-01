@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { prepareProspectiveMerge } from '../../docs/tools/prepare-prospective-merge.mjs';
+import { prepareProspectiveMerge, verifyProspectiveMerge } from '../../docs/tools/prepare-prospective-merge.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 function fixture() {
@@ -68,6 +68,39 @@ test('CLI ignores inherited Git subject and identity overrides without moving re
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, `${expected.commit}\n`);
     assert.equal(f.git('rev-parse', 'HEAD'), f.target);
+  } finally { f.clean(); }
+});
+
+test('observed prospective subject uses the creation recipe and rejects substituted parents tree message or identity', () => {
+  const f = fixture();
+  try {
+    const expected = prepareProspectiveMerge(f);
+    assert.throws(() => verifyProspectiveMerge({ ...f, commit: expected.commit }), /checkout_mismatch/u);
+    f.git('checkout', '--detach', expected.commit);
+    fs.writeFileSync(path.join(f.root, 'initial'), 'preserved observation bytes');
+    const before = snapshot(f);
+    assert.deepEqual(verifyProspectiveMerge({ ...f, commit: expected.commit }), expected);
+    assert.deepEqual(snapshot(f), before);
+    f.git('checkout', '--detach', expected.commit);
+    const canonicalMessage = `Hepta canonical prospective merge v1\n\nbase ${f.base}\ntarget ${f.target}\n`;
+    const cases = [
+      [f.git('rev-parse', `${f.target}^{tree}`), ['-p', f.base, '-p', f.target], canonicalMessage],
+      [expected.tree, ['-p', f.target, '-p', f.base], canonicalMessage],
+      [expected.tree, ['-p', f.target], canonicalMessage],
+      [expected.tree, ['-p', f.base, '-p', f.target], 'substituted message'],
+      [expected.tree, ['-p', f.base, '-p', f.target], canonicalMessage],
+    ];
+    for (const [tree, parents, message] of cases) {
+      // Fixture identity differs from the canonical observer even when every
+      // tree, parent and message byte is otherwise equal.
+      const substituted = f.git('commit-tree', tree, ...parents, '-m', message);
+      assert.notEqual(substituted, expected.commit);
+      f.git('checkout', '--detach', substituted);
+      const rejected = snapshot(f);
+      assert.throws(() => verifyProspectiveMerge({ ...f, commit: substituted }), /identity_changed/u);
+      assert.deepEqual(snapshot(f), rejected);
+    }
+    assert.throws(() => verifyProspectiveMerge({ ...f, base: f.target, commit: expected.commit }), /merge_identity_invalid/u);
   } finally { f.clean(); }
 });
 

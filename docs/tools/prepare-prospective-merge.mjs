@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const OID = /^[0-9a-f]{40}$/;
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
-export function prepareProspectiveMerge({ root = '.', base, target }) {
+function prospectiveGit({ root, base, target }) {
   if (!OID.test(base || '') || !OID.test(target || '')) {
     throw new Error('prospective_subject_requires_full_commit_ids');
   }
@@ -36,16 +36,30 @@ export function prepareProspectiveMerge({ root = '.', base, target }) {
       throw new Error('prospective_subject_not_a_commit');
     }
   }
+  return git;
+}
+
+function canonicalMerge(git, base, target) {
+  const tree = git(['merge-tree', '--write-tree', base, target]);
+  if (!OID.test(tree)) throw new Error('prospective_subject_merge_conflict');
+  const timestamp = git(['show', '-s', '--format=%ct', target]);
+  if (!/^\d+$/.test(timestamp)) throw new Error('prospective_subject_timestamp_invalid');
+  const owner = 'hepta-source-evidence <source-evidence@invalid.example>';
+  const raw = `tree ${tree}\nparent ${base}\nparent ${target}\n`
+    + `author ${owner} ${timestamp} +0000\ncommitter ${owner} ${timestamp} +0000\n\n`
+    + `Hepta canonical prospective merge v1\n\nbase ${base}\ntarget ${target}\n`;
+  return { tree, timestamp, commit: git(['hash-object', '-t', 'commit', '--stdin'], raw) };
+}
+
+export function prepareProspectiveMerge({ root = '.', base, target }) {
+  const git = prospectiveGit({ root, base, target });
   if (git(['rev-parse', '--verify', 'HEAD']) !== target) {
     throw new Error('prospective_subject_checkout_mismatch');
   }
   // Push events without a distinct integration base have one subject. Do not
   // fabricate a second parent or present identical source as an independent merge.
   if (base === target) return { commit: target, tree: git(['rev-parse', `${target}^{tree}`]), base, target };
-  const tree = git(['merge-tree', '--write-tree', base, target]);
-  if (!OID.test(tree)) throw new Error('prospective_subject_merge_conflict');
-  const timestamp = git(['show', '-s', '--format=%ct', target]);
-  if (!/^\d+$/.test(timestamp)) throw new Error('prospective_subject_timestamp_invalid');
+  const { tree, timestamp, commit: expected } = canonicalMerge(git, base, target);
   const commit = git(['commit-tree', tree, '-p', base, '-p', target],
     `Hepta canonical prospective merge v1\n\nbase ${base}\ntarget ${target}\n`, {
       GIT_AUTHOR_NAME: 'hepta-source-evidence',
@@ -55,12 +69,32 @@ export function prepareProspectiveMerge({ root = '.', base, target }) {
       GIT_COMMITTER_EMAIL: 'source-evidence@invalid.example',
       GIT_COMMITTER_DATE: `@${timestamp} +0000`,
     });
-  if (!OID.test(commit) || git(['show', '-s', '--format=%P', commit]) !== `${base} ${target}`
+  if (commit !== expected || git(['show', '-s', '--format=%P', commit]) !== `${base} ${target}`
       || git(['rev-parse', `${commit}^{tree}`]) !== tree
       || git(['rev-parse', '--verify', 'HEAD']) !== target) {
     throw new Error('prospective_subject_identity_changed');
   }
   return { commit, tree, base, target };
+}
+
+// Observe an already checked-out merge using exactly the creation recipe above.
+// Matching parents or trees alone cannot qualify a substituted merge commit.
+export function verifyProspectiveMerge({ root = '.', base, target, commit }) {
+  if (!OID.test(commit || '') || base === target) {
+    throw new Error('prospective_subject_merge_identity_invalid');
+  }
+  const git = prospectiveGit({ root, base, target });
+  if (git(['cat-file', '-t', commit]) !== 'commit'
+      || git(['rev-parse', '--verify', 'HEAD']) !== commit) {
+    throw new Error('prospective_subject_checkout_mismatch');
+  }
+  const expected = canonicalMerge(git, base, target);
+  if (commit !== expected.commit
+      || git(['show', '-s', '--format=%P', commit]) !== `${base} ${target}`
+      || git(['rev-parse', `${commit}^{tree}`]) !== expected.tree) {
+    throw new Error('prospective_subject_identity_changed');
+  }
+  return { commit, tree: expected.tree, base, target };
 }
 
 function main() {

@@ -137,8 +137,9 @@ use hepta_paper_service::{
 use std::{
     collections::BTreeMap,
     env,
-    fs::File,
+    fs::{self, File, OpenOptions},
     io::{self, BufRead, Read},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -276,12 +277,50 @@ fn ordinary_store_integrity_command_v1(
 }
 
 fn read_bounded(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take(16 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > 16 * 1024 * 1024 {
+    const MAXIMUM_INPUT_BYTES: u64 = 16 * 1024 * 1024;
+    // A request is a cooperative regular-file snapshot. Special files must
+    // never wait for a writer before the command can install cancellation.
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
+        .open(path)?;
+    let before = file.metadata()?;
+    if !before.is_file() {
+        return Err("input must be a regular file".into());
+    }
+    if before.len() > MAXIMUM_INPUT_BYTES {
         return Err("input exceeds 16MiB".into());
+    }
+    let identity = |value: &fs::Metadata| {
+        (
+            value.dev(),
+            value.ino(),
+            value.uid(),
+            value.gid(),
+            value.mode(),
+            value.nlink(),
+            value.len(),
+            value.mtime(),
+            value.mtime_nsec(),
+            value.ctime(),
+            value.ctime_nsec(),
+        )
+    };
+    if identity(&before) != identity(&fs::symlink_metadata(path)?) {
+        return Err("input changed during read".into());
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(MAXIMUM_INPUT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAXIMUM_INPUT_BYTES {
+        return Err("input exceeds 16MiB".into());
+    }
+    if bytes.len() as u64 != before.len()
+        || identity(&before) != identity(&file.metadata()?)
+        || identity(&before) != identity(&fs::symlink_metadata(path)?)
+    {
+        return Err("input changed during read".into());
     }
     Ok(bytes)
 }
@@ -559,8 +598,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", native_implementation_hash_v1()?);
         }
         Some(CommandV1::Put) if args.len() == 3 => {
+            let bytes = read_bounded(&args[2])?;
             let store = ObjectStoreV1::open(&PathBuf::from(&args[1]))?;
-            println!("{}", store.put(&read_bounded(&args[2])?)?);
+            println!("{}", store.put(&bytes)?);
         }
         Some(CommandV1::Run) if args.len() == 2 => {
             let config: ServiceRunV1 = serde_json::from_slice(&read_bounded(&args[1])?)?;

@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { declaresTestOwner, validateCommand } from '../bin/verify-source-implementation-evidence.mjs';
 import { stripRustInertText, rustSymbolMatches, rustSymbolCfgGated } from '../src/source-evidence-rust-symbols.mjs';
 import { captureCommittedSourceSubject, git } from '../src/source-evidence-git-inputs.mjs';
+import { verifyProspectiveMerge } from '../../docs/tools/prepare-prospective-merge.mjs';
 
 export { stripRustInertText };
 
@@ -283,7 +284,8 @@ function assertRustSymbolOwnership(root, entry) {
 
 function cargoDiscoveryIndex(stdout, label) {
   const tests = new Set();
-  for (const raw of stdout.replace(/\x1b\[[0-9;]*m/gu, '').split(/\r?\n/u)) {
+  const ansiColor = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'gu');
+  for (const raw of stdout.replace(ansiColor, '').split(/\r?\n/u)) {
     const row = raw.trim();
     if (!row.endsWith(': test')) continue;
     const selector = row.slice(0, -': test'.length);
@@ -551,8 +553,14 @@ assertClosedCheckout(root);
 const targetHead = git(root, ['rev-parse', options.target]);
 const prBase = git(root, ['rev-parse', options.base]);
 const sourceSubject = captureCommittedSourceSubject(root);
-if (!sourceSubject.committedClean || sourceSubject.commit !== targetHead) {
+if (!sourceSubject.committedClean) {
   fail('hardening_source_subject_mismatch', targetHead);
+}
+let sourceSubjectKind = 'exact-head';
+if (sourceSubject.commit !== targetHead) {
+  const observedMerge = verifyProspectiveMerge({ root, base: prBase, target: targetHead, commit: sourceSubject.commit });
+  if (observedMerge.tree !== sourceSubject.tree) fail('hardening_source_subject_mismatch', targetHead);
+  sourceSubjectKind = 'prospective-merge';
 }
 assertAncestor(root, prBase, targetHead, 'pr-base-to-target');
 assertAncestor(root, MAIN_BASE, APPROVED_PRODUCT, 'main-base-to-approved-product');
@@ -561,10 +569,10 @@ assertAncestor(root, MIG002_STAGE, targetHead, 'mig002-stage-to-target');
 const runtime = runtimeAttestation();
 assertMig002Transition(root);
 assertAncestor(root, MIG002_STAGE, prBase, 'mig002-stage-to-pr-base');
-assertCandidateRegistryEvolution(root, prBase, targetHead);
+assertCandidateRegistryEvolution(root, prBase, sourceSubject.commit);
 const cargoInventories = new Map();
 for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {
-  validateEvidenceSemantics(root, readJsonAt(root, targetHead, manifestPath), runtime, cargoInventories);
+  validateEvidenceSemantics(root, readJsonAt(root, sourceSubject.commit, manifestPath), runtime, cargoInventories);
 }
 assertClosedCheckout(root);
 if (!equal(captureCommittedSourceSubject(root), sourceSubject)) fail('hardening_source_subject_changed');
@@ -577,6 +585,7 @@ const receipt = {
   immutableStages: { mainBase: MAIN_BASE, approvedProduct: APPROVED_PRODUCT, mig002Stage: MIG002_STAGE },
   sourceEvidenceManifests: SOURCE_EVIDENCE_MANIFESTS,
   sourceSubject,
+  sourceSubjectKind,
   runtime,
   registryTransition: 'exact:MIG-002 historical transition;actual-PR-base multi-manifest evidence-declared forward-only design/source delta;authority stable',
   sourceSemantics: 'comment-string-aware-unique-symbol-plus-current-process-cargo-target-inventory-binding',

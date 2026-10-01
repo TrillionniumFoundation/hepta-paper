@@ -798,6 +798,18 @@ test('committed gitlink reference profile rejects hidden files materialized repo
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   const commit = addUnmaterializedReference(fixture);
   const leaf = path.join(fixture.root, 'references/immutable');
+  const assertAliasRejected = () => {
+    let subject;
+    try { subject = captureCommittedSourceSubject(fixture.root); }
+    catch (cause) {
+      // Newer Git refuses the alias before our dirty-source observation. Both
+      // paths must remain closed; unrelated Git or source errors still fail.
+      assert.match(cause.message, /^git_command_failed: status --porcelain=v1 --untracked-files=all: error: expected submodule path '[^']+' not to be a symbolic link$/u);
+      return;
+    }
+    assert.equal(subject.committedClean, false);
+    assert.equal(subject.gitlinkReferenceProfile, undefined);
+  };
   fs.mkdirSync(leaf);
   fs.writeFileSync(path.join(leaf, '.hidden'), 'nested bytes are not accepted');
   assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_gitlink_materialized/u);
@@ -810,11 +822,11 @@ test('committed gitlink reference profile rejects hidden files materialized repo
   fs.rmSync(leaf, { recursive: true });
   fs.mkdirSync(path.join(fixture.root, '.git/other-empty'));
   fs.symlinkSync(path.join(fixture.root, '.git/other-empty'), leaf);
-  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+  assertAliasRejected();
   fs.rmSync(leaf);
   fs.rmdirSync(path.join(fixture.root, 'references'));
   fs.symlinkSync(path.join(fixture.root, '.git/other-empty'), path.join(fixture.root, 'references'));
-  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+  assertAliasRejected();
 });
 
 test('held empty gitlink reference rejects actual named replacement during directory observation', (t) => {

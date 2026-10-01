@@ -16,8 +16,11 @@ commit. An explicit `--cargo ABSOLUTE_PATH` selects the actual tool, not a calle
 success claim. The adjacent actual rustc version and tool hashes are checked.
 The owner binds Git head/tree and all bounded tracked source bytes before and
 after execution. Hidden index flags are refused, the actual index must match the
-selected tree entry for entry, and a bounded no-filter Git batch verifies every
-regular file's actual blob and executable mode. Git replacement objects are
+selected tree entry for entry, and the shared bounded Git-tree owner compares
+every actual regular-file digest and executable mode with the selected original
+blob. It also checks object integrity, refuses common/worktree configuration
+which can bypass those checks or fetch implicitly, and disables lazy fetch.
+Git replacement objects are
 disabled. Gitlinks and tracked symlinks are outside this source profile and
 refuse execution. `--expected-head SHA --expected-tree SHA` optionally pins the
 independently selected subject. These are cooperative before/after consistency
@@ -53,5 +56,17 @@ inheritance, retry the same subject, refuse dirty/wrong source subjects, and
 interrupt a real sleeping Rust test with both SIGTERM and a deadline. The
 same tests refuse hidden index flags, ignored executable-mode changes and actual
 changed bytes that a deliberately weakened Git stat cache reports as clean. The
+same ordinary entry refuses readable corrupt Git objects and integrity-bypass
+configuration in either common config or actual `config.worktree`. The
 process group must be reaped and the actual failure receipt retained.
 Results belong to exact-head/prospective-merge receipts for the current bytes.
+
+The separate source-evidence hardening gate shares the committed Git-input
+observer with the evidence verifier and route consumer. It requires the actual
+checkout to be the selected target, rechecks source and qualified tools after
+discovery, and discovers each actual compiled Cargo library/integration target
+once per invocation. Every declared selector must still have one live source
+owner and occur in that target's unique test inventory; zero or duplicate
+inventory rows refuse. The inventory cache is local to the running process and
+is never loaded from an earlier receipt. Exact execution and transcript checks
+remain separate, and exact head and prospective merge retain separate runs.

@@ -13,7 +13,7 @@ class SchemaContractPreflightTests(unittest.TestCase):
             {"if": bad, "else": {}}, {"if": {"const": 1}, "else": bad},
             {"if": {"const": 2}, "then": bad}, {"properties": {"absent": bad}},
             {"$defs": {"unused": bad}}, {"items": bad}, {"additionalProperties": bad},
-            {"contains": bad},
+            {"contains": bad}, {"prefixItems": [bad]},
         ]
         for schema in cases:
             with self.subTest(schema=schema):
@@ -29,6 +29,8 @@ class SchemaContractPreflightTests(unittest.TestCase):
             {"anyOf": []}, {"format": "unimplemented-format"}, {"$ref": None},
             {"items": None}, {"not": None}, {"if": None},
             {"contains": None}, {"minContains": True}, {"maxContains": -1},
+            {"prefixItems": None}, {"prefixItems": []},
+            {"prefixItems": {}}, {"prefixItems": [None]},
         ]
         for schema in cases:
             with self.subTest(schema=schema):
@@ -111,6 +113,40 @@ class SchemaContractPreflightTests(unittest.TestCase):
 
     def test_contains_cannot_swallow_schema_errors_or_recursive_evaluation(self) -> None:
         schema = {"contains": {"$ref": "#/$defs/cycle"}, "minContains": 0,
+                  "$defs": {"cycle": {"$ref": "#/$defs/cycle"}}}
+        with self.assertRaises(SCHEMA.SchemaDefinitionError):
+            SCHEMA.validate([1], schema)
+
+    def test_prefix_items_enforce_position_without_requiring_missing_items(self) -> None:
+        schema = {"prefixItems": [{"const": "wal"}, {"const": 32768}]}
+        for value in [[], ["wal"], ["wal", 32768], ["wal", 32768, False], 1]:
+            SCHEMA.validate(value, schema)
+        for value in [[32768, "wal"], ["shm"], ["wal", True]]:
+            with self.assertRaises(SCHEMA.SchemaValidationError):
+                SCHEMA.validate(value, schema)
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate(["wal"], {**schema, "minItems": 2})
+
+    def test_items_apply_after_only_the_prefix_in_the_same_schema_object(self) -> None:
+        schema = {"prefixItems": [{"const": "wal"}], "items": {"type": "integer"}}
+        for value in [[], ["wal"], ["wal", 1, 2.0]]:
+            SCHEMA.validate(value, schema)
+        for value in [["wal", "shm"], ["wal", True]]:
+            with self.assertRaises(SCHEMA.SchemaValidationError):
+                SCHEMA.validate(value, schema)
+        SCHEMA.validate(["wal"], {"prefixItems": [True], "items": False})
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate(["wal", 1], {"prefixItems": [True], "items": False})
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate(["wal"], {"allOf": [{"prefixItems": [True]}], "items": False})
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate(["wal"], {"$ref": "#/$defs/prefix", "$defs": {"prefix": {"prefixItems": [True]}}, "items": False})
+
+    def test_prefix_items_preserve_false_schema_and_recursive_failure_boundaries(self) -> None:
+        SCHEMA.validate([], {"prefixItems": [False]})
+        with self.assertRaises(SCHEMA.SchemaValidationError):
+            SCHEMA.validate([None], {"prefixItems": [False]})
+        schema = {"prefixItems": [{"$ref": "#/$defs/cycle"}],
                   "$defs": {"cycle": {"$ref": "#/$defs/cycle"}}}
         with self.assertRaises(SCHEMA.SchemaDefinitionError):
             SCHEMA.validate([1], schema)

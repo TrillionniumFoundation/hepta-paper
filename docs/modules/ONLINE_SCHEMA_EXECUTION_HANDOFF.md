@@ -227,6 +227,70 @@ reservation or writer authority. Multiple retained generations form a verified
 signed chain to an independently pinned endpoint, with each archive consumed
 once; filename timestamps do not choose a history.
 
+The version 2 installed intent records `never-dispatched` before bootstrap and
+reserve, and durably changes that field to `dispatch-unknown` before either
+external effect. `--action rollback` admits only the independently pinned
+predecessor before both dispatches, with no new reservation/final receipt. The
+same global maintenance lock captures the original manager frames and complete
+control preimages before stopping source writers. The selected inverse retains
+the displaced empty control, then advances to `writer_resume_pending`; recovery
+after that boundary does not copy the old control over new source results.
+
+A failed source restart or final completion clock/CAS physically fences the
+source again while that global lock is still held. It first reinstates durable
+conditions, then authenticates the same PID 1 and boot, reloads conditions,
+completes actual `StopUnit` jobs, and retains exact unit/cgroup-empty observations.
+`ConditionPathExists` prevents a future start; its file alone does not stop an
+already running writer. A failed stop or observation remains an unknown physical
+result and leaves the durable rollback pending. Neither this early inverse nor
+the private source tests accept rollback after a v2 dispatch or target canary.
+
+The opt-in `systemd::rollback_refence_tests` selector creates solely a randomly
+named runtime unit under `/run/systemd/system`, running fixed `/usr/bin/sleep` as
+UID/GID 65534. It uses actual PID 1 Start/Stop jobs and cgroup observations for an
+error after Start, a completion clock error and a real changed-journal CAS error.
+It also demonstrates that an existing marker plus a refused unit observation
+does not prove that the source PID stopped. Its runtime files/unit are cleaned
+up; no installed product unit, key or authority is changed. This requires a real
+systemd host and noninteractive sudo and does not qualify a production canary:
+
+```sh
+cargo test -p hepta-paper-service --lib --locked \
+  online_schema_execution::installed_owner::systemd::rollback_refence_tests::actual_pid1_restart_errors_and_clock_or_cas_failure_stop_the_private_writer \
+  -- --exact --ignored --test-threads=1
+```
+
+The original stopped cgroup remains bound to its held cgroup2 descriptor, inode,
+fixed `/sys/fs/cgroup` ancestors and exact kernel descriptor path. A removed
+kernfs group may retain its link count; the adapter accepts it only when the
+original descriptor resolves to its complete original path plus ` (deleted)`
+and that named path is absent. A newly created group at the same path cannot
+reuse the original empty witness. JobRemoved streams are asynchronously released
+before normal exchange completion. Cancellation shuts down the bounded wire and
+drains the same lexical executor for at most five seconds; the descriptor owner
+count must still be zero before any kernel work can continue.
+
+After a verified final receipt, `installed_owner::research_view` publishes the
+original signed inventory and held original DB/WAL bytes into
+`runtimeRoot/online-schema-checkpoints/<transitionHex>`. This fixed historical
+namespace stays outside the recursive `autonomous-research` business inventory;
+no historical copy is registered as a live business database. The reader comes
+from the pinned research supervisor UID/GID/groups, rather than the authority
+principal or the caller. Files are root-owned, reader-group `0440`; checkpoint
+folders are `0550`, their parent and the final control are `0750`. Only FINAL is
+readable there; execution intent, private keys and preimages remain private.
+
+A root-only versioned intent pins the selected original inventory before copies
+are published with no-replace operations. Existing intents are opened through
+the retained execution directory with no-follow/nonblocking flags, a hard byte
+limit and full held/named identity checks before and after reading. Only those
+bounded original bytes can become a JSON snapshot. Recovery verifies that original signed
+graph and never photographs later business results as its predecessor. The
+opt-in `research_view::tests` case executes the real Node signed fixture and an
+actual UID/GID 65534 Rust reader. It verifies the full graph, readonly boundaries,
+crash recovery, preserved later business results and tamper refusal. Those source
+fixtures grant no canary qualification or release/submission authority.
+
 The CLI cases in `tests/schema_source_projection_parity/cli.rs`,
 `tests/finalization_publication.rs`, and the finalization-recovery shard exercise
 actual Node/Rust entrypoints, complete v1/v2 reports, independent pristine review,

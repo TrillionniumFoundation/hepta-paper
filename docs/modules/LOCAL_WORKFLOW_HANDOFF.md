@@ -263,6 +263,8 @@ local source mappings are not accepted full Node operator semantics.
 
 ## Autonomous research command composition
 
+The normal registry entry is `hepta-paper-rust operator autonomous-research -- --paper-id ID --runtime-root ABSOLUTE_PATH --action converge`. It validates the incumbent option grammar before routing supported inputs to the existing business owner; known unsupported Node modes still refuse and remain partial. The flat `autonomous-research` entry retains the same native business owner. Invalid OS argument encodings refuse cleanly before runtime or authority IO.
+
 The ordinary business entry accepts `--paper-id`, an optional `--campaign-id`,
 `--runtime-root` and a lifecycle `--action`. It reads the private, versioned
 `autonomous-research-request.v1.json` under that runtime root. The request supplies
@@ -288,6 +290,14 @@ publishes the actual protected input, prompt, output schema, original signed
 request and finally the bound descriptor in the role's operation directory.
 Publication is private, identity checked and no-clobber. Recovery retains original
 bytes/hashes and does not adopt rotated live prompt inputs or reissue execution.
+Each new file is written to a private stage, synced and made immutable before an
+atomic no-replace rename. A pre-dispatch retry may discard only its owner-locked,
+single-link regular stage; symlink, hardlink, foreign or unexpected-mode stages
+refuse. Published files keep their original inode and bytes. Old torn final files
+remain refused for inspection. The descriptor still appears last, and no stage
+can authorize a broker operation. Actual child-process kills cover all four file
+kinds before writing, after stage sync and after publication; this is source
+recovery evidence and grants no target-host or live provider acceptance.
 The reviewer mutation policy is read-only; author/reviewer workspace/policy hashes
 remain distinct. A qualified research profile requires both installed publishers
 and independently admitted principals. These business inputs and cross-UID

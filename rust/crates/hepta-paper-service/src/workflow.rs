@@ -37,6 +37,7 @@ use std::{
 };
 use thiserror::Error;
 
+mod provider_calls;
 mod recovery;
 pub(crate) use recovery::{prepared_recovery_facts_at, recovery_facts_at};
 mod amendment;
@@ -60,6 +61,11 @@ const MAX_STEPS: usize = 128;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalWorkflowV1 {
     pub version: u16,
+    /// Optional versioned lifecycle ceiling. Omitted fields preserve every old
+    /// V1 definition/hash; a present ceiling remains part of the immutable
+    /// definition across every ordinary, flat and research operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_call_budget: Option<WorkflowProviderCallBudgetV1>,
     /// Optional durable research-only identity. The record is not authority;
     /// every advancing invocation must present the matching opaque V3 value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,6 +73,26 @@ pub struct LocalWorkflowV1 {
     /// Initial local service configuration with an empty frontier.
     pub template: ServiceRunV1,
     pub steps: Vec<WorkflowStepV1>,
+}
+
+/// Non-authorizing maximum lifecycle provider reservations, not simultaneous
+/// planner capacity. The existing workflow history owns all counting facts.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowProviderCallBudgetV1 {
+    pub version: u16,
+    pub maximum_calls: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowProviderCallUsageV1 {
+    pub version: u16,
+    pub maximum_calls: u64,
+    pub committed_calls: u64,
+    /// Includes one frozen pending step, even if its response is unknown.
+    /// Reading/querying that step never creates another reservation.
+    pub reserved_calls: u64,
 }
 
 /// Input bindings use artifact order in the canonical PreparedResult, not worker
@@ -147,6 +173,8 @@ pub struct WorkflowProgressV1 {
     pub committed_steps: usize,
     pub total_steps: usize,
     pub budget_remaining_microusd: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_call_usage: Option<WorkflowProviderCallUsageV1>,
     pub artifacts_by_step: BTreeMap<String, Vec<Sha256Digest>>,
     pub pending_step: bool,
     pub gate_rejected: bool,
@@ -176,6 +204,8 @@ pub enum WorkflowError {
     GateRejected,
     #[error("workflow research qualification missing, stale, or mismatched")]
     Qualification,
+    #[error("workflow lifecycle provider call budget exhausted")]
+    ProviderCallBudgetExhausted,
     #[error("workflow service execution failed")]
     Service(#[from] ServiceError),
 }
@@ -214,6 +244,9 @@ impl LocalWorkflowV1 {
     pub fn validate(&self) -> Result<(), WorkflowError> {
         let t = &self.template;
         if self.version != 1
+            || self
+                .provider_call_budget
+                .is_some_and(|budget| budget.version != 1 || budget.maximum_calls == 0)
             || self
                 .research_profile
                 .as_ref()
@@ -860,14 +893,15 @@ fn progress(
     definition: &LocalWorkflowV1,
     definition_hash: Sha256Digest,
     history: &History,
-) -> WorkflowProgressV1 {
-    WorkflowProgressV1 {
+) -> Result<WorkflowProgressV1, WorkflowError> {
+    Ok(WorkflowProgressV1 {
         definition_hash,
         campaign_state: history.campaign.state,
         campaign_revision: history.campaign.revision,
         committed_steps: history.results.len(),
         total_steps: definition.steps.len(),
         budget_remaining_microusd: history.campaign.budget_remaining_microusd,
+        provider_call_usage: provider_calls::usage(definition, history)?,
         artifacts_by_step: definition
             .steps
             .iter()
@@ -884,7 +918,7 @@ fn progress(
         production_activation: false,
         scientific_acceptance: false,
         node_retirement_verified: false,
-    }
+    })
 }
 fn set_state(
     definition: &LocalWorkflowV1,
@@ -974,11 +1008,7 @@ pub fn cancel_local_workflow_node_with_clock_v1(
     // Node returns already-terminal nodes unchanged. The local workflow has a
     // committed terminal prefix, so no clock or revision check is needed here.
     if index < observed.results.len() {
-        return Ok(progress(
-            &definition,
-            expected_definition.clone(),
-            &observed,
-        ));
+        return progress(&definition, expected_definition.clone(), &observed);
     }
 
     let mut last = observed.clock_floor;
@@ -1012,11 +1042,7 @@ pub fn cancel_local_workflow_node_with_clock_v1(
         )?;
     }
     let observed = history(&original, owner, &objects)?;
-    Ok(progress(
-        &definition,
-        expected_definition.clone(),
-        &observed,
-    ))
+    progress(&definition, expected_definition.clone(), &observed)
 }
 
 /// Execute a bounded local operation. Cooperative callers share a nonblocking
@@ -1158,6 +1184,10 @@ where
                 }
                 let now = clock().map_err(|_| WorkflowError::Conflict)?;
                 let index = observed.results.len();
+                // First admission and all recovery paths share this owner and
+                // lock. A query-only retry revisits the same pending index;
+                // it is not another lifecycle provider reservation.
+                provider_calls::admit(&definition, &observed, index)?;
                 let path = plan_path(root, index);
                 let job = payload(&definition, index, &observed.results, &objects)?;
                 objects.put(&bytes(&job)?)?;
@@ -1248,9 +1278,5 @@ where
         }
     }
     let observed = history(&original, owner, &objects)?;
-    Ok(progress(
-        &definition,
-        expected_definition.clone(),
-        &observed,
-    ))
+    progress(&definition, expected_definition.clone(), &observed)
 }

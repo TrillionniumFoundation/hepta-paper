@@ -213,6 +213,7 @@ fn normal_workflow_uses_broker_backend_and_retains_committed_prefix() {
     template.frontier.candidates.clear();
     let definition = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template,
         steps: vec![WorkflowStepV1 {
@@ -413,6 +414,7 @@ fn normal_workflow_uses_explicit_execution_backend_and_retains_committed_prefix(
     template.frontier.candidates.clear();
     let definition = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template,
         steps: vec![WorkflowStepV1 {
@@ -599,6 +601,7 @@ fn broker_workflow_definition(
     template.frontier.candidates.clear();
     LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template,
         steps: vec![WorkflowStepV1 {

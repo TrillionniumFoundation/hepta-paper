@@ -164,6 +164,10 @@ fn normal_exact_node_microdollar_tail_values_retain_the_effective_request_and_se
 
 #[test]
 fn normal_term_and_kill_after_broker_request_keep_budget_and_query_only_fresh_retry() {
+    exercise_signal_recovery(None);
+}
+
+pub(super) fn exercise_signal_recovery(agent_call_limit: Option<u64>) {
     use std::{
         io::Read,
         sync::mpsc,
@@ -214,16 +218,20 @@ fn normal_term_and_kill_after_broker_request_keep_budget_and_query_only_fresh_re
             let mut byte = [0];
             assert_eq!(stream.read(&mut byte).unwrap(), 0);
         });
+        let mut command = c.command("launch");
+        command.args([
+            "--through-steps",
+            "1",
+            "--max-cost-usd",
+            "0.00008",
+            "--max-wall-ms",
+            "300000",
+        ]);
+        if let Some(limit) = agent_call_limit {
+            command.args(["--max-agent-calls", &limit.to_string()]);
+        }
         let mut child = OwnedChild(
-            c.command("launch")
-                .args([
-                    "--through-steps",
-                    "1",
-                    "--max-cost-usd",
-                    "0.00008",
-                    "--max-wall-ms",
-                    "300000",
-                ])
+            command
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
@@ -253,6 +261,13 @@ fn normal_term_and_kill_after_broker_request_keep_budget_and_query_only_fresh_re
         assert_eq!(c.status()["pendingStep"], true);
         assert_eq!(c.status()["committedSteps"], 0);
         assert_eq!(c.status()["budgetRemainingMicrousd"], 80);
+        if let Some(limit) = agent_call_limit {
+            assert_eq!(
+                c.status()["providerCallUsage"],
+                json!({"version":1,"maximumCalls":limit,"committedCalls":0,"reservedCalls":1})
+            );
+            assert_eq!(subject[2]["maxAgentCalls"], limit);
+        }
         c.author.publish_cost_settlement(DRAFT, 6);
         let server = c.author.serve(c.author.listener(), DRAFT, false, false);
         assert_eq!(
@@ -272,6 +287,17 @@ fn normal_term_and_kill_after_broker_request_keep_budget_and_query_only_fresh_re
         assert_eq!(c.status()["budgetRemainingMicrousd"], 74);
         assert_eq!(fs::read(&c.author.request_path).unwrap(), raw_request);
         assert_eq!(retained(&c), subject);
+        if let Some(limit) = agent_call_limit {
+            assert_eq!(
+                c.status()["providerCallUsage"],
+                json!({"version":1,"maximumCalls":limit,"committedCalls":1,"reservedCalls":1})
+            );
+            assert_eq!(
+                c.advance(None)["error"],
+                "local_workflow_provider_call_budget_exhausted"
+            );
+            assert!(!c.root.join("step-0001.json").exists());
+        }
     }
 }
 

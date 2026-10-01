@@ -175,7 +175,7 @@ pub fn inspect_local_workflow_v1(
             }
         }
         WorkflowInspectionRequestV1::Slo {} => {
-            let progress = progress(definition, expected_definition.clone(), &observed);
+            let progress = progress(definition, expected_definition.clone(), &observed)?;
             let spent = observed
                 .results
                 .iter()

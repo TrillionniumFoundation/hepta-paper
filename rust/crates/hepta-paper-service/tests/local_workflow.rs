@@ -13,6 +13,70 @@ mod autonomous_amendment;
 #[path = "local_workflow/inspection.rs"]
 mod inspection;
 
+#[test]
+fn optional_provider_call_budget_preserves_old_v1_wire_hash_and_rejects_bad_versions() {
+    let temp = Temp::new();
+    let original = definition(&temp);
+    // Independent old V1 field order: inserting an omitted optional field must
+    // preserve the raw wire and the existing typed-byte hash, not a reordered
+    // serde_json::Value map hash.
+    struct LegacyWorkflowWire<'a>(&'a LocalWorkflowV1);
+    impl serde::Serialize for LegacyWorkflowWire<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            use serde::ser::SerializeStruct;
+            let old = self.0;
+            let mut fields = serializer.serialize_struct("LocalWorkflowV1", 4)?;
+            fields.serialize_field("version", &old.version)?;
+            if let Some(profile) = &old.research_profile {
+                fields.serialize_field("researchProfile", profile)?;
+            }
+            fields.serialize_field("template", &old.template)?;
+            fields.serialize_field("steps", &old.steps)?;
+            fields.end()
+        }
+    }
+    let old = LegacyWorkflowWire(&original);
+    let old_bytes = serde_json::to_vec(&old).unwrap();
+    assert_eq!(serde_json::to_vec(&original).unwrap(), old_bytes);
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&old_bytes)
+            .unwrap()
+            .get("providerCallBudget")
+            .is_none()
+    );
+    let decoded: LocalWorkflowV1 = serde_json::from_slice(&old_bytes).unwrap();
+    let old_hash = hepta_control_plane::canonical_hash_v1(&old).unwrap();
+    assert_eq!(
+        hepta_control_plane::canonical_hash_v1(&decoded).unwrap(),
+        old_hash
+    );
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), old_bytes);
+    let mut limited = decoded;
+    limited.provider_call_budget = Some(WorkflowProviderCallBudgetV1 {
+        version: 1,
+        maximum_calls: 1,
+    });
+    assert!(limited.validate().is_ok());
+    let frozen = hepta_control_plane::canonical_hash_v1(&limited).unwrap();
+    assert_ne!(frozen, old_hash);
+    for budget in [
+        WorkflowProviderCallBudgetV1 {
+            version: 2,
+            maximum_calls: 1,
+        },
+        WorkflowProviderCallBudgetV1 {
+            version: 1,
+            maximum_calls: 0,
+        },
+    ] {
+        limited.provider_call_budget = Some(budget);
+        assert!(matches!(limited.validate(), Err(WorkflowError::Definition)));
+    }
+}
+
 use hepta_campaign_writer::{CampaignStateV1, WriterLeaseV1};
 use hepta_control_plane::{
     ControlPlaneSnapshotV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1,
@@ -64,6 +128,7 @@ fn steps() -> Vec<WorkflowStepV1> {
 fn definition(temp: &Temp) -> LocalWorkflowV1 {
     LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template: template(&temp.state(), WorkerBindingV1::Native).unwrap(),
         steps: steps(),
@@ -735,6 +800,7 @@ fn actual_rust_process_workers_consume_dynamic_bound_artifacts() {
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),
@@ -789,6 +855,7 @@ fn ambiguous_process_start_is_not_reexecuted_on_retry() {
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
         research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),

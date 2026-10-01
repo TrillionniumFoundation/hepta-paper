@@ -184,6 +184,7 @@ pub(super) fn validate_transition(
     let count = usize::try_from(c.committed_steps).map_err(|_| WorkflowError::History)?;
     if next.version != old.version
         || next.research_profile != old.research_profile
+        || next.provider_call_budget != old.provider_call_budget
         || hash(old)? != c.previous_definition_hash
         || hash(&next)? != c.definition_hash
         || next.template.snapshot.campaign_id != record.campaign_id

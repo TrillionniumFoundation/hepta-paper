@@ -58,6 +58,7 @@ impl Campaign {
             revision_rounds: 2,
             budget_microusd: 100,
             maximum_wall_ms: 600_000,
+            max_agent_calls: None,
             research_profile: None,
         };
         let identity =
@@ -277,9 +278,11 @@ fn ordinary_request_composes_signed_author_reviewer_revision_settlement_commit_a
         "autonomous-research-campaign-request-v1"
     );
     assert_eq!(retained_request[1], "autonomous-research:ordinary-paper");
+    let mut effective = c.request.clone();
+    effective.max_agent_calls = Some(48);
     assert_eq!(
         retained_request[2],
-        serde_json::to_value(&c.request).unwrap()
+        serde_json::to_value(&effective).unwrap()
     );
     assert_eq!(
         retained_request[3],
@@ -750,5 +753,6 @@ fn ordinary_cli_publishes_exact_inputs_read_by_a_distinct_broker_principal() {
 #[path = "publication.rs"]
 mod publication;
 
+mod agent_calls;
 #[path = "budgets.rs"]
 mod budgets;

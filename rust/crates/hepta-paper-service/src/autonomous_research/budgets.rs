@@ -49,3 +49,11 @@ pub(super) fn wall_ms(text: &str) -> Result<u64, String> {
         "maxWallTimeMs",
     )
 }
+
+pub(super) fn agent_calls(text: &str) -> Result<u64, String> {
+    // Ordinary CLI local-run is normalized by the incumbent wrapper to
+    // golden-bootstrap before budget selection. Apply that ceiling before
+    // checking the existing whole-call protocol; huge finite Numbers therefore
+    // narrow to512, while fractional values below512 remain unsupported.
+    whole(number(text, "maxAgentCalls")?.min(512.0), "maxAgentCalls")
+}

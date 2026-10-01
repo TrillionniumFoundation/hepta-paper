@@ -24,8 +24,8 @@ pub const AUTONOMOUS_RESEARCH_USAGE: &str = r#"{
   "kind": "AutonomousResearchCampaignUsage",
   "usage": "hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID",
   "defaultLaunchMode": "local-run",
-  "campaignUsage": "--paper-id ID --runtime-root ABSOLUTE_PRIVATE_ROOT [--objective TEXT] [--revision-rounds N] [--max-cost-usd USD] [--max-wall-ms MS] --action prepare|launch|status|converge|pause|resume|cancel; fixed autonomous-research-request.v1.json supplies broker policy and bounded resources",
-  "budgetBoundary": "whole microUSD and milliseconds only; Node local golden normalization is narrowed by the configured ceiling, retained in the first CAS request and restored without repeated flags; a different persisted budget requires a separate authorized amendment",
+  "campaignUsage": "--paper-id ID --runtime-root ABSOLUTE_PRIVATE_ROOT [--objective TEXT] [--revision-rounds N] [--max-cost-usd USD] [--max-wall-ms MS] [--max-agent-calls N] --action prepare|launch|status|converge|pause|resume|cancel; fixed autonomous-research-request.v1.json supplies broker policy and bounded resources",
+  "budgetBoundary": "whole microUSD, milliseconds and agent-call units; the Node ordinary local-run wrapper selects golden ceilings (100 USD, 7200000 ms, default48/max512 calls), narrowed by configured ceilings and bound to the first CAS request; query/ACK retry retains original occupancy and cannot expand it",
   "localWorkflowUsage": "--campaign-id ID --workflow-file ABSOLUTE_JSON --action prepare|launch|status|converge|pause|resume|cancel [--research-qualification-request ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
   "persistedWorkflowUsage": "--campaign-id ID --workflow-root ABSOLUTE_STATE --definition-hash SHA256 --action launch|status|converge|pause|resume|cancel|amend [--research-qualification-request ABSOLUTE_JSON] [--amendment-file ABSOLUTE_JSON] [--through-steps N] [--expected-revision N]",
   "safety": {
@@ -50,6 +50,7 @@ pub struct AutonomousResearchOptions {
     pub revision_rounds: Option<usize>,
     pub maximum_cost_microusd: Option<u64>,
     pub maximum_wall_ms: Option<u64>,
+    pub maximum_agent_calls: Option<u64>,
     pub workflow_file: Option<PathBuf>,
     pub workflow_root: Option<PathBuf>,
     pub definition_hash: Option<Sha256Digest>,
@@ -84,6 +85,7 @@ pub fn parse_autonomous_research_arguments(
     let mut revision_rounds = None;
     let mut maximum_cost_text = None;
     let mut maximum_wall_text = None;
+    let mut maximum_agent_calls_text = None;
     let mut workflow_file = None;
     let mut workflow_root = None;
     let mut definition_hash = None;
@@ -122,6 +124,9 @@ pub fn parse_autonomous_research_arguments(
             }
             "--max-wall-ms" => {
                 maximum_wall_text = Some(value(args, &mut index, "max_wall_ms")?);
+            }
+            "--max-agent-calls" => {
+                maximum_agent_calls_text = Some(value(args, &mut index, "max_agent_calls")?);
             }
             "--workflow-file" => {
                 workflow_file = Some(PathBuf::from(value(args, &mut index, "workflow_file")?))
@@ -178,6 +183,7 @@ pub fn parse_autonomous_research_arguments(
             revision_rounds,
             maximum_cost_microusd: None,
             maximum_wall_ms: None,
+            maximum_agent_calls: None,
             workflow_file,
             workflow_root,
             definition_hash,
@@ -196,6 +202,10 @@ pub fn parse_autonomous_research_arguments(
     let maximum_wall_ms = maximum_wall_text
         .as_deref()
         .map(budgets::wall_ms)
+        .transpose()?;
+    let maximum_agent_calls = maximum_agent_calls_text
+        .as_deref()
+        .map(budgets::agent_calls)
         .transpose()?;
     if !matches!(
         action.as_str(),
@@ -217,7 +227,8 @@ pub fn parse_autonomous_research_arguments(
         || objective.is_some()
         || revision_rounds.is_some()
         || maximum_cost_microusd.is_some()
-        || maximum_wall_ms.is_some())
+        || maximum_wall_ms.is_some()
+        || maximum_agent_calls.is_some())
         && (workflow_root.is_some()
             || workflow_file.is_some()
             || amendment_file.is_some()
@@ -267,6 +278,7 @@ pub fn parse_autonomous_research_arguments(
         revision_rounds,
         maximum_cost_microusd,
         maximum_wall_ms,
+        maximum_agent_calls,
         workflow_file,
         workflow_root,
         definition_hash,

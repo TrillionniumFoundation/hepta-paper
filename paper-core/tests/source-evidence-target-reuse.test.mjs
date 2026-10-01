@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
+import { assertCargoBinaryArtifactsCurrent, assertCargoBuildScriptsCurrent } from '../src/source-evidence-cargo-observations.mjs';
 import { parse } from 'espree';
 import {
   assertExactCargoOwnerExecution, cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory,
@@ -48,8 +49,10 @@ function fixture(t, { firstOwnerBody, firstSelector } = {}) {
   }
   write(root, 'rust/Cargo.toml', '[workspace]\nmembers=["crates/fixture"]\nresolver="3"\n');
   write(root, 'rust/crates/fixture/Cargo.toml', '[package]\nname="fixture"\nversion="0.1.0"\nedition="2024"\n');
+  write(root, 'rust/crates/fixture/src/bin/owned-environment-probe.rs', 'fn main() {}\n');
+  write(root, 'rust/crates/fixture/build.rs', 'fn main() { println!("cargo:rustc-env=HEPTA_OWNER_ENV_FIXTURE=owned"); println!("cargo:rerun-if-changed=build.rs"); }\n');
   write(root, 'rust/crates/fixture/src/lib.rs', `#[cfg(test)] mod tests {
-    #[test] fn cargo_environment() { ${firstOwnerBody ?? 'assert_eq!(std::env::var("CARGO_MANIFEST_DIR").unwrap(), env!("CARGO_MANIFEST_DIR")); assert_eq!(std::env::var("CARGO_PKG_NAME").unwrap(), "fixture");'} }
+    #[test] fn cargo_environment() { ${firstOwnerBody ?? 'assert_eq!(std::env::var("CARGO_MANIFEST_DIR").unwrap(), env!("CARGO_MANIFEST_DIR")); assert_eq!(std::env::var("CARGO_PKG_NAME").unwrap(), "fixture"); assert_eq!(std::env::var("HEPTA_OWNER_ENV_FIXTURE").unwrap(), "owned"); assert!(std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).is_dir());'} }
     #[test] fn owned_cleanup() { let p=std::env::temp_dir().join(format!("owned-{}",std::process::id())); std::fs::write(&p,b"actual").unwrap(); assert_eq!(std::fs::read(&p).unwrap(),b"actual"); std::fs::remove_file(&p).unwrap(); assert!(!p.exists()); }
     #[test] #[ignore="selected recovery owner"] fn ignored_recovery() { assert!(std::env::var("CARGO").unwrap().ends_with("cargo")); }
 }
@@ -107,6 +110,17 @@ test('same-subject Cargo target reuse preserves independent real owners, environ
     assert.equal(target.inventory.program, target.artifact.path);
     assert.deepEqual(target.inventory.args, ['--list']);
     assert.deepEqual(target.producer.map(row => row.path), SOURCE_EVIDENCE_PRODUCER_PATHS);
+    assert.equal(target.binaryArtifacts.length, target.binding.targetKind === 'integration' ? 1 : 0);
+    assert.equal(target.buildScripts.length, 1);
+    assert.equal(target.buildScripts[0].sourcePath, 'rust/crates/fixture/build.rs');
+    assert.equal(target.buildScripts[0].environment.HEPTA_OWNER_ENV_FIXTURE, 'owned');
+    assertCargoBuildScriptsCurrent(f.root, target.buildScripts, true);
+    for (const binary of target.binaryArtifacts) {
+      assert.equal(binary.environmentKey, 'CARGO_BIN_EXE_owned-environment-probe');
+      assert(target.capture.environmentKeys.includes(binary.environmentKey));
+      assert.equal(binary.sourcePath, 'rust/crates/fixture/src/bin/owned-environment-probe.rs');
+      assertCargoBinaryArtifactsCurrent(f.root, [binary], true);
+    }
   }
   assert.deepEqual(fs.readdirSync(f.cleanup), []);
   assert(Object.values(receipt.authorityClaims).every(value => value === false));
@@ -153,12 +167,97 @@ test('capture bindings and actual inventory reject arbitrary parent source launc
     { ...row, environment: { ...row.environment, PATH: 1 } },
     { ...row, environment: { ...row.environment, PATH: '/foreign/path' } },
     { ...row, environment: { ...row.environment, FOREIGN_ENV: 'arbitrary' } },
+    { ...row, environment: { ...row.environment, 'CARGO_BIN_EXE_foreign-program': '/foreign/program' } },
   ]) assert.throws(() => read(bad), /verification_capture_binding_invalid/u);
   assert.throws(() => cargoEnvironmentObservation(root, binding, artifact, JSON.stringify(row)+'\n'+JSON.stringify(row), 100, runtime, 'duplicate', { PATH: '/qualified/bin' }), /verification_capture_cardinality/u);
   assert.deepEqual(exactCargoTestInventory('one: test\ntwo: test\n2 tests, 0 benchmarks\n', 'inventory'), ['one', 'two']);
   for (const text of ['one: test\none: test\n2 tests, 0 benchmarks\n', 'one: test\n2 tests, 0 benchmarks\n', 'one: test\n1 test, 1 benchmark\n', 'one: test\n']) {
     assert.throws(() => exactCargoTestInventory(text, 'adversarial'), /verification_discovery_invalid/u);
   }
+});
+
+test('actual Cargo binary bindings reject foreign missing aliased changed and replaced inputs', t => {
+  const f = fixture(t), receipt = verifyRepositorySourceEvidence({ root: f.root, execute: true });
+  const target = receipt.executionTargets.find(value => value.binding.targetKind === 'integration');
+  const binary = target.binaryArtifacts[0], artifact = target.artifact;
+  const selected = { reason: 'compiler-artifact', profile: { test: true }, executable: artifact.path,
+    manifest_path: artifact.manifestPath, target: { name: artifact.targetName, kind: artifact.targetKind, src_path: artifact.sourcePath } };
+  const normal = { reason: 'compiler-artifact', profile: { test: false }, executable: binary.path,
+    manifest_path: path.join(f.root, binary.manifestPath), target: { name: binary.targetName, kind: ['bin'], src_path: path.join(f.root, binary.sourcePath) } };
+  const parse = rows => cargoTargetObservation(f.root, target.binding, rows.map(value => JSON.stringify(value)).join('\n'), 'actual binary');
+  assert.equal(parse([normal, selected]).binaryArtifacts.length, 1);
+  assert.throws(() => parse([normal, normal, selected]), /verification_binary_cardinality/u);
+  assert.throws(() => parse([{ ...normal, target: { ...normal.target, src_path: path.join(f.root, 'rust/crates/fixture/src/lib.rs') } }, selected]), /verification_binary_source_invalid/u);
+  const row = { kind: 'CargoOwnerEnvironmentCaptureV1', version: 1, processId: target.capture.processId,
+    parentProcessId: target.discovery.processId, script: target.capture.script, node: target.runtime.node.path,
+    cwd: target.capture.cwd, executable: artifact.path, args: ['--list'], environment: { PATH: '/qualified/bin',
+      CARGO: target.runtime.cargo.path, CARGO_MANIFEST_DIR: target.capture.cwd,
+      CARGO_MANIFEST_PATH: path.join(target.capture.cwd, 'Cargo.toml'), CARGO_PKG_NAME: 'fixture', [binary.environmentKey]: binary.path } };
+  const read = (value, binaries = target.binaryArtifacts) => cargoEnvironmentObservation(f.root, target.binding, artifact,
+    JSON.stringify(value), target.discovery.processId, target.runtime, 'actual binary', { PATH: '/qualified/bin' }, binaries);
+  assert.equal(read(row).processId, row.processId);
+  const foreign = parse([{ ...normal, manifest_path: path.join(f.root, 'rust/crates/foreign/Cargo.toml') }, selected]);
+  for (const binaries of [[], foreign.binaryArtifacts, [binary, binary]]) assert.throws(() => read(row, binaries), /verification_capture_binding_invalid/u);
+  for (const environment of [{ ...row.environment, [binary.environmentKey]: '/foreign/program' },
+    { ...row.environment, 'CARGO_BIN_EXE_unobserved-program': binary.path }]) {
+    assert.throws(() => read({ ...row, environment }), /verification_capture_binding_invalid/u);
+  }
+  const alias = binary.path + '.alias'; fs.symlinkSync(binary.path, alias);
+  assert.throws(() => parse([{ ...normal, executable: alias }, selected]), /verification_artifact_path_invalid/u);
+  const bytes = fs.readFileSync(binary.path), metadata = fs.statSync(binary.path);
+  fs.appendFileSync(binary.path, 'changed'); fs.utimesSync(binary.path, metadata.atime, metadata.mtime);
+  assert.throws(() => assertCargoBinaryArtifactsCurrent(f.root, [binary]), /verification_binary_changed/u);
+  fs.renameSync(binary.path, binary.path + '.old'); fs.writeFileSync(binary.path, bytes, { mode: metadata.mode });
+  assert.throws(() => assertCargoBinaryArtifactsCurrent(f.root, [binary], true), /verification_binary_changed/u);
+});
+
+test('actual Cargo build bindings reject foreign unobserved overridden aliased and changed inputs', t => {
+  const f = fixture(t), receipt = verifyRepositorySourceEvidence({ root: f.root, execute: true });
+  const target = receipt.executionTargets[0], artifact = target.artifact, script = target.buildScripts[0];
+  const selected = { reason: 'compiler-artifact', package_id: artifact.packageId, profile: { test: true }, executable: artifact.path,
+    manifest_path: artifact.manifestPath, target: { name: artifact.targetName, kind: artifact.targetKind, src_path: artifact.sourcePath } };
+  const compiled = { reason: 'compiler-artifact', package_id: script.packageId, profile: { test: false }, executable: null,
+    filenames: [script.path], manifest_path: path.join(f.root, script.manifestPath),
+    target: { kind: ['custom-build'], src_path: path.join(f.root, script.sourcePath) } };
+  const executed = { reason: 'build-script-executed', package_id: script.packageId, out_dir: script.outDirectory.path,
+    env: Object.entries(script.environment).filter(([key]) => key !== 'OUT_DIR') };
+  const parse = rows => cargoTargetObservation(f.root, target.binding, rows.map(value => JSON.stringify(value)).join('\n'), 'actual build');
+  assert.equal(parse([compiled, executed, selected]).buildScripts.length, 1);
+  for (const rows of [[compiled, selected], [executed, selected], [compiled, executed, executed, selected],
+    [{ ...compiled, package_id: 'foreign' }, executed, selected],
+    [compiled, { ...executed, package_id: 'foreign' }, selected]]) {
+    assert.throws(() => parse(rows), /verification_build_cardinality/u);
+  }
+  assert.throws(() => parse([{ ...compiled, target: { ...compiled.target, src_path: path.join(f.root, 'foreign.rs') } }, executed, selected]), /verification_build_source_invalid/u);
+  for (const env of [[...executed.env, ['OUT_DIR', script.outDirectory.path]], [...executed.env, executed.env[0]],
+    [...executed.env, ['CARGO', target.runtime.cargo.path]], [...executed.env, ['BAD-KEY', 'value']]]) {
+    assert.throws(() => parse([compiled, { ...executed, env }, selected]), /verification_build_environment_invalid/u);
+  }
+  const row = { kind: 'CargoOwnerEnvironmentCaptureV1', version: 1, processId: target.capture.processId,
+    parentProcessId: target.discovery.processId, script: target.capture.script, node: target.runtime.node.path,
+    cwd: target.capture.cwd, executable: artifact.path, args: ['--list'], environment: { PATH: '/qualified/bin',
+      CARGO: target.runtime.cargo.path, CARGO_MANIFEST_DIR: target.capture.cwd, CARGO_PKG_NAME: 'fixture', ...script.environment } };
+  const read = (value, scripts = target.buildScripts) => cargoEnvironmentObservation(f.root, target.binding, artifact,
+    JSON.stringify(value), target.discovery.processId, target.runtime, 'actual build', { PATH: '/qualified/bin' }, [], scripts);
+  assert.equal(read(row).processId, row.processId);
+  for (const scripts of [[], [script, script]]) assert.throws(() => read(row, scripts), /verification_capture_binding_invalid/u);
+  for (const environment of [{ ...row.environment, OUT_DIR: '/foreign/out' },
+    { ...row.environment, HEPTA_OWNER_ENV_FIXTURE: 'changed' }, { ...row.environment, UNOBSERVED_BUILD_ENV: 'owned' }]) {
+    assert.throws(() => read({ ...row, environment }), /verification_capture_binding_invalid/u);
+  }
+  const alias = script.outDirectory.path + '.alias'; fs.symlinkSync(script.outDirectory.path, alias);
+  assert.throws(() => parse([compiled, { ...executed, out_dir: alias }, selected]), /verification_build_directory_invalid/u);
+  const source = path.join(f.root, script.sourcePath), sourceBytes = fs.readFileSync(source);
+  fs.appendFileSync(source, '// changed\n');
+  assert.throws(() => assertCargoBuildScriptsCurrent(f.root, [script]), /source_worktree_blob_mismatch/u);
+  fs.writeFileSync(source, sourceBytes);
+  fs.renameSync(script.outDirectory.path, script.outDirectory.path + '.old'); fs.mkdirSync(script.outDirectory.path);
+  assert.throws(() => assertCargoBuildScriptsCurrent(f.root, [script]), /verification_build_directory_changed/u);
+  const bytes = fs.readFileSync(script.path), metadata = fs.statSync(script.path);
+  fs.appendFileSync(script.path, 'changed'); fs.utimesSync(script.path, metadata.atime, metadata.mtime);
+  assert.throws(() => assertCargoBuildScriptsCurrent(f.root, [script], true), /verification_binary_changed/u);
+  fs.renameSync(script.path, script.path + '.old'); fs.writeFileSync(script.path, bytes, { mode: metadata.mode });
+  assert.throws(() => assertCargoBuildScriptsCurrent(f.root, [script]), /verification_binary_changed/u);
 });
 
 test('actual artifact parser rejects duplicate foreign-source and aliased executable observations', t => {

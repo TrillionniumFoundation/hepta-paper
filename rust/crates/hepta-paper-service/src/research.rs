@@ -866,6 +866,7 @@ mod tests {
         run.service.state_directory = temp.0.join("workflow");
         LocalWorkflowV1 {
             version: 1,
+            provider_call_budget: None,
             research_profile: Some(
                 profile_from_authority(ResearchActivationStageV1::Canary, qualification).unwrap(),
             ),

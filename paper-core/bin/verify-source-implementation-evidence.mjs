@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseStrictJson } from '../src/source-evidence-strict-json.mjs';
 import {
   SAFE_RUST_TEST_PATTERN, artifactPin, assertExactCargoOwnerExecution,
-  cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory,
+  cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory, assertCargoBinaryArtifactsCurrent, assertCargoBuildScriptsCurrent,
 } from '../src/source-evidence-cargo-observations.mjs';
 import { hashBytes, producerPin } from '../src/source-evidence-producer.mjs';
 export { parseStrictJson } from '../src/source-evidence-strict-json.mjs';
@@ -529,6 +529,8 @@ export function executeCommands(root, bundles, source) {
   const observations = [];
   const targets = [];
   const inventories = new Map();
+  const binaryImages = new Map();
+  const buildImages = new Map();
   const env = safeExecutionEnvironment();
   const rootReal = fs.realpathSync(root);
   let runtime;
@@ -592,7 +594,11 @@ export function executeCommands(root, bundles, source) {
           const captured = run(runtime.cargo.path, discoveryArgs, { cwd: cwdReal, env, timeout: discoveryTimeoutMs });
           if (captured.status !== 0) fail('verification_discovery_failed', label);
           const actual = cargoTargetObservation(rootReal, binding, captured.stdout ?? '', label);
-          const capture = cargoEnvironmentObservation(rootReal, binding, actual.artifact, captured.stdout ?? '', captured.pid, runtime, label, env);
+          const capture = cargoEnvironmentObservation(rootReal, binding, actual.artifact, captured.stdout ?? '', captured.pid, runtime, label, env, actual.binaryArtifacts, actual.buildScripts);
+          assertCargoBinaryArtifactsCurrent(rootReal, actual.binaryArtifacts);
+          assertCargoBuildScriptsCurrent(rootReal, actual.buildScripts);
+          for (const binary of actual.binaryArtifacts) binaryImages.set(binary.path, binary);
+          for (const script of actual.buildScripts) buildImages.set(`${script.path}:${script.outDirectory.path}`, script);
           if (JSON.stringify(producerPin(rootReal)) !== JSON.stringify(producer)) fail('verification_capture_producer_changed', label);
           for (const pin of [runtime.cargo, runtime.node]) {
             if (JSON.stringify(artifactPin(pin.path, rootReal)) !== JSON.stringify({ path: pin.path, sha256: pin.sha256, identity: pin.identity })) fail('verification_runtime_changed');
@@ -604,7 +610,7 @@ export function executeCommands(root, bundles, source) {
           const targetId = `cargo-target-${targets.length}`;
           const target = { kind: 'SourceOwnerCargoTargetReuseV1', version: 1, targetId, source,
             binding: { discoveryPrefix: binding.discoveryPrefix, packageName: binding.packageName, targetKind: binding.targetKind, ...(binding.testTarget ? { testTarget: binding.testTarget } : {}) },
-            artifact: actual.artifact, runtime, producer,
+            artifact: actual.artifact, binaryArtifacts: actual.binaryArtifacts, buildScripts: actual.buildScripts, runtime, producer,
             discovery: { program: runtime.cargo.path, args: discoveryArgs, cwd: cwdReal, processId: captured.pid, status: captured.status,
               timeoutMs: discoveryTimeoutMs, stdoutSha256: hashBytes(Buffer.from(captured.stdout ?? '')), stderrSha256: hashBytes(Buffer.from(captured.stderr ?? '')) },
             capture: { script, args: ['--capture-cargo-owner-environment', actual.artifact.path, '--list'],
@@ -618,6 +624,8 @@ export function executeCommands(root, bundles, source) {
         inventory = inventories.get(key);
         if (!inventory.target.inventory.tests.includes(binding.selector)) fail('verification_discovery_selector_missing', label);
         const artifact = inventory.target.artifact;
+        assertCargoBinaryArtifactsCurrent(rootReal, inventory.target.binaryArtifacts);
+        assertCargoBuildScriptsCurrent(rootReal, inventory.target.buildScripts);
         if (JSON.stringify(artifactPin(artifact.path, rootReal)) !== JSON.stringify({ path: artifact.path, sha256: artifact.sha256, identity: artifact.identity })) {
           fail('verification_artifact_changed', label);
         }
@@ -638,6 +646,8 @@ export function executeCommands(root, bundles, source) {
       if (binding) {
         actualOwner = assertExactCargoOwnerExecution(binding.selector, result.stdout ?? '', label);
         const artifact = inventory.target.artifact;
+        assertCargoBinaryArtifactsCurrent(rootReal, inventory.target.binaryArtifacts);
+        assertCargoBuildScriptsCurrent(rootReal, inventory.target.buildScripts);
         if (JSON.stringify(artifactPin(artifact.path, rootReal)) !== JSON.stringify({ path: artifact.path, sha256: artifact.sha256, identity: artifact.identity })) {
           fail('verification_artifact_changed', label);
         }
@@ -655,6 +665,8 @@ export function executeCommands(root, bundles, source) {
     }
   }
   if (runtime) {
+    assertCargoBinaryArtifactsCurrent(rootReal, [...binaryImages.values()], true);
+    assertCargoBuildScriptsCurrent(rootReal, [...buildImages.values()], true);
     for (const pin of [runtime.cargo, runtime.node]) {
       if (JSON.stringify(artifactPin(pin.path, rootReal)) !== JSON.stringify({ path: pin.path, sha256: pin.sha256, identity: pin.identity })) fail('verification_runtime_changed');
     }

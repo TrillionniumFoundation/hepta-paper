@@ -62,6 +62,10 @@ pub struct AutonomousResearchCampaignRequestV1 {
     pub revision_rounds: usize,
     pub budget_microusd: u64,
     pub maximum_wall_ms: u64,
+    /// Optional configured lifecycle ceiling. None retains oldV1 typed bytes;
+    /// new ordinary local-run requests bind their effective default48 in CAS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_agent_calls: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research_profile: Option<ResearchWorkflowProfileV1>,
 }
@@ -100,6 +104,7 @@ impl AutonomousResearchCampaignRequestV1 {
             || self.maximum_wall_ms == 0
             || self.maximum_wall_ms > 24 * 60 * 60 * 1000
             || self.budget_microusd == 0
+            || self.max_agent_calls == Some(0)
             || self.author.source.role != AgentRole::Author
             || self.reviewer.source.role != AgentRole::Reviewer
             || self.author.source.socket_path == self.reviewer.source.socket_path
@@ -348,6 +353,12 @@ fn assemble(
     };
     let definition = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: request.max_agent_calls.map(|maximum_calls| {
+            crate::workflow::WorkflowProviderCallBudgetV1 {
+                version: 1,
+                maximum_calls,
+            }
+        }),
         research_profile: request.research_profile.clone(),
         steps: steps(request, campaign)?,
         template: ServiceRunV1 {
@@ -496,6 +507,9 @@ pub(super) fn run(
             if let Some(wall) = options.maximum_wall_ms {
                 request.maximum_wall_ms = request.maximum_wall_ms.min(wall);
             }
+            request.max_agent_calls = Some(options.maximum_agent_calls
+                .unwrap_or(48)
+                .min(configured_request.max_agent_calls.unwrap_or(u64::MAX)));
             let campaign = options
                 .campaign_id
                 .clone()
@@ -539,6 +553,8 @@ pub(super) fn run(
                         })
                         || retained_request.budget_microusd > configured_request.budget_microusd
                         || retained_request.maximum_wall_ms > configured_request.maximum_wall_ms
+                        || retained_request.max_agent_calls.unwrap_or(48)
+                            > configured_request.max_agent_calls.unwrap_or(u64::MAX)
                         || options.maximum_cost_microusd.is_some_and(|budget| {
                             budget.min(configured_request.budget_microusd)
                                 != retained_request.budget_microusd
@@ -546,6 +562,10 @@ pub(super) fn run(
                         || options.maximum_wall_ms.is_some_and(|wall| {
                             wall.min(configured_request.maximum_wall_ms)
                                 != retained_request.maximum_wall_ms
+                        })
+                        || options.maximum_agent_calls.is_some_and(|calls| {
+                            calls.min(configured_request.max_agent_calls.unwrap_or(u64::MAX))
+                                != retained_request.max_agent_calls.unwrap_or(48)
                         })
                     {
                         return Err(WorkflowError::Definition);
@@ -558,6 +578,7 @@ pub(super) fn run(
                     request.revision_rounds = retained_request.revision_rounds;
                     request.budget_microusd = retained_request.budget_microusd;
                     request.maximum_wall_ms = retained_request.maximum_wall_ms;
+                    request.max_agent_calls = retained_request.max_agent_calls;
                     if hash(&request)? != hash(&retained_request)?
                         || hash(&request_subject(&campaign, &request, &configured_request_hash))?
                             != current.template.initial_state_hash
@@ -598,6 +619,7 @@ pub(super) fn run(
                         || hash(&current.steps)? != hash(&expected_steps)?
                         || hash(&current.template)? != hash(&expected.template)?
                         || current.research_profile != expected.research_profile
+                        || current.provider_call_budget != expected.provider_call_budget
                     {
                         return Err(WorkflowError::Definition);
                     }
@@ -655,6 +677,7 @@ pub(super) fn run(
             report["revisionRounds"] = json!(request.revision_rounds);
             report["budgetMicrousd"] = json!(request.budget_microusd);
             report["maximumWallMs"] = json!(request.maximum_wall_ms);
+            report["maxAgentCalls"] = json!(request.max_agent_calls.unwrap_or(48));
             report
         }
         Err(error) => {

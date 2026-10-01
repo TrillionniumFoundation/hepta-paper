@@ -94,6 +94,9 @@ fn error_code(error: &WorkflowError) -> &'static str {
         WorkflowError::Reconciliation => "local_workflow_reconciliation_required",
         WorkflowError::GateRejected => "local_workflow_review_gate_rejected",
         WorkflowError::Qualification => "local_workflow_research_qualification_rejected",
+        WorkflowError::ProviderCallBudgetExhausted => {
+            "local_workflow_provider_call_budget_exhausted"
+        }
         WorkflowError::Service(_) => "local_workflow_service_requires_inspection",
     }
 }
@@ -159,7 +162,9 @@ pub(super) fn run_definition(
         || options.launch_mode != "local-run"
         || options.require_full_ready
         || (campaign_request.is_none()
-            && (options.maximum_cost_microusd.is_some() || options.maximum_wall_ms.is_some()))
+            && (options.maximum_cost_microusd.is_some()
+                || options.maximum_wall_ms.is_some()
+                || options.maximum_agent_calls.is_some()))
         || (options.research_qualification_request.is_some()
             && !matches!(options.action.as_str(), "launch" | "converge"))
     {
@@ -482,7 +487,9 @@ pub(super) fn run_definition(
         Ok(()) => report["ready"] = json!(true),
         Err(error) => {
             report["error"] = json!(error_code(&error));
-            report["reconciliationRequired"] = json!(execution_invoked);
+            report["reconciliationRequired"] = json!(
+                execution_invoked && !matches!(error, WorkflowError::ProviderCallBudgetExhausted)
+            );
         }
     }
     report["interruptionRequested"] = json!(cancelled.load(Ordering::Acquire));

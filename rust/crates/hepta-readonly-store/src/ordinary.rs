@@ -110,8 +110,35 @@ impl FullIdentity {
 pub(crate) struct ReadControl {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
+    #[cfg(test)]
+    pub(crate) observed_sqlite_progress: Option<Arc<AtomicBool>>,
 }
 impl ReadControl {
+    pub(crate) fn new(cancelled: Arc<AtomicBool>, deadline: Instant) -> Self {
+        Self {
+            cancelled,
+            deadline,
+            #[cfg(test)]
+            observed_sqlite_progress: None,
+        }
+    }
+    pub(crate) fn install_sqlite_progress(
+        &self,
+        connection: &Connection,
+    ) -> Result<(), ReadOnlyStoreError> {
+        let progress = self.clone();
+        connection.progress_handler(
+            1000,
+            Some(move || {
+                #[cfg(test)]
+                if let Some(observed) = &progress.observed_sqlite_progress {
+                    observed.store(true, Ordering::Release);
+                }
+                progress.check().is_err()
+            }),
+        )?;
+        Ok(())
+    }
     pub(crate) fn check(&self) -> Result<(), ReadOnlyStoreError> {
         if self.cancelled.load(Ordering::Acquire) {
             return Err(ReadOnlyStoreError::OrdinaryCancelled);
@@ -418,10 +445,7 @@ impl OrdinaryReadOnlyStoreV1 {
         let maximum = Instant::now()
             .checked_add(Duration::from_secs(300))
             .ok_or(ReadOnlyStoreError::OrdinaryDeadlineExceeded)?;
-        let control = ReadControl {
-            cancelled,
-            deadline: deadline.min(maximum),
-        };
+        let control = ReadControl::new(cancelled, deadline.min(maximum));
         Self::open_inner(path.as_ref(), control.clone()).map_err(|error| control.map(error))
     }
     fn open_inner(path: &Path, control: ReadControl) -> Result<Self, ReadOnlyStoreError> {
@@ -507,8 +531,7 @@ impl OrdinaryReadOnlyStoreV1 {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
-        let progress = control.clone();
-        connection.progress_handler(1000, Some(move || progress.check().is_err()))?;
+        control.install_sqlite_progress(&connection)?;
         connection.set_limit(
             rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
             16 * 1024 * 1024,

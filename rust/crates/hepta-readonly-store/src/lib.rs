@@ -11,7 +11,7 @@ mod node_snapshot;
 mod ordinary;
 pub use inventory_projection::{
     FixedInventoryBudgetV1, FixedInventoryProjectionV1, FixedInventoryQueryV1, InventoryPaperRowV1,
-    InventoryVenueRowV1,
+    InventorySqlCellCoercionV1, InventoryVenueRowV1,
 };
 pub use ordinary::{
     OrdinaryCoordinationObservationV1, OrdinaryNodeLogicalIntegrityReportV1,
@@ -62,6 +62,7 @@ pub struct ReadOnlyStoreV1 {
     connection: Connection,
     identity: FileIdentityV1,
     schema: DatabaseSchemaV1,
+    control: Option<ordinary::ReadControl>,
 }
 
 impl ReadOnlyStoreV1 {
@@ -79,6 +80,20 @@ impl ReadOnlyStoreV1 {
         )
     }
 
+    /// Explicit immutable ordinary-inventory profile. Existing base-only and
+    /// known-installed entrypoints keep their original admission contracts.
+    pub fn open_known_installed_with_cancellation_v1(
+        path: impl AsRef<Path>,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        deadline: std::time::Instant,
+    ) -> Result<Self, ReadOnlyStoreError> {
+        Self::open_with_schema_validator_and_control(
+            path.as_ref(),
+            hepta_readonly_control::node_schema::validate_known_installed_database_schema_v1,
+            Some(ordinary::ReadControl::new(cancelled, deadline)),
+        )
+    }
+
     fn open_with_schema_validator(
         path: &Path,
         validator: fn(
@@ -86,14 +101,31 @@ impl ReadOnlyStoreV1 {
         )
             -> Result<DatabaseSchemaV1, hepta_readonly_control::ReadOnlyStoreError>,
     ) -> Result<Self, ReadOnlyStoreError> {
+        Self::open_with_schema_validator_and_control(path, validator, None)
+    }
+
+    fn open_with_schema_validator_and_control(
+        path: &Path,
+        validator: fn(
+            &Connection,
+        )
+            -> Result<DatabaseSchemaV1, hepta_readonly_control::ReadOnlyStoreError>,
+        control: Option<ordinary::ReadControl>,
+    ) -> Result<Self, ReadOnlyStoreError> {
+        if let Some(control) = &control {
+            control.check()?;
+        }
         let path = inspect_path(path)?;
-        let identity = inspect_file_identity(&path)?;
+        let identity = inspect_file_identity_with_control(&path, control.as_ref())?;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_URI
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
         let uri = format!("file:{}?mode=ro&immutable=1", percent_encode_path(&path)?);
         let connection = Connection::open_with_flags(uri, flags)?;
+        if let Some(control) = &control {
+            control.install_sqlite_progress(&connection)?;
+        }
         connection.execute_batch(
             "PRAGMA query_only = ON;
              PRAGMA trusted_schema = OFF;
@@ -103,12 +135,19 @@ impl ReadOnlyStoreV1 {
         if query_only != 1 {
             return Err(ReadOnlyStoreError::QueryOnlyUnavailable);
         }
+        if let Some(control) = &control {
+            control.check()?;
+        }
         let schema = validator(&connection)?;
+        if let Some(control) = &control {
+            control.check()?;
+        }
         let store = Self {
             path,
             connection,
             identity,
             schema,
+            control,
         };
         store.verify_unchanged()?;
         Ok(store)
@@ -293,7 +332,10 @@ impl ReadOnlyStoreV1 {
     }
 
     pub fn verify_unchanged(&self) -> Result<(), ReadOnlyStoreError> {
-        let observed = inspect_file_identity(&self.path)?;
+        let observed = match &self.control {
+            Some(control) => inspect_file_identity_with_control(&self.path, Some(control))?,
+            None => inspect_file_identity(&self.path)?,
+        };
         if observed != self.identity {
             return Err(ReadOnlyStoreError::DatabaseChanged);
         }
@@ -508,6 +550,16 @@ fn inspect_path(path: &Path) -> Result<PathBuf, ReadOnlyStoreError> {
 }
 
 fn inspect_file_identity(path: &Path) -> Result<FileIdentityV1, ReadOnlyStoreError> {
+    inspect_file_identity_with_control(path, None)
+}
+
+fn inspect_file_identity_with_control(
+    path: &Path,
+    control: Option<&ordinary::ReadControl>,
+) -> Result<FileIdentityV1, ReadOnlyStoreError> {
+    if let Some(control) = control {
+        control.check()?;
+    }
     for suffix in ["-wal", "-shm", "-journal"] {
         match fs::symlink_metadata(sidecar(path, suffix)) {
             Ok(_) => return Err(ReadOnlyStoreError::SidecarPresent),
@@ -538,7 +590,7 @@ fn inspect_file_identity(path: &Path) -> Result<FileIdentityV1, ReadOnlyStoreErr
         gid: metadata.gid(),
         link_count: metadata.nlink(),
         size: metadata.size(),
-        content_hash: hash_file(path)?,
+        content_hash: hash_file_with_control(path, control)?,
         wal_exists: sidecar(path, "-wal").exists(),
         shm_exists: sidecar(path, "-shm").exists(),
     })
@@ -566,12 +618,24 @@ fn percent_encode_path(path: &Path) -> Result<String, ReadOnlyStoreError> {
 }
 
 fn hash_file(path: &Path) -> Result<Sha256Digest, ReadOnlyStoreError> {
+    hash_file_with_control(path, None)
+}
+fn hash_file_with_control(
+    path: &Path,
+    control: Option<&ordinary::ReadControl>,
+) -> Result<Sha256Digest, ReadOnlyStoreError> {
+    if let Some(control) = control {
+        control.check()?;
+    }
     let mut file = File::open(path)
         .map_err(|error| ReadOnlyStoreError::Filesystem("database_hash", error.kind()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     let mut total = 0_u64;
     loop {
+        if let Some(control) = control {
+            control.check()?;
+        }
         let read = file
             .read(&mut buffer)
             .map_err(|error| ReadOnlyStoreError::Filesystem("database_hash", error.kind()))?;
@@ -813,5 +877,165 @@ mod tests {
                 hepta_readonly_control::ReadOnlyStoreError::SchemaVersion
             ))
         ));
+    }
+
+    #[test]
+    fn immutable_inventory_projection_preserves_namespace_and_refuses_sidecars_cancel_and_expiry() {
+        let fixture = Fixture::new(25);
+        let before = hash_file(&fixture.database).expect("before hash");
+        let names = || {
+            let mut values = fs::read_dir(&fixture.root)
+                .expect("names")
+                .map(|v| v.expect("entry").file_name())
+                .collect::<Vec<_>>();
+            values.sort();
+            values
+        };
+        let names_before = names();
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let store = ReadOnlyStoreV1::open_known_installed_with_cancellation_v1(
+            &fixture.database,
+            std::sync::Arc::clone(&cancelled),
+            deadline,
+        )
+        .expect("immutable open");
+        let projection = store
+            .fixed_inventory_projection_with_cancellation_v1(
+                &FixedInventoryBudgetV1::default(),
+                std::sync::Arc::clone(&cancelled),
+                deadline,
+            )
+            .expect("fixed projection");
+        assert!(projection.papers.ok && projection.venues.ok);
+        store.verify_unchanged().expect("unchanged");
+        assert_eq!(names(), names_before);
+        assert_eq!(hash_file(&fixture.database).expect("after hash"), before);
+        cancelled.store(true, Ordering::Release);
+        assert!(matches!(
+            store.verify_unchanged(),
+            Err(ReadOnlyStoreError::OrdinaryCancelled)
+        ));
+        cancelled.store(false, Ordering::Release);
+        assert!(matches!(
+            ReadOnlyStoreV1::open_known_installed_with_cancellation_v1(
+                &fixture.database,
+                std::sync::Arc::clone(&cancelled),
+                std::time::Instant::now() - std::time::Duration::from_millis(1)
+            ),
+            Err(ReadOnlyStoreError::OrdinaryDeadlineExceeded)
+        ));
+        let sidecar = sidecar(&fixture.database, "-wal");
+        fs::write(&sidecar, []).expect("owned zero sidecar");
+        assert!(matches!(
+            store.verify_unchanged(),
+            Err(ReadOnlyStoreError::SidecarPresent)
+        ));
+        assert!(matches!(
+            ReadOnlyStoreV1::open_known_installed_with_cancellation_v1(
+                &fixture.database,
+                cancelled,
+                deadline
+            ),
+            Err(ReadOnlyStoreError::SidecarPresent)
+        ));
+        assert_eq!(
+            hash_file(&fixture.database).expect("refusal retained bytes"),
+            before
+        );
+        assert!(
+            sidecar.exists(),
+            "refusal must retain unknown coordination state"
+        );
+    }
+
+    #[test]
+    fn immutable_sqlite_vm_cancellation_deadline_and_fresh_projection_retain_original_bytes() {
+        use std::{
+            sync::Arc,
+            sync::atomic::AtomicBool,
+            time::{Duration, Instant},
+        };
+        let fixture = Fixture::new(25);
+        let before = fs::read(&fixture.database).expect("original bytes");
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut store = ReadOnlyStoreV1::open_known_installed_with_cancellation_v1(
+            &fixture.database,
+            Arc::clone(&cancelled),
+            Instant::now() + Duration::from_secs(3),
+        )
+        .expect("immutable open");
+        let observed = Arc::new(AtomicBool::new(false));
+        let control = store.control.as_mut().expect("controlled reader");
+        control.observed_sqlite_progress = Some(Arc::clone(&observed));
+        control
+            .install_sqlite_progress(&store.connection)
+            .expect("same production progress owner");
+        let sender_flag = Arc::clone(&cancelled);
+        let sender_observed = Arc::clone(&observed);
+        let sender = std::thread::spawn(move || {
+            let end = Instant::now() + Duration::from_secs(2);
+            while !sender_observed.load(Ordering::Acquire) && Instant::now() < end {
+                std::thread::yield_now();
+            }
+            assert!(
+                sender_observed.load(Ordering::Acquire),
+                "actual VM must reach production callback"
+            );
+            sender_flag.store(true, Ordering::Release);
+        });
+        const QUERY: &str = "WITH RECURSIVE values_to_count(n) AS (VALUES(0) UNION ALL SELECT n+1 FROM values_to_count WHERE n<1000000000000) SELECT count(*) FROM values_to_count";
+        let outcome = store
+            .connection
+            .query_row::<i64, _, _>(QUERY, [], |row| row.get(0));
+        sender.join().expect("actual VM cancellation sender");
+        assert!(
+            matches!(outcome, Err(rusqlite::Error::SqliteFailure(error, _)) if error.code == rusqlite::ErrorCode::OperationInterrupted)
+        );
+        assert!(matches!(
+            store.verify_unchanged(),
+            Err(ReadOnlyStoreError::OrdinaryCancelled)
+        ));
+        drop(store);
+        cancelled.store(false, Ordering::Release);
+        let store = ReadOnlyStoreV1::open_known_installed_with_cancellation_v1(
+            &fixture.database,
+            Arc::clone(&cancelled),
+            Instant::now() + Duration::from_secs(3),
+        )
+        .expect("fresh immutable reader");
+        let projection = store
+            .fixed_inventory_projection_with_cancellation_v1(
+                &FixedInventoryBudgetV1::default(),
+                Arc::clone(&cancelled),
+                Instant::now() + Duration::from_secs(3),
+            )
+            .expect("fresh same-input projection");
+        assert!(projection.papers.ok && projection.venues.ok);
+        let mut deadline_control =
+            ordinary::ReadControl::new(cancelled, Instant::now() + Duration::from_millis(30));
+        deadline_control.observed_sqlite_progress = Some(Arc::clone(&observed));
+        observed.store(false, Ordering::Release);
+        deadline_control
+            .install_sqlite_progress(&store.connection)
+            .expect("same progress owner");
+        let outcome = store
+            .connection
+            .query_row::<i64, _, _>(QUERY, [], |row| row.get(0));
+        assert!(
+            observed.load(Ordering::Acquire),
+            "actual deadline refusal must enter VM"
+        );
+        assert!(
+            matches!(outcome, Err(rusqlite::Error::SqliteFailure(error, _)) if error.code == rusqlite::ErrorCode::OperationInterrupted)
+        );
+        store
+            .verify_unchanged()
+            .expect("original stored outer control remains valid");
+        drop(store);
+        assert_eq!(fs::read(&fixture.database).expect("retained bytes"), before);
+        for suffix in ["-wal", "-shm", "-journal"] {
+            assert!(!sidecar(&fixture.database, suffix).exists());
+        }
     }
 }

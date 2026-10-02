@@ -334,10 +334,10 @@ fn actual_path_swap_restore_between_two_sqlite_opens_is_refused_by_directory_cha
     let held = HeldFile::open(
         path.clone(),
         true,
-        ReadControl {
-            cancelled: Arc::new(AtomicBool::new(false)),
-            deadline: Instant::now() + Duration::from_secs(30),
-        },
+        ReadControl::new(
+            Arc::new(AtomicBool::new(false)),
+            Instant::now() + Duration::from_secs(30),
+        ),
     )
     .unwrap();
     let saved = fixture.root.join("saved.sqlite");

@@ -129,6 +129,26 @@ impl NodeValue {
         }
     }
 
+    // Ordinary business projection retains actual SQL coercion, rather than
+    // inferring a Uint8Array from its serialized JSON object representation.
+    pub(crate) fn inventory_string(&self) -> String {
+        if matches!(&self.kind, Kind::Null) {
+            String::new()
+        } else {
+            self.string()
+        }
+    }
+
+    pub(crate) fn inventory_truthy(&self) -> bool {
+        match &self.kind {
+            Kind::Null => false,
+            Kind::Number(value) => !value.is_nan() && *value != 0.0,
+            Kind::Boolean(value) => *value,
+            Kind::String(Some(value)) => !value.is_empty(),
+            Kind::String(None) | Kind::Blob(_) | Kind::Object => true,
+        }
+    }
+
     fn string(&self) -> String {
         match &self.kind {
             Kind::Null => "null".into(),

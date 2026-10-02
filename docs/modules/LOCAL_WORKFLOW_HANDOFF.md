@@ -1041,3 +1041,77 @@ sources may use the hepta-core request signer, measured settlement and
 commit-bound ACK contracts. This closes repository-local request issuance for the
 normal path, but not independent installed role/billing/ACK canaries, live
 revocation/availability evidence or installed research/retirement acceptance.
+
+## Held ordinary paper inventory
+
+`native_inventory::discover_native_inventory_v1` returns a
+`NativeInventoryObservationV1` containing the actual inventory `scan` and the
+held filesystem/database observations. Its caller retains this owner and calls
+`verify_unchanged` before and after building or queuing a batch. The observation
+reuses `runtime_source_cas::SourceObservation` for selected files, directory
+entries and retained missing edges, and the ordinary read-only store's fixed
+paper/ledger/campaign/venue projection. It does not accept caller-authored task
+or state summaries. SQLite cell coercion metadata is kept separately from the
+unchanged JSON projection, preserving original BLOB/number string conversion.
+
+The inventory rebuilds original PaperTask/state/artifact identity and hashes,
+source/main-TeX selection, quality and submission intent, loose/proposal drafts,
+filtering and YAML fallback. Original SQL query errors reject the complete scan;
+a successful empty query can select the original YAML fallback. Selected aliases,
+hardlinks and files outside the held workspace remain refused. An unselected
+symlink returned by a directory enumeration is not followed. Held observations
+detect changes at rechecks; they do not provide a filesystem transaction or a
+lease against another writer.
+
+The native v1 safety profile retains the fixed SQL projection's existing limits,
+256 KiB registry documents, 16 MiB documents/report, 16,384 enumerated entries,
+64 directory levels and 1 GiB aggregate source reads. Archive reads additionally
+use a 256 MiB inventory limit. JSON scalar conversion refuses unpaired UTF-16 and
+nonfinite values that the original Node path can represent. These explicit
+native differences remain partial compatibility. Cancellation and the supplied
+deadline are checked during the existing observation operations and subsequent
+rechecks; blocking kernel I/O is not preempted by those cooperative checks.
+
+The four inventory regression owners execute the original Node inventory on
+actual registered SQL/filesystem fixtures and compare complete values, including
+state/hash and SQL BLOB semantics. They also exercise actual replacement, missing
+edge creation, cancellation/retry and expiry. They are inventory API evidence,
+not ordinary batch CLI execution, author/reviewer canary, release/submission
+permission or installed cutover acceptance. The normal batch facade must retain
+the same observation through its existing plan/queue path, and each final head
+and prospective merge requires fresh composed verification.
+
+### Batch options and complete plan projectors
+
+`batch_cli::normalize_native_batch_cli_arguments_v1` accepts the ordinary batch
+argument vector, working directory and selected root/runtime defaults. It reuses
+the existing path resolver and implements the incumbent argument normalization
+within its explicit bounded domain. `batch_campaign::build_native_batch_campaign_command_v1`
+then builds the complete local or formal dependency graph, research input and
+command hashes from the held inventory. The graph is a plan; constructing it
+does not execute a paper or acquire release/submission permission. The ordinary
+frontend must keep the observation alive until its plan/queue consumer finishes.
+
+The executable developer example is the actual incumbent whole-value differential
+owner, rather than a hand-assembled workflow:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --lib batch_campaign::tests::native_batch_command_and_complete_local_graph_match_actual_node_whole_values -- --exact --nocapture
+```
+
+The source registry and canonical route ledger bind the option, complete graph,
+refusal and inventory owners. The normal caller and full research adapter remain
+unaccepted until their ordinary entry and recovery paths execute successfully.
+
+The fixed ordinary runtime proposal profile additionally admits
+`database.parent()/proposal-staging`, including the usual runtime outside the
+asset root. It retains a second instance of the same SourceObservation over
+that namespace and its `proposals` source tree. The record must identify an
+actual source directory beneath that fixed proposal tree. Unknown external
+staging directories are refused. Logical report paths use the asset root;
+those `../runtime/...` identities never replace the held-relative path used for
+an actual open. The shared fixed reservation checks captured read sizes before allocation/streaming and enumeration counts before retaining each entry; it keeps the original 1 GiB and 16,384 entry ceilings across both observers. Both observations,
+missing edges and the database are rechecked together through cancellation and
+the supplied deadline. The runtime regression owner uses actual Node complete
+values for missing staging and a real external proposal, then exercises first
+missing-edge creation, runtime alias, selected-file replacement and fresh retry.

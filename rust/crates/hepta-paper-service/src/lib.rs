@@ -20,6 +20,9 @@ pub mod autonomous_state_partial_root_maintenance;
 pub mod autonomous_state_provision;
 pub mod autonomous_submission_dispatcher;
 pub mod autonomous_submission_dispatcher_challenge;
+pub mod batch_campaign;
+pub mod batch_cli;
+pub mod batch_operator;
 pub mod broker_prepared;
 pub mod campaign_policy;
 pub mod campaign_slo;
@@ -43,6 +46,16 @@ pub mod local_state_authority_client;
 pub mod machine_intake;
 pub mod maintenance;
 pub mod native_business;
+pub mod native_inventory;
+pub mod native_latex_theorem_syntax;
+pub mod native_research_claims;
+pub mod native_research_contracts;
+pub mod native_research_evidence;
+pub mod native_research_formal;
+pub mod native_research_manuscript;
+pub mod native_research_plan;
+pub mod native_research_source;
+pub mod native_research_workflow;
 pub mod native_workspace;
 pub mod nested_runtime_cli;
 pub mod nested_runtime_qualification;
@@ -503,3 +516,5 @@ pub mod topic_producer_status;
 
 /// Preserved bounded computational contracts; current command routes are unchanged.
 pub mod native_parity_bounded_v1;
+
+pub mod ordinary_readonly_frontend;

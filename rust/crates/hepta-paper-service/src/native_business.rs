@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod local_submission_preflight;
+pub mod research_data;
 
 mod author;
 mod build;
@@ -48,6 +49,13 @@ pub fn native_business_implementation_hash_v1() -> String {
             include_bytes!("native_business.rs"),
             include_bytes!("native_business/types.rs"),
             include_bytes!("native_business/author.rs"),
+            include_bytes!("native_business/research_data/mod.rs"),
+            include_bytes!("native_business/research_data/values.rs"),
+            include_bytes!("native_business/research_data/csv.rs"),
+            include_bytes!("native_business/research_data/assertions.rs"),
+            include_bytes!("automation_runtime_reconciliation/sqlite_number.rs"),
+            include_bytes!("../../hepta-legacy-compatibility/src/production.rs"),
+            include_bytes!("../../hepta-legacy-compatibility/src/lib.rs"),
             include_bytes!("native_business/reviewer.rs"),
             include_bytes!("native_business/formal.rs"),
             include_bytes!("native_business/empirical.rs"),
@@ -94,6 +102,9 @@ pub fn execute_native_business_with_objects_for_capability_v1(
         return Err(NativeBusinessError::Contract);
     }
     match job {
+        NativeBusinessJobV1::ResearchDataWorkerV1 { request } => {
+            research_data::execute_native_research_data_worker_v1(objects, request, cancelled)
+        }
         NativeBusinessJobV1::PrepareLocalSubmissionFromCasV1 { request } => {
             local_submission_preflight::prepare_local_submission_from_cas_v1(
                 objects, request, cancelled,
@@ -108,7 +119,8 @@ pub fn execute_native_business_v1(
     job: NativeBusinessJobV1,
 ) -> Result<NativeBusinessOutputV1, NativeBusinessError> {
     let output = match job {
-        NativeBusinessJobV1::PrepareLocalSubmissionFromCasV1 { .. } => {
+        NativeBusinessJobV1::ResearchDataWorkerV1 { .. }
+        | NativeBusinessJobV1::PrepareLocalSubmissionFromCasV1 { .. } => {
             return Err(NativeBusinessError::Contract);
         }
         NativeBusinessJobV1::AuthorDraft {

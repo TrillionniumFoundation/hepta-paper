@@ -124,6 +124,10 @@ pub enum NativeBusinessJobV1 {
         metadata: std::collections::BTreeMap<String, String>,
         idempotency_key: String,
     },
+    /// Compute a bounded research data report from actual immutable CAS inputs.
+    ResearchDataWorkerV1 {
+        request: super::research_data::NativeResearchDataWorkerRequestV1,
+    },
     /// Read actual CAS artifacts and prepare a non-authorizing local dry-run.
     PrepareLocalSubmissionFromCasV1 {
         request: super::local_submission_preflight::CasLocalSubmissionPreparationRequestV1,
@@ -150,6 +154,7 @@ impl NativeBusinessJobV1 {
     #[must_use]
     pub fn capability_id(&self) -> &'static str {
         match self {
+            Self::ResearchDataWorkerV1 { .. } => "CAP-EVD-VERIFY",
             Self::AuthorDraft { .. } => "CAP-AUTHOR",
             Self::ReviewerAssessment { .. } => "CAP-REVIEW",
             Self::FormalCertificate { .. } => "CAP-FORMAL",

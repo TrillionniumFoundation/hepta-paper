@@ -32,9 +32,28 @@ pub struct LocalSubmissionPreflightInputV1 {
 fn local_submission_error() -> String {
     "native_local_submission_preflight_contract_refused".into()
 }
-fn local_submission_value_budget(value: &Value) -> Result<(), String> {
-    let mut stack = vec![(value, 0_usize)];
-    let (mut items, mut bytes) = (0_usize, 0_usize);
+pub(crate) fn local_submission_value_budget(value: &Value) -> Result<(), String> {
+    local_submission_values_budget_v1(std::iter::once(value))
+}
+pub(crate) fn local_submission_values_budget_v1<'a>(
+    values: impl IntoIterator<Item = &'a Value>,
+) -> Result<(), String> {
+    local_submission_projected_values_budget_v1(values, 0, 0)
+}
+/// Charge derived nodes and keys against the same record policy before projection.
+pub(crate) fn local_submission_projected_values_budget_v1<'a>(
+    values: impl IntoIterator<Item = &'a Value>,
+    additional_items: usize,
+    additional_bytes: usize,
+) -> Result<(), String> {
+    if additional_items > 20_000 || additional_bytes > 1024 * 1024 {
+        return Err(local_submission_error());
+    }
+    let mut stack = values
+        .into_iter()
+        .map(|value| (value, 0_usize))
+        .collect::<Vec<_>>();
+    let (mut items, mut bytes) = (additional_items, additional_bytes);
     while let Some((node, depth)) = stack.pop() {
         items += 1;
         if items > 20_000 || depth > 64 {
@@ -77,7 +96,7 @@ fn local_submission_value_budget(value: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn local_submission_truthy(v: &Value) -> bool {
+pub(crate) fn local_submission_truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(v) => *v,
@@ -93,7 +112,7 @@ fn local_submission_or_null(v: &Value) -> Value {
         Value::Null
     }
 }
-fn local_submission_normalize(value: &str) -> String {
+pub(crate) fn local_submission_normalize(value: &str) -> String {
     // Original text-utils removes CR, collapses ASCII space/tab runs and only
     // runs of at least three LF, then uses the fixed ECMAScript trim domain.
     let mut out = String::with_capacity(value.len());
@@ -120,7 +139,10 @@ fn local_submission_normalize(value: &str) -> String {
     }
     out.trim_matches(|c: char| matches!(c, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')).to_owned()
 }
-fn local_submission_unique(values: impl IntoIterator<Item = String>, limit: usize) -> Vec<String> {
+pub(crate) fn local_submission_unique(
+    values: impl IntoIterator<Item = String>,
+    limit: usize,
+) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for v in values {
@@ -146,7 +168,11 @@ fn local_submission_kernel_hash(kind: &str, value: &Value) -> Result<String, Str
         .map(|v| v.as_str().to_owned())
         .map_err(|_| local_submission_error())
 }
-fn local_submission_hashed(mut value: Value, field: &str, paper: bool) -> Result<Value, String> {
+pub(crate) fn local_submission_hashed(
+    mut value: Value,
+    field: &str,
+    paper: bool,
+) -> Result<Value, String> {
     let kind = value["kind"].as_str().ok_or_else(local_submission_error)?;
     let h = if paper {
         local_submission_paper_hash(kind, &value)?

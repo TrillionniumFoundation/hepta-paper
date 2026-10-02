@@ -24,6 +24,7 @@ use std::{collections::BTreeSet, fs, path::Path, sync::atomic::AtomicBool};
 use thiserror::Error;
 
 pub use owner::inspect_ordinary_owner_acceptance_status_with_cancellation_v1;
+pub(crate) use provenance::current_operational_code_provenance_with_deadline_v1;
 pub use provenance::{
     current_operational_code_provenance_v1,
     current_operational_code_provenance_with_cancellation_v1,

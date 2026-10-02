@@ -99,6 +99,22 @@ impl ObjectStoreV1 {
         .read_object(hash)
         .map_err(|_| ServiceError::Artifact)
     }
+    /// Tighten the existing immutable verifier bound before reading one worker input.
+    /// A caller cannot exceed the store's original hard object limit.
+    pub(crate) fn read_with_maximum_v1(
+        &self,
+        hash: &Sha256Digest,
+        maximum_bytes: u64,
+    ) -> Result<Vec<u8>, ServiceError> {
+        self.access.validate()?;
+        if maximum_bytes == 0 || maximum_bytes > self.maximum_object_bytes() {
+            return Err(ServiceError::Artifact);
+        }
+        FilesystemPreparedResultVerifierV1::new(&self.root, hash.clone(), maximum_bytes)
+            .map_err(|_| ServiceError::Artifact)?
+            .read_object(hash)
+            .map_err(|_| ServiceError::Artifact)
+    }
     pub(crate) fn attempt_path(&self, request_hash: &Sha256Digest, suffix: &str) -> PathBuf {
         self.attempts.join(format!(
             "{}.{}",

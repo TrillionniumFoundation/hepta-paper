@@ -23,6 +23,16 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
         // explicit execute flag in its fixed argv.
         return Ok(Some(vec!["release-evidence".into(), "--execute".into()]));
     }
+    if (group, name) == ("operator", "batch") {
+        if args.len() > 2 && args[2] != "--" {
+            return Err("command_arguments_require_separator".into());
+        }
+        return Ok(Some(
+            std::iter::once("paper-batch".to_owned())
+                .chain(args.get(3..).unwrap_or_default().iter().cloned())
+                .collect(),
+        ));
+    }
     if (group, name) == ("operator", "autonomous-research") {
         if args.len() > 2 && args[2] != "--" {
             return Err("command_arguments_require_separator".into());
@@ -38,32 +48,72 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
         }
         return Ok(Some(vec!["ordinary-command-surface-sync".to_owned()]));
     }
-    let (command, flags, maximum_positionals, forwarding_none): (
+    let (command, flags, values, maximum_positionals, forwarding_none): (
         &str,
+        &[&str],
         &[&str],
         Option<usize>,
         bool,
     ) = match (group, name) {
-        ("operator", "workspace") => ("workspace-status", &["require-decoupled"], None, false),
+        ("operator", "workspace") => ("workspace-status", &["require-decoupled"], &[], None, false),
         ("operator", "store") => (
             "store-status",
             &[
                 "allow-isolated-verification-evidence",
                 "require-trust-clean",
             ],
+            &[],
             None,
             false,
         ),
         ("verify", "repository-assets") => (
             "repository-assets",
             &["handoff", "require-externalized"],
+            &[],
             None,
             false,
         ),
-        ("verify", "store") => ("ordinary-store-integrity", &[], Some(1), false),
-        ("verify", "owner") => ("ordinary-owner-acceptance-status", &[], None, true),
-        ("verify", "operational") => ("ordinary-operational-proof-status", &[], None, true),
-        ("retirement", "reference") => ("ordinary-retirement-reference", &[], None, true),
+        ("verify", "store") => ("ordinary-store-integrity", &[], &[], Some(1), false),
+        ("verify", "owner") => ("ordinary-owner-acceptance-status", &[], &[], None, true),
+        ("verify", "operational") => ("ordinary-operational-proof-status", &[], &[], None, true),
+        ("retirement", "reference") => ("ordinary-retirement-reference", &[], &[], None, true),
+        ("operator", "journal-connector-coverage") => (
+            "ordinary-journal-connector-coverage",
+            &[
+                "help",
+                "summary",
+                "require-family-prototype",
+                "require-profile-resolved",
+                "require-adapter-implemented",
+                "require-sandbox-qualified",
+                "require-production-qualified",
+                "require-live-ready",
+            ],
+            &[
+                "kind",
+                "qualification-registry",
+                "qualification-registry-hash",
+                "qualification-trust-store",
+                "qualification-trust-store-hash",
+                "venue",
+            ],
+            None,
+            false,
+        ),
+        ("operator", "autonomous-supervisor-health") => (
+            "ordinary-autonomous-supervisor-health",
+            &[
+                "help",
+                "require-startup-reconciliation",
+                "require-machine-intake-reconciliation",
+                "require-current-machine-intake",
+                "require-strict-machine-intake-reconciliation",
+                "require-fully-autonomous",
+            ],
+            &["external-qualification-config", "runtime-root"],
+            None,
+            false,
+        ),
         _ => return Err("native_canonical_route_not_implemented".into()),
     };
     if args.len() > 2 && args[2] != "--" {
@@ -75,7 +125,9 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
     }
     let mut seen = BTreeSet::new();
     let mut positionals = 0;
-    for token in forwarded {
+    let mut index = 0;
+    while index < forwarded.len() {
+        let token = &forwarded[index];
         if token == "--" {
             return Err("unexpected_cli_argument_separator".into());
         }
@@ -86,6 +138,7 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
             if positionals > maximum {
                 return Err(format!("too_many_cli_positionals:{positionals}"));
             }
+            index += 1;
             continue;
         }
         let raw = token
@@ -97,15 +150,33 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
         if key.is_empty() {
             return Err("empty_cli_option".into());
         }
-        if !flags.contains(&key) {
-            return Err(format!("unknown_cli_option:--{key}"));
-        }
-        if value.is_some() {
-            return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
+        if flags.contains(&key) {
+            if value.is_some() {
+                return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
+            }
+        } else {
+            if !values.contains(&key) {
+                return Err(format!("unknown_cli_option:--{key}"));
+            }
+            let value = match value {
+                Some(value) => value,
+                None => {
+                    index += 1;
+                    forwarded
+                        .get(index)
+                        .filter(|value| !value.starts_with("--"))
+                        .map(String::as_str)
+                        .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?
+                }
+            };
+            if value.is_empty() {
+                return Err(format!("empty_cli_option_value:--{key}"));
+            }
         }
         if !seen.insert(key) {
             return Err(format!("duplicate_cli_option:--{key}"));
         }
+        index += 1;
     }
     Ok(Some(
         std::iter::once(command.to_owned())

@@ -722,11 +722,48 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&store.node_logical_snapshot()?)?
             );
         }
+        Some(
+            command @ (CommandV1::OrdinaryJournalConnectorCoverage
+            | CommandV1::OrdinaryAutonomousSupervisorHealth),
+        ) => {
+            use hepta_paper_service::ordinary_readonly_frontend::{
+                OrdinaryReadonlyRouteV1, inspect_ordinary_readonly_frontend_v1,
+            };
+            let route = match command {
+                CommandV1::OrdinaryJournalConnectorCoverage => {
+                    OrdinaryReadonlyRouteV1::JournalConnectorCoverage
+                }
+                _ => OrdinaryReadonlyRouteV1::AutonomousSupervisorHealth,
+            };
+            let output = inspect_ordinary_readonly_frontend_v1(route, &args[1..]);
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
         Some(CommandV1::OrdinaryOwnerAcceptanceStatus) if args.len() == 1 => {
             ordinary_governance_status_command_v1(true)?;
         }
         Some(CommandV1::OrdinaryOperationalProofStatus) if args.len() == 1 => {
             ordinary_governance_status_command_v1(false)?;
+        }
+        Some(CommandV1::PaperBatch) => {
+            let cwd = env::current_dir()?;
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(
+                    hepta_paper_service::batch_operator::run_native_batch_operator_v1(
+                        &args[1..],
+                        &cwd,
+                        &cancelled,
+                    )?,
+                )
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
         }
         Some(CommandV1::OrdinaryStoreIntegrity) if args.len() == 1 || args.len() == 2 => {
             ordinary_store_integrity_command_v1(args.get(1))?;

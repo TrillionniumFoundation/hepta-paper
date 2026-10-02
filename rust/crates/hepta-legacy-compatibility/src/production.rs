@@ -246,49 +246,208 @@ fn check_depth(depth: usize) -> Result<(), CompatibilityError> {
     }
 }
 
+/// A consumer may tighten the original encoder bounds, never raise them.
+#[derive(Clone, Copy, Debug)]
+pub struct ProductionJsonEncodingLimitsV1 {
+    pub maximum_bytes: usize,
+    pub maximum_values: usize,
+    pub maximum_utf16_units: usize,
+}
+impl Default for ProductionJsonEncodingLimitsV1 {
+    fn default() -> Self {
+        Self {
+            maximum_bytes: MAX_BYTES,
+            maximum_values: MAX_BYTES,
+            maximum_utf16_units: MAX_BYTES,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProductionJsonEncodedResourcesV1 {
+    pub bytes: usize,
+    pub values: usize,
+    pub utf16_units: usize,
+}
+struct JsonOutput<'a> {
+    output: Option<&'a mut Vec<u8>>,
+    resources: ProductionJsonEncodedResourcesV1,
+    limits: ProductionJsonEncodingLimitsV1,
+    cancelled: Option<&'a std::sync::atomic::AtomicBool>,
+}
+impl<'a> JsonOutput<'a> {
+    fn new(
+        output: Option<&'a mut Vec<u8>>,
+        limits: ProductionJsonEncodingLimitsV1,
+        cancelled: Option<&'a std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, CompatibilityError> {
+        if limits.maximum_bytes > MAX_BYTES
+            || limits.maximum_values > MAX_BYTES
+            || limits.maximum_utf16_units > MAX_BYTES
+        {
+            return Err(CompatibilityError::EncodingBudget);
+        }
+        Ok(Self {
+            output,
+            resources: ProductionJsonEncodedResourcesV1::default(),
+            limits,
+            cancelled,
+        })
+    }
+    fn checkpoint(&self) -> Result<(), CompatibilityError> {
+        if self
+            .cancelled
+            .is_some_and(|c| c.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            Err(CompatibilityError::EncodingCancelled)
+        } else {
+            Ok(())
+        }
+    }
+    fn extend(&mut self, bytes: &[u8]) -> Result<(), CompatibilityError> {
+        self.checkpoint()?;
+        let count = self
+            .resources
+            .bytes
+            .checked_add(bytes.len())
+            .ok_or(CompatibilityError::EncodingBudget)?;
+        if count > self.limits.maximum_bytes {
+            return Err(if self.limits.maximum_bytes == MAX_BYTES {
+                CompatibilityError::SizeLimit
+            } else {
+                CompatibilityError::EncodingBudget
+            });
+        }
+        self.resources.bytes = count;
+        if let Some(out) = &mut self.output {
+            out.extend_from_slice(bytes);
+        }
+        Ok(())
+    }
+    fn push(&mut self, byte: u8) -> Result<(), CompatibilityError> {
+        self.extend(&[byte])
+    }
+    fn value(&mut self) -> Result<(), CompatibilityError> {
+        self.checkpoint()?;
+        let count = self
+            .resources
+            .values
+            .checked_add(1)
+            .ok_or(CompatibilityError::EncodingBudget)?;
+        if count > self.limits.maximum_values {
+            return Err(CompatibilityError::EncodingBudget);
+        }
+        self.resources.values = count;
+        Ok(())
+    }
+    fn string(&mut self, units: usize) -> Result<(), CompatibilityError> {
+        self.checkpoint()?;
+        let count = self
+            .resources
+            .utf16_units
+            .checked_add(units)
+            .ok_or(CompatibilityError::EncodingBudget)?;
+        if count > self.limits.maximum_utf16_units {
+            return Err(CompatibilityError::EncodingBudget);
+        }
+        self.resources.utf16_units = count;
+        Ok(())
+    }
+}
 fn encode_node(value: &NodeJson) -> Result<Vec<u8>, CompatibilityError> {
     let collator = production_collator()?;
     let mut output = Vec::new();
-    encode(value, &collator, 0, &mut output)?;
+    encode(
+        value,
+        Some(&collator),
+        0,
+        &mut JsonOutput::new(
+            Some(&mut output),
+            ProductionJsonEncodingLimitsV1::default(),
+            None,
+        )?,
+    )?;
     Ok(output)
 }
-
+/// The existing JSON.stringify wire mode with its original hard bounds.
+pub fn production_json_stringify_v1(
+    value: &ProductionJsonValue,
+) -> Result<Vec<u8>, CompatibilityError> {
+    let mut output = Vec::new();
+    encode(
+        value,
+        None,
+        0,
+        &mut JsonOutput::new(
+            Some(&mut output),
+            ProductionJsonEncodingLimitsV1::default(),
+            None,
+        )?,
+    )?;
+    Ok(output)
+}
+/// Measure through the exact same encoder without allocating encoded bytes.
+/// Every value, string and byte is charged before a consumer may clone it.
+pub fn production_json_resources_v1(
+    value: &ProductionJsonValue,
+    limits: ProductionJsonEncodingLimitsV1,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<ProductionJsonEncodedResourcesV1, CompatibilityError> {
+    let mut sink = JsonOutput::new(None, limits, Some(cancelled))?;
+    encode(value, None, 0, &mut sink)?;
+    Ok(sink.resources)
+}
+/// Tighten wire limits and check cancellation before every output append.
+pub fn production_json_stringify_with_limits_v1(
+    value: &ProductionJsonValue,
+    limits: ProductionJsonEncodingLimitsV1,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, CompatibilityError> {
+    let mut output = Vec::new();
+    encode(
+        value,
+        None,
+        0,
+        &mut JsonOutput::new(Some(&mut output), limits, Some(cancelled))?,
+    )?;
+    Ok(output)
+}
 fn encode(
     value: &NodeJson,
-    collator: &CollatorBorrowed<'_>,
+    collator: Option<&CollatorBorrowed<'_>>,
     depth: usize,
-    output: &mut Vec<u8>,
+    output: &mut JsonOutput<'_>,
 ) -> Result<(), CompatibilityError> {
     check_depth(depth)?;
+    output.value()?;
     match value {
-        NodeJson::Null => output.extend_from_slice(b"null"),
-        NodeJson::Bool(value) => output.extend_from_slice(if *value { b"true" } else { b"false" }),
+        NodeJson::Null => output.extend(b"null")?,
+        NodeJson::Bool(value) => output.extend(if *value { b"true" } else { b"false" })?,
         NodeJson::Number(value) => {
             if !value.is_finite() {
-                output.extend_from_slice(b"null");
+                output.extend(b"null")?;
             } else {
-                output.extend_from_slice(ryu_js::Buffer::new().format(*value).as_bytes());
+                output.extend(ryu_js::Buffer::new().format(*value).as_bytes())?;
             }
         }
-        NodeJson::String(value) => encode_string(value, output),
+        NodeJson::String(value) => encode_string(value, output)?,
         NodeJson::Array(values) => {
-            output.push(b'[');
+            output.push(b'[')?;
             for (index, value) in values.iter().enumerate() {
                 if index != 0 {
-                    output.push(b',');
+                    output.push(b',')?;
                 }
                 encode(value, collator, depth + 1, output)?;
             }
-            output.push(b']');
+            output.push(b']')?;
         }
         NodeJson::Object(values) => {
-            // Node sorts Object.entries with stable localeCompare, then builds
-            // Object.fromEntries. JSON.stringify enumerates integer-index keys
-            // first in numeric order, regardless of that insertion order.
+            output.checkpoint()?;
+            // Enumeration is unchanged. This vector holds references only.
             let mut entries: Vec<_> = values.iter().collect();
-            if entries
-                .iter()
-                .any(|(key, _)| char::decode_utf16(key.iter().copied()).any(|ch| ch.is_err()))
+            if collator.is_some()
+                && entries
+                    .iter()
+                    .any(|(key, _)| char::decode_utf16(key.iter().copied()).any(|ch| ch.is_err()))
             {
                 return Err(CompatibilityError::UnpairedSurrogateKey);
             }
@@ -297,27 +456,25 @@ fn encode(
                     (Some(left), Some(right)) => left.cmp(&right),
                     (Some(_), None) => Ordering::Less,
                     (None, Some(_)) => Ordering::Greater,
-                    (None, None) => collator.compare_utf16(left, right),
+                    (None, None) => {
+                        collator.map_or(Ordering::Equal, |value| value.compare_utf16(left, right))
+                    }
                 }
             });
-            output.push(b'{');
+            output.push(b'{')?;
             for (index, (key, value)) in entries.into_iter().enumerate() {
                 if index != 0 {
-                    output.push(b',');
+                    output.push(b',')?;
                 }
-                encode_string(key, output);
-                output.push(b':');
+                encode_string(key, output)?;
+                output.push(b':')?;
                 encode(value, collator, depth + 1, output)?;
             }
-            output.push(b'}');
+            output.push(b'}')?;
         }
-    }
-    if output.len() > MAX_BYTES {
-        return Err(CompatibilityError::SizeLimit);
     }
     Ok(())
 }
-
 fn array_index(key: &[u16]) -> Option<u32> {
     if key.is_empty() || (key.len() > 1 && key[0] == u16::from(b'0')) {
         return None;
@@ -333,36 +490,37 @@ fn array_index(key: &[u16]) -> Option<u32> {
     }
     (value != u32::MAX).then_some(value)
 }
-
-fn encode_string(value: &[u16], output: &mut Vec<u8>) {
+fn encode_string(value: &[u16], output: &mut JsonOutput<'_>) -> Result<(), CompatibilityError> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    output.push(b'"');
+    output.string(value.len())?;
+    output.push(b'"')?;
     for decoded in char::decode_utf16(value.iter().copied()) {
         match decoded {
-            Ok('"') => output.extend_from_slice(br#"\""#),
-            Ok('\\') => output.extend_from_slice(br"\\"),
-            Ok('\u{0008}') => output.extend_from_slice(br"\b"),
-            Ok('\u{000c}') => output.extend_from_slice(br"\f"),
-            Ok('\n') => output.extend_from_slice(br"\n"),
-            Ok('\r') => output.extend_from_slice(br"\r"),
-            Ok('\t') => output.extend_from_slice(br"\t"),
+            Ok('"') => output.extend(br#"\""#)?,
+            Ok('\\') => output.extend(br"\\")?,
+            Ok('\u{0008}') => output.extend(br"\b")?,
+            Ok('\u{000c}') => output.extend(br"\f")?,
+            Ok('\n') => output.extend(br"\n")?,
+            Ok('\r') => output.extend(br"\r")?,
+            Ok('\t') => output.extend(br"\t")?,
             Ok(character) if character >= ' ' => {
                 let mut bytes = [0_u8; 4];
-                output.extend_from_slice(character.encode_utf8(&mut bytes).as_bytes());
+                output.extend(character.encode_utf8(&mut bytes).as_bytes())?;
             }
             other => {
                 let unit = match other {
                     Ok(character) => character as u16,
                     Err(error) => error.unpaired_surrogate(),
                 };
-                output.extend_from_slice(br"\u");
+                output.extend(br"\u")?;
                 for shift in [12, 8, 4, 0] {
-                    output.push(HEX[usize::from((unit >> shift) & 15)]);
+                    output.push(HEX[usize::from((unit >> shift) & 15)])?;
                 }
             }
         }
     }
-    output.push(b'"');
+    output.push(b'"')?;
+    Ok(())
 }
 
 struct Parser<'a> {
@@ -580,6 +738,86 @@ pub fn parse_production_json_v1(input: &[u8]) -> Result<ProductionJsonValue, Com
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_wire_measurement_exact_budgets_and_cancellation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let cancelled = AtomicBool::new(false);
+        for input in [
+            br#"{"z":1,"10":2,"2":3,"surrogate":"\ud800","emoji":"\ud83d\ude00"}"#.as_slice(),
+            br#"[null,-0,1e400,true,false,"\n"]"#.as_slice(),
+        ] {
+            let value = parse_production_json_v1(input).unwrap();
+            let wire = production_json_stringify_v1(&value).unwrap();
+            let resources = production_json_resources_v1(
+                &value,
+                ProductionJsonEncodingLimitsV1::default(),
+                &cancelled,
+            )
+            .unwrap();
+            assert_eq!(resources.bytes, wire.len());
+            let limits = ProductionJsonEncodingLimitsV1 {
+                maximum_bytes: resources.bytes,
+                maximum_values: resources.values,
+                maximum_utf16_units: resources.utf16_units,
+            };
+            assert_eq!(
+                production_json_stringify_with_limits_v1(&value, limits, &cancelled).unwrap(),
+                wire
+            );
+            for tighter in [
+                ProductionJsonEncodingLimitsV1 {
+                    maximum_bytes: limits.maximum_bytes - 1,
+                    ..limits
+                },
+                ProductionJsonEncodingLimitsV1 {
+                    maximum_values: limits.maximum_values - 1,
+                    ..limits
+                },
+                ProductionJsonEncodingLimitsV1 {
+                    maximum_utf16_units: limits.maximum_utf16_units - 1,
+                    ..limits
+                },
+            ] {
+                assert_eq!(
+                    production_json_resources_v1(&value, tighter, &cancelled).unwrap_err(),
+                    CompatibilityError::EncodingBudget
+                );
+                assert_eq!(
+                    production_json_stringify_with_limits_v1(&value, tighter, &cancelled)
+                        .unwrap_err(),
+                    CompatibilityError::EncodingBudget
+                );
+            }
+            cancelled.store(true, Ordering::SeqCst);
+            assert_eq!(
+                production_json_resources_v1(&value, limits, &cancelled).unwrap_err(),
+                CompatibilityError::EncodingCancelled
+            );
+            assert_eq!(
+                production_json_stringify_with_limits_v1(&value, limits, &cancelled).unwrap_err(),
+                CompatibilityError::EncodingCancelled
+            );
+            cancelled.store(false, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn javascript_wire_retains_insertion_order_and_surrogate_keys() {
+        for (input, expected) in [
+            (
+                br#"{"z":1,"a":2,"10":3,"2":4,"z":5}"#.as_slice(),
+                br#"{"2":4,"10":3,"z":5,"a":2}"#.as_slice(),
+            ),
+            (
+                br#"{"\ud800":1,"z":-0,"n":1e400}"#.as_slice(),
+                br#"{"\ud800":1,"z":0,"n":null}"#.as_slice(),
+            ),
+        ] {
+            let value = parse_production_json_v1(input).unwrap();
+            assert_eq!(production_json_stringify_v1(&value).unwrap(), expected);
+        }
+    }
 
     #[test]
     fn integer_index_keys_follow_javascript_enumeration() {

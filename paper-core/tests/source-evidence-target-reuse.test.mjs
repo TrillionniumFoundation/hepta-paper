@@ -149,6 +149,30 @@ test('independent owner transcripts reject extra missing duplicate failed ignore
   assert.throws(() => assertExactCargoOwnerExecution('', rows + summary, 'empty selector'), /verification_selector_invalid/u);
 });
 
+test('successful exact owner permits only its single libtest long-running notice', () => {
+  const selected = 'one';
+  const notice = 'test one has been running for over 60 seconds\n';
+  const row = 'test one ... ok\n';
+  const summary = 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 61.00s\n';
+  assert.deepEqual(assertExactCargoOwnerExecution(selected, notice + row + summary, 'long owner'),
+    assertExactCargoOwnerExecution(selected, row + summary, 'ordinary owner'));
+  for (const bad of [
+    notice + summary,
+    notice + notice + row + summary,
+    row + notice + summary,
+    notice.replace('test one ', 'test other ') + row + summary,
+    notice.replace('60 seconds', '600 seconds') + row + summary,
+    notice + 'test other ... ok\n' + row + summary,
+    notice + row + row + summary,
+    notice + row.replace(' ... ok', ' ... ignored') + summary,
+    notice + row.replace(' ... ok', ' ... FAILED') + summary,
+    notice + row + summary.replace('0 failed', '1 failed'),
+    notice + row + summary.replace('0 ignored', '1 ignored'),
+    notice + row + summary + summary,
+  ]) assert.throws(() => assertExactCargoOwnerExecution(selected, bad, 'long adversarial'),
+    /verification_test_execution_incomplete/u);
+});
+
 test('capture bindings and actual inventory reject arbitrary parent source launcher cwd argv and environment', () => {
   const root = '/fixture', binding = { packageName: 'fixture' }, artifact = { path: '/target/test-owner' };
   const runtime = { node: { path: '/qualified/node' }, cargo: { path: '/qualified/cargo' } };

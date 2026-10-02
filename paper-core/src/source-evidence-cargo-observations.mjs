@@ -46,14 +46,21 @@ function buildScriptObservation(root, artifacts, executions, packageId, label) {
 export function assertExactCargoOwnerExecution(selector, stdout, label) {
   if (typeof selector !== 'string' || !SAFE_RUST_TEST_PATTERN.test(selector)) fail('verification_selector_invalid', label);
   const text = stdout.replace(/\x1b\[[0-9;]*m/gu, '');
-  const rows = text.split(/\r?\n/u).filter((line) => line.startsWith('test ') && !line.startsWith('test result:'));
+  const ownerLines = text.split(/\r?\n/u).filter((line) => line.startsWith('test ') && !line.startsWith('test result:'));
+  // Qualified libtest emits this one progress notice before a long owner ends.
+  // It is still covered by the complete physical stdout hash; another owner,
+  // duplicate notice or notice after completion must not conceal extra tests.
+  const notice = `test ${selector} has been running for over 60 seconds`;
+  const notices = ownerLines.filter((line) => line === notice);
+  const rows = ownerLines.filter((line) => line !== notice);
   const summaryLines = text.split(/\r?\n/u).filter((line) => line.startsWith('test result:'));
   const summaries = [...text.matchAll(
     /^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out;[^\r\n]*$/gmu,
   )];
   const counts = summaries.map((row) => row.slice(1, 6).map(Number));
   const expected = `test ${selector} ... ok`;
-  if (rows.length !== 1 || rows[0] !== expected || summaryLines.length !== 1 || counts.length !== 1
+  if (notices.length > 1 || (notices.length === 1 && ownerLines[0] !== notice)
+      || rows.length !== 1 || rows[0] !== expected || summaryLines.length !== 1 || counts.length !== 1
       || counts[0].some((value) => !Number.isSafeInteger(value))
       || counts[0][0] !== 1 || counts[0].slice(1, 4).some((value) => value !== 0)) {
     fail('verification_test_execution_incomplete', `${label}:exact_owner`);

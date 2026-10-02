@@ -4,7 +4,7 @@
 use super::AutomationRuntimeReconciliationError as Error;
 use serde_json::{Value, json};
 
-fn trim(value: &str) -> &str {
+pub(crate) fn trim(value: &str) -> &str {
     value.trim_matches(|c| {
         matches!(c,
         '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}' |

@@ -125,6 +125,10 @@ export const PRODUCTION_COMPLEXITY_PAYLOAD_EXCLUSIONS = Object.freeze([
     id: 'versioned-installed-online-marker-schema',
     path: 'store/schema/autonomous-research-online-mutation-marker.v1.json',
   }),
+  Object.freeze({
+    id: 'versioned-production-help-usage-data',
+    path: 'paper-core/config/paper-production-usage.v1.json',
+  }),
 ]);
 
 export const PRODUCTION_COMPLEXITY_PATH_CEILING_OVERRIDES = Object.freeze({

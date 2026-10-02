@@ -741,7 +741,12 @@ test('production inventory is reachable only from declared executable entrypoint
     .filter((file) => !exposureByCategory.experimental.has(file));
   const failures = [];
   for (const file of importable) {
-    try { await import(pathToFileURL(file).href); }
+    try {
+      await import(
+        pathToFileURL(file).href,
+        file.endsWith('.json') ? { with: { type: 'json' } } : undefined,
+      );
+    }
     catch (error) { failures.push({ relative: posix(path.relative(workspaceRoot, file)), error: error?.stack || error?.message || String(error) }); }
   }
   assert.deepEqual(failures, []);

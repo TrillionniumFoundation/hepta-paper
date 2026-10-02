@@ -297,9 +297,15 @@ pub(super) fn referenced(bytes: &[u8], needle: &str) -> bool {
     // The original observer escapes every regexp metacharacter and searches an
     // ASCII source path. Searching the exact bytes is equivalent, including
     // Node UTF-8 replacement semantics and its inserted newline boundaries.
-    bytes
-        .windows(needle.len())
-        .any(|part| part == needle.as_bytes())
+    match std::str::from_utf8(bytes) {
+        // Borrow the original source and reuse the standard literal search.
+        // Malformed UTF-8 keeps the exact byte matcher; neither path broadens
+        // the fixed retired-source names or suppresses a reference.
+        Ok(text) if !needle.is_empty() => text.contains(needle),
+        _ => bytes
+            .windows(needle.len())
+            .any(|part| part == needle.as_bytes()),
+    }
 }
 pub(super) struct Observed {
     pub summaries: BTreeMap<String, Value>,
@@ -530,6 +536,30 @@ mod tests {
             b"paperctl_modules/decision_pointsXpy",
             &entry.source_path
         ));
+        // Preserve literal byte decisions across every possible adjacent or
+        // embedded byte, including malformed UTF-8 and replacement boundaries.
+        for adjacent in 0..=u8::MAX {
+            for offset in 0..=entry.source_path.len() {
+                let mut bytes = entry.source_path.as_bytes().to_vec();
+                bytes.insert(offset, adjacent);
+                let original = bytes
+                    .windows(entry.source_path.len())
+                    .any(|part| part == entry.source_path.as_bytes());
+                assert_eq!(referenced(&bytes, &entry.source_path), original);
+            }
+        }
+        for bytes in [
+            b"aaab".as_slice(),
+            b"aaaab".as_slice(),
+            b"\xffaaab".as_slice(),
+            b"aaa\xffb".as_slice(),
+            b"aa\n ab".as_slice(),
+        ] {
+            assert_eq!(
+                referenced(bytes, "aab"),
+                bytes.windows(3).any(|part| part == b"aab")
+            );
+        }
         assert!(production_path("paper-core/src/nested/a.mjs"));
         assert!(!production_path("paper-core/test/a.mjs"));
         assert!(!production_path("paper-adapters/a.js"));

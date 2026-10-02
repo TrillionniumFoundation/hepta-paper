@@ -292,6 +292,16 @@ pub fn current_operational_code_provenance_with_cancellation_v1(
     let mut observation = super::bounded::Observation::new(cancelled)?;
     current_operational_with_observation(root, &mut observation)
 }
+/// Composition may shorten the existing ordinary 120s ceiling; it cannot
+/// extend it or replace the fixed Git/environment/source observation owner.
+pub(crate) fn current_operational_code_provenance_with_deadline_v1(
+    root: &Path,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<Value> {
+    let mut observation = super::bounded::Observation::with_deadline(cancelled, deadline)?;
+    current_operational_with_observation(root, &mut observation)
+}
 pub(super) fn current_operational_with_observation(
     root: &Path,
     observation: &mut super::bounded::Observation<'_>,

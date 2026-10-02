@@ -128,9 +128,35 @@ fn full_environment() -> Result<std::collections::BTreeMap<String, String>, Stri
 
 /// Observe actual sources through the existing health owner. Help and grammar
 /// refusal precede environment/source reads; all modes remain non-mutating.
+/// Reuse standalone/unified grammar before choosing a physical workspace.
+pub(crate) fn validate_supervisor_health_cli_arguments_v1(
+    args: &[String],
+    entry: SupervisorHealthEntryV1,
+) -> Result<bool, String> {
+    Ok(parse_options(args, entry)?.contains_key("help"))
+}
+
 pub fn inspect_supervisor_health_command_v1(
     args: &[String],
     entry: SupervisorHealthEntryV1,
+) -> Result<SupervisorHealthCommandResultV1, String> {
+    inspect_supervisor_health_command_with_directory_v1(args, entry, None)
+}
+
+/// Keep the standalone registry worker's physical working directory without
+/// changing global process state or granting supervisor execution authority.
+pub fn inspect_supervisor_health_command_in_working_directory_v1(
+    args: &[String],
+    entry: SupervisorHealthEntryV1,
+    working_directory: &Path,
+) -> Result<SupervisorHealthCommandResultV1, String> {
+    inspect_supervisor_health_command_with_directory_v1(args, entry, Some(working_directory))
+}
+
+fn inspect_supervisor_health_command_with_directory_v1(
+    args: &[String],
+    entry: SupervisorHealthEntryV1,
+    working_directory: Option<&Path>,
 ) -> Result<SupervisorHealthCommandResultV1, String> {
     let options = parse_options(args, entry)?;
     if options.contains_key("help") {
@@ -171,8 +197,11 @@ pub fn inspect_supervisor_health_command_v1(
     let current_intake = options.contains_key("require-current-machine-intake");
     let strict_intake = options.contains_key("require-strict-machine-intake-reconciliation");
     let fully_autonomous = options.contains_key("require-fully-autonomous");
-    let cwd = std::env::current_dir()
-        .map_err(|error| format!("health_runtime_root_working_directory_invalid:{error}"))?;
+    let cwd = match working_directory {
+        Some(directory) => directory.to_owned(),
+        None => std::env::current_dir()
+            .map_err(|error| format!("health_runtime_root_working_directory_invalid:{error}"))?,
+    };
     let requested_root = options
         .get("runtime-root")
         .map(|value| (*value).to_owned())
@@ -185,7 +214,13 @@ pub fn inspect_supervisor_health_command_v1(
         Some(selected) => {
             resolve_native_workspace_root_v1(&cwd, Path::new(&selected), Some(Path::new(&selected)))
         }
-        None => crate::native_workspace::current_native_command_runtime_root_v1(),
+        None => match working_directory {
+            Some(workspace) => Ok(workspace
+                .parent()
+                .unwrap_or(workspace)
+                .join("hepta-paper-runtime/native-runtime")),
+            None => crate::native_workspace::current_native_command_runtime_root_v1(),
+        },
     }
     .map_err(|error| format!("health_runtime_root_invalid:{error}"))?;
     let now = std::time::SystemTime::now()

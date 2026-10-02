@@ -1,11 +1,12 @@
 //! Closed business read projection, separate from the complete logical hash profile.
 use crate::{
-    OrdinaryReadOnlyStoreV1, ReadOnlyStoreError, node_receipts::NodeValue,
+    OrdinaryReadOnlyStoreV1, ReadOnlyStoreError, ReadOnlyStoreV1, node_receipts::NodeValue,
     node_snapshot::cell_bytes,
 };
 use rusqlite::{Connection, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use std::collections::BTreeMap;
 
 /// Closed profile v1; callers cannot enlarge its fixed safety limits.
 #[derive(Clone, Copy, Debug, Default)]
@@ -18,8 +19,22 @@ impl FixedInventoryBudgetV1 {
     pub const MAXIMUM_CELL_BYTES: usize = 64 * 1024;
     pub const MAXIMUM_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 }
+/// Actual SQLite cell coercion, captured from the existing NodeValue owner.
+/// This metadata is deliberately absent from the ordinary JSON report wire.
+#[derive(Clone, Debug)]
+pub struct InventorySqlCellCoercionV1 {
+    pub string: String,
+    pub truthy: bool,
+}
+
+trait RetainSqlCoercion {
+    fn retain_sql_coercion(&mut self, values: BTreeMap<String, InventorySqlCellCoercionV1>);
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct InventoryPaperRowV1 {
+    #[serde(skip)]
+    sql_coercions: BTreeMap<String, InventorySqlCellCoercionV1>,
     pub slug: Box<RawValue>,
     pub title: Box<RawValue>,
     pub status: Box<RawValue>,
@@ -41,6 +56,8 @@ pub struct InventoryPaperRowV1 {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct InventoryVenueRowV1 {
+    #[serde(skip)]
+    sql_coercions: BTreeMap<String, InventorySqlCellCoercionV1>,
     pub venue_id: Box<RawValue>,
     pub name: Box<RawValue>,
     pub kind: Box<RawValue>,
@@ -48,6 +65,27 @@ pub struct InventoryVenueRowV1 {
     pub deadline: Box<RawValue>,
     pub metadata_json: Box<RawValue>,
 }
+impl InventoryPaperRowV1 {
+    pub fn sql_coercions(&self) -> &BTreeMap<String, InventorySqlCellCoercionV1> {
+        &self.sql_coercions
+    }
+}
+impl InventoryVenueRowV1 {
+    pub fn sql_coercions(&self) -> &BTreeMap<String, InventorySqlCellCoercionV1> {
+        &self.sql_coercions
+    }
+}
+impl RetainSqlCoercion for InventoryPaperRowV1 {
+    fn retain_sql_coercion(&mut self, values: BTreeMap<String, InventorySqlCellCoercionV1>) {
+        self.sql_coercions = values;
+    }
+}
+impl RetainSqlCoercion for InventoryVenueRowV1 {
+    fn retain_sql_coercion(&mut self, values: BTreeMap<String, InventorySqlCellCoercionV1>) {
+        self.sql_coercions = values;
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct FixedInventoryQueryV1<T> {
     pub ok: bool,
@@ -88,7 +126,16 @@ fn encoded_bound(value: ValueRef<'_>) -> usize {
         _ => 32,
     }
 }
-fn project<T: serde::de::DeserializeOwned>(
+fn coercion_bound(value: ValueRef<'_>) -> usize {
+    match value {
+        ValueRef::Text(bytes) => bytes.len().saturating_mul(3),
+        ValueRef::Blob(bytes) => bytes.len().saturating_mul(4),
+        ValueRef::Null => 0,
+        _ => 32,
+    }
+}
+
+fn project<T: serde::de::DeserializeOwned + RetainSqlCoercion>(
     connection: &Connection,
     sql: &str,
     tables: &[&str],
@@ -137,7 +184,7 @@ fn project<T: serde::de::DeserializeOwned>(
                 ));
             }
             bound = bound
-                .checked_add(encoded_bound(value) + name.len() + 4)
+                .checked_add(encoded_bound(value) + coercion_bound(value) + name.len() + 4)
                 .ok_or(ReadOnlyStoreError::NumericOverflow)?;
         }
         if bound > local_remaining {
@@ -146,6 +193,8 @@ fn project<T: serde::de::DeserializeOwned>(
             ));
         }
         let mut raw = String::from("{");
+        let mut coercions = BTreeMap::new();
+        let mut coercion_bytes = 0_usize;
         for (index, name) in columns.iter().enumerate() {
             if index != 0 {
                 raw.push(',');
@@ -154,13 +203,30 @@ fn project<T: serde::de::DeserializeOwned>(
                 &serde_json::to_string(name).map_err(|_| ReadOnlyStoreError::Serialization)?,
             );
             raw.push(':');
-            raw.push_str(NodeValue::from_sql(row.get_ref(index)?, true)?.json());
+            let value = NodeValue::from_sql(row.get_ref(index)?, true)?;
+            raw.push_str(value.json());
+            let string = value.inventory_string();
+            coercion_bytes = coercion_bytes
+                .checked_add(string.len())
+                .ok_or(ReadOnlyStoreError::NumericOverflow)?;
+            coercions.insert(
+                name.clone(),
+                InventorySqlCellCoercionV1 {
+                    string,
+                    truthy: value.inventory_truthy(),
+                },
+            );
         }
         raw.push('}');
-        local_remaining = local_remaining.checked_sub(raw.len() + 1).ok_or(
-            ReadOnlyStoreError::OrdinaryBudgetExceeded("inventory_output_bytes_v1"),
-        )?;
-        output.push(serde_json::from_str(&raw).map_err(|_| ReadOnlyStoreError::Serialization)?);
+        local_remaining = local_remaining
+            .checked_sub(raw.len() + coercion_bytes + 1)
+            .ok_or(ReadOnlyStoreError::OrdinaryBudgetExceeded(
+                "inventory_output_bytes_v1",
+            ))?;
+        let mut projected: T =
+            serde_json::from_str(&raw).map_err(|_| ReadOnlyStoreError::Serialization)?;
+        projected.retain_sql_coercion(coercions);
+        output.push(projected);
     }
     *remaining = local_remaining;
     Ok(output)
@@ -188,33 +254,57 @@ fn outcome<T>(result: Result<Vec<T>, ReadOnlyStoreError>) -> FixedInventoryQuery
         }
     }
 }
+fn fixed_projection(
+    connection: &Connection,
+    control: &crate::ordinary::ReadControl,
+) -> FixedInventoryProjectionV1 {
+    // One bounded SQL owner for ordinary and explicitly immutable profiles.
+    let mut remaining = FixedInventoryBudgetV1::MAXIMUM_OUTPUT_BYTES - 4096;
+    let papers = outcome(project(
+        connection,
+        PAPERS,
+        &["papers", "submission_ledger", "paper_campaigns"],
+        &mut remaining,
+        control,
+    ));
+    let venues = outcome(project(
+        connection,
+        VENUES,
+        &["venues"],
+        &mut remaining,
+        control,
+    ));
+    FixedInventoryProjectionV1 {
+        version: 1,
+        papers,
+        venues,
+    }
+}
 impl OrdinaryReadOnlyStoreV1 {
     pub fn fixed_inventory_projection_v1(
         &self,
         _budget: &FixedInventoryBudgetV1,
     ) -> Result<FixedInventoryProjectionV1, ReadOnlyStoreError> {
         self.verify_unchanged()?;
-        // Reserve fixed report/query framing before either bounded query allocates rows.
-        let mut remaining = FixedInventoryBudgetV1::MAXIMUM_OUTPUT_BYTES - 4096;
-        let papers = outcome(project(
-            &self.connection,
-            PAPERS,
-            &["papers", "submission_ledger", "paper_campaigns"],
-            &mut remaining,
-            &self.control,
-        ));
-        let venues = outcome(project(
-            &self.connection,
-            VENUES,
-            &["venues"],
-            &mut remaining,
-            &self.control,
-        ));
+        let result = fixed_projection(&self.connection, &self.control);
         self.verify_unchanged()?;
-        Ok(FixedInventoryProjectionV1 {
-            version: 1,
-            papers,
-            venues,
-        })
+        Ok(result)
+    }
+}
+impl ReadOnlyStoreV1 {
+    /// Reuses the same fixed business queries without creating SQLite sidecars.
+    pub fn fixed_inventory_projection_with_cancellation_v1(
+        &self,
+        _budget: &FixedInventoryBudgetV1,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        deadline: std::time::Instant,
+    ) -> Result<FixedInventoryProjectionV1, ReadOnlyStoreError> {
+        let control = crate::ordinary::ReadControl::new(cancelled, deadline);
+        control.check()?;
+        self.verify_unchanged()?;
+        let result = fixed_projection(&self.connection, &control);
+        control.check()?;
+        self.verify_unchanged()?;
+        Ok(result)
     }
 }

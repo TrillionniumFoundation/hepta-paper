@@ -43,6 +43,19 @@ impl<'a> Observation<'a> {
         Self::select(cancelled, PathBuf::from("/usr/bin/git"), TIMEOUT_MS, true)
     }
 
+    pub(super) fn with_deadline(cancelled: &'a AtomicBool, deadline: Instant) -> Result<Self> {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or_else(|| error("code_provenance_deadline_exceeded"))?;
+        let millis = u64::try_from(remaining.as_millis())
+            .unwrap_or(TIMEOUT_MS)
+            .min(TIMEOUT_MS);
+        if millis == 0 {
+            return Err(error("code_provenance_deadline_exceeded"));
+        }
+        Self::select(cancelled, PathBuf::from("/usr/bin/git"), millis, true)
+    }
+
     fn select(
         cancelled: &'a AtomicBool,
         git_path: PathBuf,

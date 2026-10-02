@@ -73,7 +73,7 @@ fn path_text(path: &Path) -> Result<&str, String> {
 
 /// Node's Unix `path.resolve`, performed before any filesystem lookup. A
 /// backslash is an ordinary filename byte. Parent traversal clamps at root.
-fn resolve(cwd: &str, path: &str) -> String {
+pub(crate) fn resolve(cwd: &str, path: &str) -> String {
     let absolute = if path.starts_with('/') {
         path.to_owned()
     } else {

@@ -2,6 +2,10 @@
 mod cas_submission;
 #[path = "native_business_service/dispatch_recovery.rs"]
 mod dispatch_recovery;
+#[path = "native_business_service/research_data.rs"]
+mod research_data;
+#[path = "native_business_service/research_workflow.rs"]
+mod research_workflow;
 
 use hepta_campaign_writer::WriterLeaseV1;
 use hepta_control_plane::{

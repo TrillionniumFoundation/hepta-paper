@@ -65,7 +65,7 @@ use std::{
 };
 
 mod archive_process;
-mod observation;
+pub(crate) mod observation;
 use archive_process::{ArchiveExecution, require_active};
 use observation::{MAX_DOCUMENT_BYTES, ObservationBudget, SourceObservation};
 

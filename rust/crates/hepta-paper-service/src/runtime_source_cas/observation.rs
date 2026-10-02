@@ -8,14 +8,18 @@ use nix::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, Metadata},
     os::{
         fd::AsFd,
         unix::fs::{FileExt, MetadataExt},
     },
     path::{Component, Path, PathBuf},
-    sync::atomic::AtomicBool,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    },
+    time::Instant,
 };
 
 pub(super) const MAX_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
@@ -25,20 +29,34 @@ const CHANGED: &str = "r_runtime_source_cas_input_changed";
 const BOUND: &str = "r_runtime_source_cas_observation_limit_exceeded";
 
 /// One byte policy for fresh publication and subsequent status/replay.
+pub(super) struct SharedInventoryCounters {
+    bytes: AtomicU64,
+    entries: AtomicUsize,
+}
 #[derive(Default)]
 pub(super) struct ObservationBudget {
     bytes: u64,
+    shared_inventory: Option<Arc<SharedInventoryCounters>>,
 }
 impl ObservationBudget {
     pub(super) fn account(&mut self, bytes: u64, maximum: u64) -> Result<(), String> {
         if bytes > maximum {
             return Err(BOUND.to_owned());
         }
-        self.bytes = self
+        let next = self
             .bytes
             .checked_add(bytes)
             .filter(|n| *n <= MAX_TOTAL_BYTES)
             .ok_or_else(|| BOUND.to_owned())?;
+        if let Some(shared) = &self.shared_inventory {
+            shared
+                .bytes
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                    used.checked_add(bytes).filter(|n| *n <= MAX_TOTAL_BYTES)
+                })
+                .map_err(|_| BOUND.to_owned())?;
+        }
+        self.bytes = next;
         Ok(())
     }
 }
@@ -81,16 +99,51 @@ impl Pin {
     }
 }
 
-pub(super) struct SourceObservation<'a> {
+fn require_observation_active(
+    cancelled: &AtomicBool,
+    deadline: Option<Instant>,
+) -> Result<(), String> {
+    require_active(cancelled)?;
+    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        return Err("native_inventory_deadline_exceeded".to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) struct SourceObservation<'a> {
     selected: PathBuf,
     root: PathBuf,
     pins: BTreeMap<PathBuf, Pin>,
     budget: ObservationBudget,
+    absent: BTreeSet<PathBuf>,
+    inventories: BTreeMap<PathBuf, Vec<ObservedSourceEntryV1>>,
+    inventory_entry_count: usize,
     cancelled: &'a AtomicBool,
+    deadline: Option<Instant>,
 }
 impl<'a> SourceObservation<'a> {
-    pub(super) fn new(root: &Path, cancelled: &'a AtomicBool) -> Result<Self, String> {
-        require_active(cancelled)?;
+    pub(crate) fn new(root: &Path, cancelled: &'a AtomicBool) -> Result<Self, String> {
+        Self::construct(root, cancelled, None)
+    }
+
+    pub(crate) fn new_with_deadline(
+        root: &Path,
+        cancelled: &'a AtomicBool,
+        deadline: Instant,
+    ) -> Result<Self, String> {
+        Self::construct(root, cancelled, Some(deadline))
+    }
+
+    fn require_active(&self) -> Result<(), String> {
+        require_observation_active(self.cancelled, self.deadline)
+    }
+
+    fn construct(
+        root: &Path,
+        cancelled: &'a AtomicBool,
+        deadline: Option<Instant>,
+    ) -> Result<Self, String> {
+        require_observation_active(cancelled, deadline)?;
         let selected = if root.is_absolute() {
             root.to_owned()
         } else {
@@ -116,11 +169,15 @@ impl<'a> SourceObservation<'a> {
                 },
             )]),
             budget: ObservationBudget::default(),
+            absent: BTreeSet::new(),
+            inventories: BTreeMap::new(),
+            inventory_entry_count: 0,
             cancelled,
+            deadline,
         };
         let mut parent = PathBuf::from("/");
         for part in root.components() {
-            require_active(cancelled)?;
+            result.require_active()?;
             if let Component::Normal(name) = part {
                 result.child(&parent, Path::new(name), true)?;
                 parent.push(name);
@@ -130,7 +187,7 @@ impl<'a> SourceObservation<'a> {
         Ok(result)
     }
     fn child(&mut self, parent: &Path, name: &Path, directory: bool) -> Result<PathBuf, String> {
-        require_active(self.cancelled)?;
+        self.require_active()?;
         if name.components().count() != 1
             || !matches!(name.components().next(), Some(Component::Normal(_)))
         {
@@ -216,7 +273,7 @@ impl<'a> SourceObservation<'a> {
         let mut offset = 0u64;
         let mut buffer = [0u8; 64 * 1024];
         loop {
-            require_active(self.cancelled)?;
+            self.require_active()?;
             // Read at most the captured size plus one byte: an append cannot
             // extend either memory or I/O indefinitely while being observed.
             let bound = usize::try_from(
@@ -247,13 +304,13 @@ impl<'a> SourceObservation<'a> {
             return Err(CHANGED.to_owned());
         }
         pin.assert_current(&path)?;
-        require_active(self.cancelled)?;
+        self.require_active()?;
         Ok((output, format!("sha256:{:x}", digest.finalize()), offset))
     }
-    pub(super) fn document(&mut self, relative: &Path) -> Result<Vec<u8>, String> {
+    pub(crate) fn document(&mut self, relative: &Path) -> Result<Vec<u8>, String> {
         self.read(relative, MAX_DOCUMENT_BYTES, true).map(|v| v.0)
     }
-    pub(super) fn archive(
+    pub(crate) fn archive(
         &mut self,
         relative: &Path,
         maximum: u64,
@@ -268,7 +325,7 @@ impl<'a> SourceObservation<'a> {
         remaining: &mut usize,
         output: &mut Vec<String>,
     ) -> Result<(), String> {
-        require_active(self.cancelled)?;
+        self.require_active()?;
         if depth > MAX_SEED_DEPTH {
             return Err("r_runtime_source_cas_observation_depth_exceeded".to_owned());
         }
@@ -290,7 +347,7 @@ impl<'a> SourceObservation<'a> {
         )
         .map_err(|_| INVALID.to_owned())?;
         for entry in directory.iter() {
-            require_active(self.cancelled)?;
+            self.require_active()?;
             let entry = entry.map_err(|_| INVALID.to_owned())?;
             let name = entry.file_name().to_bytes();
             if name == b"." || name == b".." {
@@ -345,18 +402,28 @@ impl<'a> SourceObservation<'a> {
         self.walk(&path, "", 0, &mut remaining, &mut files)?;
         Ok(files)
     }
-    pub(super) fn assert_current(&self) -> Result<(), String> {
-        require_active(self.cancelled)?;
+    pub(crate) fn assert_current(&self) -> Result<(), String> {
+        self.require_active()?;
         if fs::canonicalize(&self.selected).ok().as_ref() != Some(&self.root) {
             return Err(CHANGED.to_owned());
         }
+        for path in &self.absent {
+            self.require_active()?;
+            match fs::symlink_metadata(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                _ => return Err(CHANGED.to_owned()),
+            }
+        }
         for (path, pin) in &self.pins {
-            require_active(self.cancelled)?;
+            self.require_active()?;
             pin.assert_current(path)?;
         }
-        require_active(self.cancelled)
+        self.require_active()
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+mod inventory;
+pub(crate) use inventory::{ObservedSourceEntryV1, SharedInventoryReadBudgetV1};

@@ -34,7 +34,7 @@ fn text(value: Option<&Value>) -> String {
     javascript_string_or_empty(value)
 }
 
-fn javascript_string(value: &Value) -> String {
+pub(crate) fn javascript_string(value: &Value) -> String {
     match value {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
@@ -84,7 +84,7 @@ fn javascript_truthy(value: &Value) -> bool {
     }
 }
 
-fn javascript_json_number(value: &serde_json::Number) -> Value {
+pub(crate) fn javascript_json_number(value: &serde_json::Number) -> Value {
     // The request has already crossed JSON.parse in the incumbent.  Rebuild
     // the observable JSON value from the rounded binary64 Number so unsafe
     // integers and exponent spellings cannot retain serde's source lexeme.

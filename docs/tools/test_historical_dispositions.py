@@ -143,5 +143,89 @@ class DispositionTests(unittest.TestCase):
             self.assertFalse(json.loads(destination.read_text())['completeContentObservation'])
 
 
+    def test_recorded_semantic_selection_binds_both_successors_and_frozen_input(self):
+        with tempfile.TemporaryDirectory(prefix='hepta-semantic-selection-') as directory:
+            root = pathlib.Path(directory)
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root,
+                                               stderr=subprocess.PIPE).decode().strip()
+            git('init', '-q')
+            git('config', 'user.name', 'test')
+            git('config', 'user.email', 'test@invalid.example')
+            old_bytes = b'fn original() {}\n'
+            (root / 'a.rs').write_bytes(old_bytes)
+            git('add', '.'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'old')
+            old = git('rev-parse', 'HEAD'); old_blob = git('rev-parse', 'HEAD:a.rs')
+            archive = root / MODULE.ARCHIVE; archive.mkdir(parents=True)
+            (archive / 'remote-heads-before.txt').write_text(f'{old} refs/heads/history\n')
+            ledger = {'branchHistoryDecisions': [], 'observedCurrentFiles': {},
+                      'sourceDecisions': [{'id': 'source-1', 'oldPath': 'a.rs',
+                      'oldGitBlob': old_blob, 'newPaths': ['a.rs', 'b.rs'],
+                      'decision': 'compatibility-port', 'rationale': 'selected explicit port'}]}
+            (archive / 'final-source-decision-ledger.json.gz').write_bytes(
+                gzip.compress(json.dumps(ledger).encode(), mtime=0))
+            (root / 'a.rs').write_text('fn current() {}\n')
+            (root / 'b.rs').write_text('fn other() {}\n')
+            review = {'oldPath': 'a.rs', 'oldGitBlob': old_blob,
+                      'oldContentSha256': MODULE.digest(old_bytes),
+                      'currentPaths': [{'path': name, 'gitBlob': git('hash-object', name),
+                                        'mode': '100644'} for name in ['a.rs', 'b.rs']],
+                      'decision': 'absorb', 'rationale': 'recorded source selection only'}
+            registry = {'kind': 'HistoricalSourceSemanticSelectionV1', 'version': 1,
+                        'scope': 'mapped_source_content_only_no_behavior_or_runtime_authority',
+                        'sourceReviews': [review]}
+            target = root / MODULE.SEMANTIC_REVIEWS; target.parent.mkdir(parents=True)
+            target.write_text(json.dumps(registry))
+            git('add', '.'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'selected source')
+            head = git('rev-parse', 'HEAD')
+            report = MODULE.build_report(root, head)
+            self.assertEqual(report['sourceDispositionCounts'], {'absorb': 1})
+            self.assertEqual(report['sourceReviewStateCounts'], {'matched_current_paths': 1})
+            self.assertTrue(all(value is False for value in report['authority'].values()))
+            registry['sourceReviews'][0]['decision'] = 'reject'
+            target.write_text(json.dumps(registry))
+            self.assertEqual(MODULE.build_report(root, head), report)
+            # One changed successor invalidates the complete recorded vector.
+            git('checkout', '--', str(MODULE.SEMANTIC_REVIEWS))
+            (root / 'b.rs').write_text('fn changed() {}\n')
+            git('add', '.'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'one successor changed')
+            stale = MODULE.build_report(root, git('rev-parse', 'HEAD'))
+            self.assertEqual(stale['sourceDispositionCounts'], {'reference': 1})
+            self.assertEqual(stale['sourceReviewStateCounts'], {'current_paths_changed': 1})
+            registry['sourceReviews'][0]['oldContentSha256'] = 'sha256:' + 'f' * 64
+            target.write_text(json.dumps(registry))
+            git('add', '.'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'wrong observed old bytes')
+            with self.assertRaisesRegex(ValueError, 'old-content digest mismatch'):
+                MODULE.build_report(root, git('rev-parse', 'HEAD'))
+
+    def test_semantic_registry_refuses_duplicate_foreign_or_authorizing_records(self):
+        ledger = {'sourceDecisions': [{'oldPath': 'a.rs', 'oldGitBlob': 'a' * 40,
+                                      'newPaths': ['a.rs', 'b.rs']}]}
+        row = {'oldPath': 'a.rs', 'oldGitBlob': 'a' * 40,
+               'oldContentSha256': 'sha256:' + 'b' * 64,
+               'currentPaths': [{'path': name, 'gitBlob': 'c' * 40, 'mode': '100644'}
+                                for name in ['a.rs', 'b.rs']],
+               'decision': 'supersede', 'rationale': 'selected owner content'}
+        value = {'kind': 'HistoricalSourceSemanticSelectionV1', 'version': 1,
+                 'scope': 'mapped_source_content_only_no_behavior_or_runtime_authority',
+                 'sourceReviews': [row]}
+        self.assertEqual(len(MODULE.parse_semantic_reviews(json.dumps(value).encode(), ledger)), 1)
+        variants = []
+        import copy
+        v = copy.deepcopy(value); v['executionAuthority'] = True; variants.append(v)
+        v = copy.deepcopy(value); v['sourceReviews'].append(copy.deepcopy(row)); variants.append(v)
+        v = copy.deepcopy(value); v['sourceReviews'][0]['oldGitBlob'] = 'd' * 40; variants.append(v)
+        v = copy.deepcopy(value); v['sourceReviews'][0]['currentPaths'].pop(); variants.append(v)
+        v = copy.deepcopy(value); v['sourceReviews'][0]['currentPaths'][1]['path'] = 'elsewhere.rs'; variants.append(v)
+        v = copy.deepcopy(value); v['sourceReviews'][0]['currentPaths'][1]['mode'] = '120000'; variants.append(v)
+        v = copy.deepcopy(value); v['version'] = True; variants.append(v)
+        for invalid in variants:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                MODULE.parse_semantic_reviews(json.dumps(invalid).encode(), ledger)
+        raw = json.dumps(value).replace('"version": 1', '"version": 1, "version": 1')
+        with self.assertRaisesRegex(ValueError, 'duplicate'):
+            MODULE.parse_semantic_reviews(raw.encode(), ledger)
+
+
 if __name__ == '__main__':
     unittest.main()

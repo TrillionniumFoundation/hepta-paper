@@ -56,6 +56,84 @@ def source_decision(old: str, selected: list[dict], previous: dict, policy: str)
     return 'reference'
 
 
+SEMANTIC_REVIEWS = pathlib.Path('docs/system/evidence/historical-source-semantic-selection-v1.json')
+
+
+def parse_semantic_reviews(raw: bytes, ledger: dict) -> dict:
+    def pairs(values):
+        result = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError('duplicate semantic selection JSON key')
+            result[key] = value
+        return result
+    if len(raw) > 2 * 1024 * 1024:
+        raise ValueError('semantic selection input exceeds bound')
+    value = json.loads(raw, object_pairs_hook=pairs,
+                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError('nonfinite semantic selection')))
+    if (not isinstance(value, dict)
+            or set(value) != {'kind', 'version', 'scope', 'sourceReviews'}
+            or value['kind'] != 'HistoricalSourceSemanticSelectionV1'
+            or type(value['version']) is not int or value['version'] != 1
+            or value['scope'] != 'mapped_source_content_only_no_behavior_or_runtime_authority'
+            or not isinstance(value['sourceReviews'], list)
+            or len(value['sourceReviews']) > 4096):
+        raise ValueError('closed semantic selection schema required')
+    historic = {(row['oldPath'], row['oldGitBlob']): set(row['newPaths'])
+                for row in ledger['sourceDecisions']}
+    result = {}
+    for row in value['sourceReviews']:
+        if not isinstance(row, dict) or set(row) != {
+            'oldPath', 'oldGitBlob', 'oldContentSha256', 'currentPaths', 'decision', 'rationale'
+        }:
+            raise ValueError('closed semantic source record required')
+        key = (row['oldPath'], row['oldGitBlob'])
+        if key not in historic or key in result or not OID.fullmatch(row['oldGitBlob']):
+            raise ValueError('unknown or duplicate semantic source subject')
+        if (not isinstance(row['oldContentSha256'], str)
+                or not re.fullmatch(r'sha256:[0-9a-f]{64}', row['oldContentSha256'])
+                or row['decision'] not in {'absorb', 'supersede', 'reference', 'reject'}
+                or not isinstance(row['rationale'], str) or not row['rationale'].strip()
+                or len(row['rationale'].encode()) > 8192
+                or any(ord(c) < 32 for c in row['rationale'])
+                or not isinstance(row['currentPaths'], list)
+                or len(row['currentPaths']) > 256):
+            raise ValueError('invalid semantic source selection')
+        paths = []
+        for selected in row['currentPaths']:
+            if (not isinstance(selected, dict) or set(selected) != {'path', 'gitBlob', 'mode'}
+                    or not isinstance(selected['path'], str)
+                    or selected['path'] not in historic[key]
+                    or not isinstance(selected['gitBlob'], str)
+                    or not OID.fullmatch(selected['gitBlob'])
+                    or selected['mode'] not in {'100644', '100755'}):
+                raise ValueError('invalid semantic successor binding')
+            paths.append(selected['path'])
+        if paths != sorted(set(paths)) or set(paths) != historic[key]:
+            raise ValueError('semantic selection must bind every mapped successor exactly once')
+        result[key] = row
+    return result
+
+
+def semantic_source_selection(row: dict, review: dict | None, old_content_digest: str | None) -> tuple[str, str]:
+    if review is None:
+        return row['decision'], 'not_recorded'
+    if not row['oldBlobAvailable']:
+        return 'reference', 'old_blob_unavailable'
+    if old_content_digest != review['oldContentSha256']:
+        raise ValueError('semantic review old-content digest mismatch')
+    actual = []
+    for item in row['currentPaths']:
+        current = item['current']
+        if current is None or current['kind'] != 'blob':
+            return 'reference', 'current_paths_changed'
+        actual.append({'path': item['path'], 'gitBlob': current['gitBlob'], 'mode': current['mode']})
+    if sorted(actual, key=lambda item: item['path']) != review['currentPaths']:
+        return 'reference', 'current_paths_changed'
+    return review['decision'], 'matched_current_paths'
+
+
+
 def parse_heads(snapshot: bytes) -> list[tuple[str, str]]:
     heads = []
     refs = set()
@@ -120,6 +198,10 @@ def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARC
                  for row in ledger['branchHistoryDecisions']}
     if any(ref not in refs for ref in histories):
         raise ValueError('historical decision references an uncaptured branch')
+    registry_entry = selected_tree.get(str(SEMANTIC_REVIEWS))
+    registry_raw = git(root, 'show', f'{candidate}:{SEMANTIC_REVIEWS}') if registry_entry else None
+    reviews = parse_semantic_reviews(registry_raw, ledger) if registry_raw is not None else {}
+    review_states = collections.Counter()
     source_rows = []
     missing = set(missing_archived_commits)
     for row in ledger['sourceDecisions']:
@@ -133,7 +215,9 @@ def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARC
         if not available:
             missing.add(old)
         paths = [{'path': path, 'current': selected_tree.get(path)} for path in row['newPaths']]
-        source_rows.append({
+        review = reviews.get((row['oldPath'], old))
+        old_digest = digest(git(root, 'cat-file', 'blob', old)) if available and review else None
+        selected_source = {
             'id': row['id'], 'oldPath': row['oldPath'], 'oldGitBlob': old,
             'oldBlobAvailable': available, 'currentPaths': paths,
             'historicalPolicy': row['decision'],
@@ -141,7 +225,14 @@ def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARC
                 if available else 'reference',
             'historicalRationale': row['rationale'],
             'scope': 'exact-source-selection-only-not-runtime-equivalence',
-        })
+        }
+        decision, review_state = semantic_source_selection(selected_source, review, old_digest)
+        selected_source['decision'] = decision
+        selected_source['sourceReviewState'] = review_state
+        if review is not None:
+            selected_source['sourceSelectionRationale'] = review['rationale']
+        review_states[review_state] += 1
+        source_rows.append(selected_source)
     by_source = {row['id']: row for row in source_rows}
     if len(by_source) != len(source_rows):
         raise ValueError('duplicate historical source decision identity')
@@ -200,7 +291,10 @@ def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARC
     return {
         'kind': 'CurrentHistoricalSourceDispositionObservationV1', 'version': 1,
         'candidateCommit': candidate, 'candidateTree': candidate_tree,
-        'inputs': {'archivedHeadsSha256': digest(snapshot), 'archivedLedgerSha256': digest(ledger_bytes)},
+        'inputs': {'archivedHeadsSha256': digest(snapshot), 'archivedLedgerSha256': digest(ledger_bytes),
+                   'semanticSourceReviewSha256': digest(registry_raw) if registry_raw is not None else None},
+        'semanticSourceReviewCount': len(reviews),
+        'sourceReviewStateCounts': dict(sorted(review_states.items())),
         'branchCount': len(branches), 'uniqueTipCount': len(comparisons),
         'sourceVariantCount': len(source_rows),
         'branchDispositionCounts': dict(sorted(collections.Counter(row['decision'] for row in branches).items())),
@@ -210,7 +304,7 @@ def build_report(root: pathlib.Path, candidate: str, archive: pathlib.Path = ARC
         'branches': branches, 'sourceDecisions': source_rows, 'contentComparisons': comparisons,
         'authority': {'independentReviewVerified': False, 'behavioralParityAccepted': False,
                       'productionActivation': False, 'nodeRetirement': False, 'automaticMerge': False},
-        'scope': 'Every archived head, including old ancestors; unique-tip observations are stored once. Changed current owners remain reference until separately reviewed. No old receipt qualifies this subject.',
+        'scope': 'Every archived head, including old ancestors; unique-tip observations are stored once. Changed current owners remain reference unless their complete selected path/blob/mode vector matches the candidate-bound source review registry. No old receipt qualifies this subject.',
     }
 
 

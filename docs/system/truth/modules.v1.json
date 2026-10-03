@@ -784,7 +784,9 @@
         "rust/crates/hepta-paper-service/src/advanced_numerical.rs",
         "rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs",
         "rust/crates/hepta-paper-service/src/scientific_runtime.rs",
-        "rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs"
+        "rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs",
+        "rust/crates/hepta-paper-service/src/ordinary_advanced_numerical_plugin.rs",
+        "rust/crates/hepta-paper-service/src/ordinary_advanced_numerical_plugin"
       ],
       "capabilityIds": [
         "CAP-NUMERICAL"

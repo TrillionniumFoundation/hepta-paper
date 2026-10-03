@@ -8,7 +8,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { COMMAND_REGISTRY_ROUTES } from '../../paper-core/src/command-registry-routes.mjs';
 import { captureCommittedSourceSubject } from '../../paper-core/src/source-evidence-git-inputs.mjs';
+import { captureOwnRouteReplayGuardV1, assertOwnRouteReplayGuardV1 } from './node-rust-route-replay-guard.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { ASSET_DOMAIN_PROFILES_V1, assetHandoffDiagnosticV1 } from './node-rust-asset-route-acceptance.mjs';
 import { REFERENCE_STATUS_PROFILES_V1, referenceStatusFixtureV1, closeReferenceStatusFixtureV1, expectedReferenceStatusV1 } from './node-rust-reference-route-acceptance.mjs';
 import { STORE_STATUS_PROFILES_V1, storeStatusFixtureV1, expectedStoreStatusV1, closeStoreStatusFixtureV1, observeStoreWalFilesV1, storeWalContentV1, validateStoreWalReadCoordinationV1, assertStoreWalReadCoordinationClaimV1, observeStoreClosedWalFilesV1, validateStoreClosedWalReadCoordinationV1, assertStoreClosedWalReadCoordinationClaimV1 } from './node-rust-store-route-acceptance.mjs';
 
@@ -19,6 +21,10 @@ const canonical = value => Array.isArray(value) ? value.map(canonical)
     ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const digest = value => hash(JSON.stringify(canonical(value)));
 const verified = new WeakSet();
+const verifiedContexts = new WeakMap(), runtimeContexts = new WeakMap(), observationContexts = new WeakMap();
+const invalidatedContexts = new WeakSet();
+let ownIndependentReplay = null, ownReplayInFlight = null; // module-private, this consumer/process only
+let physicalGeneration = Object.freeze({}); // route selection alone does not revoke a current summary
 const authority = Object.freeze({ productionActivation: false, targetHostQualification: false,
   releaseAuthority: false, submissionAuthority: false, writerCutover: false, nodeRetirement: false });
 const environmentKeys = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'USER', 'TMPDIR', 'CARGO_HOME',
@@ -34,6 +40,151 @@ function run(program, args, options = {}) {
 function sourceSubject() {
   return captureCommittedSourceSubject(ROOT);
 }
+// Cargo preparation may create/remove its SQLite journal. Observe that exact
+// development-cache lifecycle before establishing a reusable input epoch.
+// This helper cannot create a replay context or grant product authority.
+async function beginOwnCargoPreparationWatchV1() {
+  const environment = safeEnvironment(), home = environment.CARGO_HOME || path.join(environment.HOME || '', '.cargo');
+  const script = path.join(ROOT, 'docs/tools/node-rust-route-build-watch.py');
+  const scriptBefore = capturePinnedJsonBytes(script);
+  const child = spawn('python3', [script], { cwd: ROOT, env: environment, shell: false,
+    stdio: ['pipe', 'pipe', 'pipe'] });
+  const messages = [], waiters = []; let buffered = '', bytes = 0, stderr = '', failure = null;
+  const closed = new Promise(resolve => {
+    child.once('error', error => { failure ||= error; resolve({ code: null, signal: null }); });
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  child.stdin.on('error', error => { failure ||= error; });
+  child.stdout.on('data', chunk => {
+    bytes += chunk.length;
+    if (bytes > 1024 * 1024) { failure ||= new Error('route_acceptance_cargo_watch_output_limit'); child.kill('SIGTERM'); return; }
+    buffered += chunk;
+    while (buffered.includes('\n')) {
+      const at = buffered.indexOf('\n'), line = buffered.slice(0, at); buffered = buffered.slice(at + 1);
+      try {
+        const message = JSON.parse(line), waiting = waiters.shift();
+        if (waiting) waiting(message); else messages.push(message);
+      } catch (error) { failure ||= error; child.kill('SIGTERM'); }
+    }
+  });
+  child.stderr.on('data', chunk => {
+    if (Buffer.byteLength(stderr) + chunk.length > 65536) { failure ||= new Error('route_acceptance_cargo_watch_output_limit'); child.kill('SIGTERM'); }
+    else stderr += chunk;
+  });
+  const within = async (promise, milliseconds) => {
+    let timer;
+    try { return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('route_acceptance_cargo_watch_timeout')), milliseconds);
+    })]); } finally { clearTimeout(timer); }
+  };
+  const next = () => within(messages.length ? Promise.resolve(messages.shift()) : new Promise(resolve => waiters.push(resolve)), 30000);
+  const abort = async () => { child.kill('SIGTERM'); await within(closed, 30000); };
+  try {
+    child.stdin.write(`${JSON.stringify({ parent: home })}\n`);
+    const ready = await next();
+    if (failure || ready.ready !== true || ready.parent !== home) throw failure || new Error('route_acceptance_cargo_watch_unavailable');
+    return { ready, abort, complete: async () => {
+      child.stdin.end('finish\n');
+      const proof = await next(), status = await within(closed, 30000);
+      const scriptAfter = capturePinnedJsonBytes(script);
+      if (failure || status.code !== 0 || status.signal || proof.complete !== true || proof.failure !== null
+        || JSON.stringify(scriptBefore.identity) !== JSON.stringify(scriptAfter.identity)
+        || !scriptBefore.bytes.equals(scriptAfter.bytes) || buffered !== '' || messages.length !== 0) {
+        throw failure || new Error('route_acceptance_cargo_watch_changed_or_incomplete');
+      }
+      return proof;
+    } };
+  } catch (error) { await abort(); throw error; }
+}
+function assertOwnCargoPreparationTransitionV1(before, after, ready, proof) {
+  const error = () => { throw new Error('route_acceptance_own_replay_current_inputs_changed'); };
+  const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  const identity = value => Array.isArray(value) && value.length === 9 && value.every(field => typeof field === 'string' && /^\d+$/u.test(field));
+  if (proof.parent !== ready.parent || !identity(ready.identity) || !identity(proof.beforeIdentity) || !identity(proof.afterIdentity)
+    || !same(ready.identity, proof.beforeIdentity) || !same(ready.namespace, proof.namespace)
+    || !same(proof.beforeIdentity.slice(0, 7), proof.afterIdentity.slice(0, 7))
+    || !Number.isSafeInteger(proof.journalCreates) || proof.journalCreates < 0 || proof.journalCreates > 4096
+    || proof.journalCreates !== proof.journalDeletes || !Array.isArray(proof.journals)
+    || proof.journals.length !== proof.journalCreates || !Array.isArray(proof.events) || proof.events.length > 4096) error();
+  for (const journal of proof.journals) {
+    if (!identity(journal.createdIdentity) || !identity(journal.deletedIdentity)
+      || !same(journal.createdIdentity.slice(0, 5), journal.deletedIdentity.slice(0, 5))
+      || journal.createdIdentity[5] !== '1' || journal.deletedIdentity[5] !== '0') error();
+  }
+  if (!proof.cacheFiles || Object.keys(proof.cacheFiles).sort().join(',') !== '.global-cache,.package-cache,.package-cache-mutate') error();
+  for (const [name, entry] of Object.entries(proof.cacheFiles)) {
+    if (!identity(entry.beforeIdentity) || !identity(entry.afterIdentity)
+      || !same(entry.beforeIdentity.slice(0, 6), entry.afterIdentity.slice(0, 6))) error();
+    if (name !== '.global-cache' && (!same(entry.beforeIdentity, entry.afterIdentity)
+      || !/^sha256:[a-f0-9]{64}$/u.test(entry.beforeSha256) || entry.beforeSha256 !== entry.afterSha256)) error();
+  }
+  for (const event of proof.events) {
+    if (!Number.isSafeInteger(event.mask) || event.cookie !== 0
+      || (event.name === '.global-cache' ? ![2, 8].includes(event.mask)
+        : ['.package-cache', '.package-cache-mutate'].includes(event.name) ? event.mask !== 8
+          : event.name === '.global-cache-journal' ? ![2, 8, 256, 512].includes(event.mask) : true)) error();
+  }
+  const adjusted = structuredClone(after); adjusted.native = null;
+  for (const [index, entry] of before.configurations.entries()) if (entry.absent && entry.parent.path === proof.parent) {
+    const current = adjusted.configurations[index];
+    if (!current?.absent || current.parent.path !== proof.parent
+      || !same(entry.parent.identity, proof.beforeIdentity) || !same(current.parent.identity, proof.afterIdentity)
+      || !same({ namesCount: entry.parent.namesCount, namesSha256: entry.parent.namesSha256 }, ready.namespace)
+      || !same({ namesCount: current.parent.namesCount, namesSha256: current.parent.namesSha256 }, proof.namespace)) error();
+    if (!same(entry.parent.identity, current.parent.identity) && proof.journalCreates === 0) error();
+    // The sole preparation exception is the observed journal's parent clocks.
+    // Complete namespaces, modes, principals, inodes, sizes and all other
+    // missing paths/config bytes remain exact. Reusable epochs have no exception.
+    current.parent.identity[7] = entry.parent.identity[7]; current.parent.identity[8] = entry.parent.identity[8];
+  }
+  if (!same(before, adjusted)) {
+    // Preserve bounded physical field diagnostics without accepting any drift.
+    // Captured contexts contain physical inputs and hashed ambient environment,
+    // and this diagnostic never becomes a replay context or verdict.
+    const differences = []; let inspected = 0;
+    const visit = (left, right, field) => {
+      if (++inspected > 131072 || differences.length >= 32 || left === right) return;
+      if (left && right && typeof left === 'object' && typeof right === 'object') {
+        for (const key of [...new Set([...Object.keys(left), ...Object.keys(right)])]) {
+          visit(left[key], right[key], `${field}.${key}`);
+          if (inspected > 131072 || differences.length >= 32) break;
+        }
+      } else {
+        const bounded = value => {
+          const bytes = JSON.stringify(value);
+          return bytes === undefined ? null : bytes.length <= 1024 ? value : { sha256: hash(bytes), bytes: Buffer.byteLength(bytes) };
+        };
+        differences.push({ field, beforePresent: left !== undefined, afterPresent: right !== undefined,
+          before: bounded(left), after: bounded(right) });
+      }
+    };
+    visit(before, adjusted, '$');
+    const changed = new Error('route_acceptance_own_replay_current_inputs_changed');
+    changed.physicalContextDifferences = differences;
+    throw changed;
+  }
+}
+async function prepareOwnConsumerRuntimeV1(pending) {
+  if (pending.preparedReplay) {
+    assertOwnConsumerCurrent(pending.preparedReplay);
+    return pending.preparedReplay;
+  }
+  const watcher = await beginOwnCargoPreparationWatchV1();
+  try {
+    const before = captureOwnRouteReplayGuardV1(ROOT, safeEnvironment());
+    if (invalidatedContexts.has(pending.generation)
+      || JSON.stringify(before) !== JSON.stringify(pending.startingGuard)) {
+      throw new Error('route_acceptance_own_replay_current_inputs_changed');
+    }
+    const runtime = buildNativeOwners(), buildContext = runtimeContexts.get(runtime);
+    const guard = captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), runtime, buildContext);
+    const proof = await watcher.complete();
+    assertOwnCargoPreparationTransitionV1(before, guard, watcher.ready, proof);
+    assertOwnRouteReplayGuardV1(guard, ROOT, safeEnvironment(), runtime, buildContext);
+    return { runtime, buildContext, guard, generation: pending.generation };
+  } catch (error) { await watcher.abort(); invalidateOwnPhysicalGeneration(pending.generation); throw error; }
+}
+
 function freeze(value) {
   if (value && typeof value === 'object') {
     Object.values(value).forEach(freeze);
@@ -73,7 +224,8 @@ const contracts = [
   { routeId: 'operator/workspace', binary: 'hepta-paper-rust', nativePrefix: ['operator', 'workspace'],
     flags: ['require-decoupled'], profiles: workspaceProfiles, modes: [[], ['--require-decoupled']] },
   { routeId: 'verify/repository-assets', binary: 'hepta-paper-rust', nativePrefix: ['verify', 'repository-assets'],
-    flags: ['handoff', 'require-externalized'], profiles: assetProfiles,
+    flags: ['handoff', 'require-externalized'], profiles: [...assetProfiles, ...ASSET_DOMAIN_PROFILES_V1.map(row => row.profile)],
+    dataDomainProfiles: ASSET_DOMAIN_PROFILES_V1,
     modes: [[], ['--handoff'], ['--require-externalized'], ['--handoff', '--require-externalized'],
       ['--require-externalized', '--handoff']] },
 ].map(contract => ({ ...contract, strategy: 'semantic-readonly-utf8-v1',
@@ -167,6 +319,7 @@ function inventory(root, identities, wal = null, purpose = null) {
 }
 function write(file, bytes) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, bytes); }
 function assetFixture(fixture, profile) {
+  const domain = ASSET_DOMAIN_PROFILES_V1.find(row => row.profile === profile);
   const deployed = path.join(fixture, 'deployment');
   for (const file of ['hepta-paper.mjs', 'repository-asset-status.mjs']) {
     write(path.join(deployed, 'paper-core/bin', file), fs.readFileSync(path.join(ROOT, 'paper-core/bin', file)));
@@ -185,7 +338,7 @@ function assetFixture(fixture, profile) {
     fs.renameSync(path.join(deployed, '资产/identity.txt'), path.join(deployed, '资产/身份.txt'));
     Object.assign(asset, { assetId: '资产-fixture', sourcePath: '资产', identityFile: '资产/身份.txt' });
   }
-  if (profile === 'ready') {
+  if (profile === 'ready' || domain) {
     asset.migrationStatus = 'externalized';
     const receipt = { version: 1, kind: 'RepositoryAssetExternalRestoreDrillReceipt',
       status: 'repository_asset_external_restore_verified', assetId: asset.assetId,
@@ -194,6 +347,13 @@ function assetFixture(fixture, profile) {
     receipt.repositoryAssetExternalRestoreDrillReceiptHash = hashRecord('RepositoryAssetExternalRestoreDrillReceipt', receipt);
     asset.externalReference = { kind: asset.requiredExternalReferenceKind, location: 'cas://controlled-fixture',
       digest: receipt.externalReferenceDigest, restoreDrillReceipt: receipt };
+  }
+  if (domain) {
+    if (domain.kind === 'date') asset.externalReference.restoreDrillReceipt.verifiedAt = structuredClone(domain.value);
+    else asset[domain.field] = domain.usesIdentityHash ? [asset.expectedIdentitySha256] : structuredClone(domain.value);
+    const receipt = asset.externalReference.restoreDrillReceipt;
+    delete receipt.repositoryAssetExternalRestoreDrillReceiptHash;
+    receipt.repositoryAssetExternalRestoreDrillReceiptHash = hashRecord('RepositoryAssetExternalRestoreDrillReceipt', receipt);
   }
   if (profile === 'identity-drift') write(path.join(deployed, 'asset/identity.txt'), 'changed\n');
   if (profile === 'identity-missing') fs.unlinkSync(path.join(deployed, 'asset/identity.txt'));
@@ -209,7 +369,9 @@ function assetFixture(fixture, profile) {
   const manifest = { version: profile === 'invalid-version' ? 2 : 1,
     kind: 'RepositoryAssetExternalizationManifest', assets: profile === 'duplicate-id' ? [asset, asset] : [asset] };
   const manifestPath = path.join(deployed, 'paper-core/config/repository-asset-externalization.v1.json');
-  if (profile !== 'manifest-missing') write(manifestPath, profile === 'manifest-malformed' ? '{not JSON' : JSON.stringify(manifest));
+  let encoded = JSON.stringify(manifest);
+  if (domain?.rawJsonValue) encoded = encoded.replace(JSON.stringify(domain.value), domain.rawJsonValue);
+  if (profile !== 'manifest-missing') write(manifestPath, profile === 'manifest-malformed' ? '{not JSON' : encoded);
   return { cwd: deployed, environment: { HEPTA_PAPER_WORKSPACE_ROOT: deployed }, node: [path.join(deployed, 'paper-core/bin/hepta-paper.mjs'), 'verify', 'repository-assets'] };
 }
 function workspaceFixture(fixture, profile) {
@@ -263,13 +425,20 @@ function describeCase(contract) {
       profile: normalProfile, argv: [], kind: 'death', signal })),
   ];
 }
+// A pure projection from the exact same executable case owner; publishers do
+// not duplicate formulas or make these counts an acceptance credential.
+export function routeAcceptanceCaseCountsV1() {
+  return freeze(Object.fromEntries(allContracts.map(row => [row.routeId, describeCase(row).length])));
+}
+
 function diagnostic(output, fixture) {
   if (output.signal) return { outcome: 'unknown-result', signal: output.signal, exitCode: null, stdout: null };
   if (output.stdout.trim()) return { outcome: 'report', exitCode: output.status,
     stdout: normalize(JSON.parse(output.stdout), fixture), diagnostic: output.stderr.trim() ? normalize(output.stderr.trim(), fixture) : null };
   let error;
   try { error = JSON.parse(output.stderr).error; } catch { /* Native diagnostics are plain text. */ }
-  error ??= /(?:unknown_cli_option|boolean_cli_option_does_not_take_value|duplicate_cli_option|unexpected_cli_positional):[^\s"']+|unexpected_cli_argument_separator|command_arguments_require_separator|command_does_not_accept_arguments|empty_cli_option|repository_asset_externalization_handoff_blocked:[^\s"']+/.exec(output.stderr)?.[0];
+  error ??= assetHandoffDiagnosticV1(output.stderr);
+  error ??= /(?:unknown_cli_option|boolean_cli_option_does_not_take_value|duplicate_cli_option|unexpected_cli_positional):[^\s"']+|unexpected_cli_argument_separator|command_arguments_require_separator|command_does_not_accept_arguments|empty_cli_option/.exec(output.stderr)?.[0];
   if (!error && /retirement_reference_[a-z_]+/.test(output.stderr)) error = /retirement_reference_[a-z_]+/.exec(output.stderr)[0];
   if (!error && /Read-only paper store missing:/.test(output.stderr)) error = 'store-database-missing';
   if (!error && /file is not a database/.test(output.stderr)) error = 'sqlite-database-invalid';
@@ -328,8 +497,9 @@ function expectedBehavior(contract, testCase, result) {
     return result.outcome === 'refusal' && result.exitCode === 1
       && result.error === (testCase.profile === 'manifest-missing' ? 'input-unreadable' : 'input-json-invalid');
   }
-  const pending = ['pending', 'utf8-paths'].includes(testCase.profile);
-  const blocked = !['ready', 'pending', 'utf8-paths'].includes(testCase.profile);
+  const domain = ASSET_DOMAIN_PROFILES_V1.find(row => row.profile === testCase.profile);
+  const state = domain?.expectedState ?? (testCase.profile === 'ready' ? 'ready' : ['pending', 'utf8-paths'].includes(testCase.profile) ? 'pending' : 'blocked');
+  const pending = state === 'pending', blocked = state === 'blocked';
   const handoff = testCase.argv.includes('--handoff');
   if (blocked && handoff) return result.outcome === 'refusal' && result.exitCode === 1
     && result.error.startsWith('repository_asset_externalization_handoff_blocked:');
@@ -338,7 +508,7 @@ function expectedBehavior(contract, testCase, result) {
   return result.outcome === 'report' && result.exitCode === expectedCode
     && inspection?.version === 1 && inspection?.kind === 'RepositoryAssetExternalizationInspection'
     && inspection.repositoryBoundaryReady === !blocked
-    && inspection.fullyExternalized === (testCase.profile === 'ready')
+    && inspection.fullyExternalized === (state === 'ready')
     && inspection.status === (blocked ? 'repository_asset_boundary_blocked' : pending
       ? 'repository_asset_boundary_ready_externalization_pending' : 'repository_assets_externalized')
     && (!handoff || result.stdout.kind === 'RepositoryAssetExternalizationHandoff');
@@ -358,27 +528,41 @@ export function buildNativeOwners({ extraBinaries = [] } = {}) {
     ...binaries.flatMap(binary => ['--bin', binary]), '--message-format=json'];
   const output = run('cargo', args, { env: { ...safeEnvironment(), CARGO_TARGET_DIR: target } });
   if (output.status !== 0) throw new Error(`route_acceptance_native_build_failed:${output.stderr}`);
-  const owners = {};
+  const owners = {}, artifacts = {};
   for (const line of output.stdout.split('\n').filter(Boolean)) {
     const row = JSON.parse(line);
     if (row.reason === 'compiler-artifact' && binaries.includes(row.target.name) && row.executable) {
       const binary = fs.realpathSync(row.executable);
       if (!fs.readFileSync(binary).subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) throw new Error('route_acceptance_native_owner_not_elf');
       owners[row.target.name] = { path: binary, sha256: hash(fs.readFileSync(binary)) };
+      artifacts[row.target.name] = { manifestPath: row.manifest_path, sourcePath: row.target.src_path,
+        targetKind: row.target.kind, profile: row.profile };
     }
   }
   if (binaries.some(binary => !owners[binary])) throw new Error('route_acceptance_native_owner_missing');
-  return { owners, node: { version: process.version, sha256: hash(fs.readFileSync(process.execPath)) },
+  const runtime = { owners, node: { version: process.version, sha256: hash(fs.readFileSync(process.execPath)) },
     cargoVersion: version.stdout.trim(), buildArgs: args.map(value => normalize(value, 'unused-fixture')) };
+  runtimeContexts.set(runtime, freeze({ root: ROOT, target: path.resolve(target), artifacts }));
+  return runtime;
 }
 
-export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row => row.routeId), onCase } = {}) {
+export function observeRouteAcceptanceV1(options = {}) {
+  return observeRouteAcceptanceInternalV1(options, false);
+}
+async function observeRouteAcceptanceInternalV1({ routeIds = contracts.map(row => row.routeId), onCase } = {}, ownConsumerReplay = false, preparedReplay = null) {
   if (onCase !== undefined && typeof onCase !== 'function') throw new Error('route_acceptance_case_observer_invalid');
   if (!Array.isArray(routeIds) || routeIds.length === 0 || new Set(routeIds).size !== routeIds.length
     || routeIds.some(id => !allContracts.some(row => row.routeId === id))) throw new Error('route_acceptance_route_selection_invalid');
   const before = sourceSubject();
   const requirements = routeAcceptanceRequirementsV1();
-  const runtime = buildNativeOwners();
+  const runtime = ownConsumerReplay ? preparedReplay?.runtime : buildNativeOwners();
+  if (!runtime) throw new Error('route_acceptance_own_replay_context_missing');
+  const buildContext = runtimeContexts.get(runtime);
+  const replayGuard = ownConsumerReplay ? captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), runtime, buildContext) : null;
+  if (ownConsumerReplay && (invalidatedContexts.has(preparedReplay.generation)
+    || JSON.stringify(preparedReplay.guard) !== JSON.stringify(replayGuard))) {
+    throw new Error('route_acceptance_own_replay_current_inputs_changed');
+  }
   const rows = [];
   for (const contract of allContracts.filter(row => routeIds.includes(row.routeId))) {
     const cases = [];
@@ -388,11 +572,14 @@ export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row =>
     for (const testCase of describeCase(contract)) {
       const fixture = referenceFixture || fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-route-acceptance-'));
       try {
+        // Keep observer coverage in this test process; fixture child programs
+        // must not inherit Node's automatic V8 coverage propagation.
+        const fixtureEnvironment = { ...safeEnvironment(), NODE_V8_COVERAGE: '' };
         const prepared = contract.routeId === 'retirement/reference'
           ? referenceStatusFixtureV1(fixture, testCase.profile, ROOT, runtime.owners[contract.binary])
-          : contract.routeId === 'operator/store' ? storeStatusFixtureV1(fixture, testCase.profile, safeEnvironment())
+          : contract.routeId === 'operator/store' ? storeStatusFixtureV1(fixture, testCase.profile, fixtureEnvironment)
           : contract.routeId === 'operator/workspace' ? workspaceFixture(fixture, testCase.profile) : assetFixture(fixture, testCase.profile);
-        const env = { ...safeEnvironment(), ...prepared.environment };
+        const env = { ...fixtureEnvironment, ...prepared.environment };
         const nodeArgs = [...prepared.node, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
         const nativeExecutable = prepared.executable || runtime.owners[contract.binary].path;
         const nativeArgs = [...contract.nativePrefix, ...(testCase.omitSeparator ? [] : ['--']), ...testCase.argv];
@@ -474,7 +661,10 @@ export async function observeRouteAcceptanceV1({ routeIds = contracts.map(row =>
     runtime: { node: runtime.node, cargoVersion: runtime.cargoVersion, buildArgs: runtime.buildArgs,
       nativeOwners: Object.fromEntries(Object.entries(runtime.owners).map(([name, row]) => [name, { sha256: row.sha256 }])) },
     authority, rows };
-  return freeze({ ...payload, recordSha256: digest(payload) });
+  if (ownConsumerReplay) assertOwnRouteReplayGuardV1(replayGuard, ROOT, safeEnvironment(), runtime, buildContext);
+  const record = freeze({ ...payload, recordSha256: digest(payload) });
+  if (ownConsumerReplay) observationContexts.set(record, { guard: replayGuard, runtime, buildContext });
+  return record;
 }
 
 function assertRecordSchema(record) {
@@ -551,9 +741,12 @@ function recordPayload(record) {
     seen.add(row.routeId);
   }
   assertRecordSchema(record);
+  assertCurrentRecordSubject(record);
+  return payload;
+}
+function assertCurrentRecordSubject(record) {
   const current = sourceSubject();
   if (!current.committedClean || JSON.stringify(record.subject) !== JSON.stringify(current)) throw new Error('route_acceptance_subject_not_current_clean_commit');
-  return payload;
 }
 
 export function stableReplayPayload(payload) {
@@ -582,12 +775,103 @@ export function stableReplayPayload(payload) {
   return stable;
 }
 
+function invalidateOwnPhysicalGeneration(generation) {
+  invalidatedContexts.add(generation);
+  if (physicalGeneration === generation) physicalGeneration = Object.freeze({});
+  if (ownIndependentReplay?.generation === generation) ownIndependentReplay = null;
+}
+function assertOwnConsumerCurrent(context) {
+  try {
+    if (invalidatedContexts.has(context.generation)) throw new Error('route_acceptance_own_replay_current_inputs_changed');
+    return assertOwnRouteReplayGuardV1(context.guard, ROOT, safeEnvironment(), context.runtime, context.buildContext);
+  } catch (error) { invalidateOwnPhysicalGeneration(context.generation); throw error; }
+}
+function assertOwnReplayStartingCurrent(context) {
+  try {
+    if (invalidatedContexts.has(context.generation)) throw new Error('route_acceptance_own_replay_current_inputs_changed');
+    assertOwnRouteReplayGuardV1(context.startingGuard, ROOT, safeEnvironment());
+  } catch (error) { invalidateOwnPhysicalGeneration(context.generation); throw error; }
+}
+const sameRoutes = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+async function ownConsumerReplayFor(routeIds) {
+  let preparedReplay = null, startingGuard = null;
+  if (ownIndependentReplay) {
+    const current = assertOwnConsumerCurrent(ownIndependentReplay);
+    if (sameRoutes(routeIds, ownIndependentReplay.record.rows.map(row => row.routeId))) return ownIndependentReplay;
+    // This evicts a matrix selection, not the unchanged physical context shared
+    // by earlier independently verified summaries.
+    preparedReplay = ownIndependentReplay;
+    // This is the actual fresh capture just compared above, with only the
+    // native field removed for the existing preparation transition.
+    startingGuard = { ...current, native: null };
+    ownIndependentReplay = null;
+  }
+  if (ownReplayInFlight) {
+    const pending = ownReplayInFlight;
+    if (pending.preparing) await pending.preparationPromise;
+    assertOwnReplayStartingCurrent(pending);
+    const completed = await pending.promise;
+    // Returning a local replay object grants no summary; each incoming caller
+    // performs its fresh final guard even when payload comparison refuses.
+    if (sameRoutes(routeIds, pending.routeIds)) return completed;
+    // A different route selection gets its own full matrix. It never borrows
+    // the preceding selection's payload or incoming acceptance verdict.
+    return ownConsumerReplayFor(routeIds);
+  }
+  const pending = { routeIds: Object.freeze([...routeIds]), generation: physicalGeneration,
+    startingGuard: startingGuard || captureOwnRouteReplayGuardV1(ROOT, safeEnvironment()), preparedReplay,
+    preparing: false, preparationPromise: null, promise: null };
+  // Start after same-turn callers have validated their own incoming records;
+  // synchronous validation cannot delay an already spawned death-test timer.
+  pending.promise = Promise.resolve().then(async () => {
+    // Preparation compares a fresh capture after the watcher is ready.
+    pending.preparing = true;
+    pending.preparationPromise = prepareOwnConsumerRuntimeV1(pending);
+    const prepared = await pending.preparationPromise;
+    pending.startingGuard = { ...prepared.guard, native: null }; pending.preparing = false;
+    // The matrix compares a fresh full capture and the same revocation token
+    // before executing its first case.
+    const replayed = await observeRouteAcceptanceInternalV1({ routeIds: pending.routeIds }, true, prepared);
+    const payload = freeze(recordPayload(replayed)), observed = observationContexts.get(replayed);
+    if (!observed) throw new Error('route_acceptance_own_replay_context_missing');
+    const completed = { ...observed, generation: pending.generation, record: replayed, payload };
+    // The observer checked the matrix end; this local cache has no authority.
+    // Reuse and every incoming verdict still require a fresh full guard.
+    ownIndependentReplay = completed;
+    return completed;
+  }).catch(error => { invalidateOwnPhysicalGeneration(pending.generation); throw error; })
+    .finally(() => { if (ownReplayInFlight === pending) ownReplayInFlight = null; });
+  ownReplayInFlight = pending;
+  return pending.promise;
+}
 export async function consumeRouteAcceptanceRecordV1(record) {
   record = freeze(structuredClone(record));
-  recordPayload(record);
-  const replayed = await observeRouteAcceptanceV1({ routeIds: record.rows.map(row => row.routeId) });
-  if (JSON.stringify(canonical(stableReplayPayload(recordPayload(replayed)))) !== JSON.stringify(canonical(stableReplayPayload(recordPayload(record))))) {
-    throw new Error('route_acceptance_actual_replay_differs');
+  // Each caller retains complete schema/contract/authority/current-subject
+  // validation. A producer record never supplies a reusable runtime or verdict.
+  let incomingPayload;
+  try { incomingPayload = recordPayload(record); }
+  catch (error) {
+    if (ownIndependentReplay) assertOwnConsumerCurrent(ownIndependentReplay);
+    if (ownReplayInFlight) {
+      if (ownReplayInFlight.preparing) await ownReplayInFlight.preparationPromise;
+      assertOwnReplayStartingCurrent(ownReplayInFlight);
+    }
+    throw error;
+  }
+  const completed = await ownConsumerReplayFor(record.rows.map(row => row.routeId));
+  const { record: replayed, payload: replayPayload, ...context } = completed;
+  // This caller's deeply frozen clone already passed the complete schema,
+  // digest, contracts, WAL claims and authority checks before the await.
+  // Re-observe the complete committed subject after that async boundary.
+  try {
+    assertCurrentRecordSubject(record);
+    if (JSON.stringify(canonical(stableReplayPayload(replayPayload))) !== JSON.stringify(canonical(stableReplayPayload(incomingPayload)))) {
+      throw new Error('route_acceptance_actual_replay_differs');
+    }
+  } finally {
+    // Refused payloads also observe drift and revoke the physical generation;
+    // restoration cannot revive a summary through a comparison error path.
+    assertOwnConsumerCurrent(context);
   }
   const acceptedIds = replayed.rows.map(row => row.routeId);
   const summary = freeze({ kind: 'VerifiedNodeRustRouteAcceptanceV1', subject: replayed.subject,
@@ -595,7 +879,7 @@ export async function consumeRouteAcceptanceRecordV1(record) {
     acceptedRouteIds: acceptedIds, authority,
     rows: routeAcceptanceRequirementsV1().map(row => ({ ...row,
       accepted: acceptedIds.includes(row.routeId), remaining: acceptedIds.includes(row.routeId) ? [] : row.remaining })) });
-  verified.add(summary);
+  verified.add(summary); verifiedContexts.set(summary, context);
   return summary;
 }
 
@@ -639,7 +923,13 @@ export function readRouteAcceptanceRecord(file) {
 }
 
 export function assertVerifiedRouteAcceptanceV1(value) {
-  if (!verified.has(value) || JSON.stringify(value.subject) !== JSON.stringify(sourceSubject())) {
+  if (!verified.has(value)) throw new Error('route_acceptance_not_independently_replayed_for_current_subject');
+  const context = verifiedContexts.get(value);
+  try {
+    if (JSON.stringify(value.subject) !== JSON.stringify(sourceSubject())) throw new Error('route_acceptance_source_changed');
+    assertOwnConsumerCurrent(context);
+  } catch {
+    verified.delete(value); invalidateOwnPhysicalGeneration(context.generation);
     throw new Error('route_acceptance_not_independently_replayed_for_current_subject');
   }
   return value;

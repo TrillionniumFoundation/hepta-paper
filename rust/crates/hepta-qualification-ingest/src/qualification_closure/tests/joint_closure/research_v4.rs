@@ -215,6 +215,8 @@ fn v4_retains_expiry_signature_profile_and_durable_clock_refusal() {
             .runtime_facts()
             .codex_runtime_identity_hash
             .clone(),
+        workflow_profile_version: 1,
+        qualified_codex_role_runtime_identity_hashes_v2: v3.codex_role_runtime_identity_hashes_v2(),
     };
     fixture = restricted(fixture);
     assert!(matches!(

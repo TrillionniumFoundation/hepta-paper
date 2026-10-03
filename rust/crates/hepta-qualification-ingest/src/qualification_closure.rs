@@ -176,8 +176,11 @@ pub struct ResearchWorkflowProfileTemplateV1 {
     pub qualification_trust_store_generation: u64,
     /// First invalid millisecond of the retained evidence set.
     pub qualification_expires_at_unix_ms: u64,
-    /// Runtime identity agreed by the independently signed role package.
+    /// Signed aggregate diagnostic label; V2 dispatch uses the per-role mapping.
     pub qualified_codex_runtime_identity_hash: String,
+    /// V2 per-role identities; an empty V1 map remains historical diagnostics.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub qualified_codex_role_runtime_identity_hashes_v2: BTreeMap<String, String>,
     /// A template never grants automatic activation.
     pub automatic_activation: bool,
     /// A template never grants production activation.
@@ -341,6 +344,10 @@ pub struct ResearchQualificationExpectationV3 {
     pub qualification_expires_at_unix_ms: u64,
     /// Independently qualified runtime identity.
     pub qualified_codex_runtime_identity_hash: String,
+    /// Exact profile version; legacy one cannot stand for per-role version two.
+    pub workflow_profile_version: u16,
+    /// Expected role map, compared with authenticated opaque facts before replay.
+    pub qualified_codex_role_runtime_identity_hashes_v2: BTreeMap<String, String>,
 }
 
 impl ResearchQualificationExpectationV3 {
@@ -351,6 +358,14 @@ impl ResearchQualificationExpectationV3 {
             && self.qualification_expires_at_unix_ms == qualification.expires_at_unix_ms()
             && self.qualified_codex_runtime_identity_hash
                 == qualification.runtime_facts().codex_runtime_identity_hash
+            && self.workflow_profile_version
+                == if qualification.codex_role_runtime_identities_v2().is_empty() {
+                    1
+                } else {
+                    2
+                }
+            && self.qualified_codex_role_runtime_identity_hashes_v2
+                == qualification.codex_role_runtime_identity_hashes_v2()
     }
 }
 
@@ -712,7 +727,11 @@ fn research_workflow_profile_template(
     qualification: &crate::VerifiedResearchQualificationV3,
 ) -> ResearchWorkflowProfileTemplateV1 {
     ResearchWorkflowProfileTemplateV1 {
-        version: 1,
+        version: if qualification.codex_role_runtime_identities_v2().is_empty() {
+            1
+        } else {
+            2
+        },
         stage: "canary".to_owned(),
         repository: qualification.subject().repository.clone(),
         commit: qualification.subject().commit.clone(),
@@ -724,6 +743,8 @@ fn research_workflow_profile_template(
             .runtime_facts()
             .codex_runtime_identity_hash
             .clone(),
+        qualified_codex_role_runtime_identity_hashes_v2: qualification
+            .codex_role_runtime_identity_hashes_v2(),
         automatic_activation: false,
         production_activation: false,
         release_authority: false,

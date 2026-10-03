@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 mod clock_wait;
 #[path = "joint_closure/research_v4.rs"]
 mod research_v4;
+mod role_runtime_v2;
 #[path = "joint_closure/validity.rs"]
 mod validity;
 
@@ -1199,6 +1200,9 @@ fn research_profile_mismatch_consumes_no_nonce_or_ledger_state() {
             .runtime_facts()
             .codex_runtime_identity_hash
             .clone(),
+        workflow_profile_version: 1,
+        qualified_codex_role_runtime_identity_hashes_v2: verified
+            .codex_role_runtime_identity_hashes_v2(),
     };
     let mut wrong = expected.clone();
     wrong.subject.tree = "c".repeat(40);

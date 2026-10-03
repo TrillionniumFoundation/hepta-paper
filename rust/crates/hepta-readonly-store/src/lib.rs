@@ -8,11 +8,13 @@ pub mod logical_store_compat_v1;
 mod inventory_projection;
 mod node_receipts;
 mod node_snapshot;
+mod one_shot_projection;
 mod ordinary;
 pub use inventory_projection::{
     FixedInventoryBudgetV1, FixedInventoryProjectionV1, FixedInventoryQueryV1, InventoryPaperRowV1,
     InventorySqlCellCoercionV1, InventoryVenueRowV1,
 };
+pub use one_shot_projection::{OneShotBusinessCountsV1, OneShotBusinessRowsV1};
 pub use ordinary::{
     OrdinaryCoordinationObservationV1, OrdinaryNodeLogicalIntegrityReportV1,
     OrdinaryReadOnlyStoreV1,
@@ -1037,5 +1039,10 @@ mod tests {
         for suffix in ["-wal", "-shm", "-journal"] {
             assert!(!sidecar(&fixture.database, suffix).exists());
         }
+    }
+    #[test]
+    fn fixed_one_shot_sqlite_vm_controls_and_limits_preserve_original_data() {
+        let fixture = Fixture::new(25);
+        one_shot_projection::assert_fixed_one_shot_vm_controls_for_test(&fixture.database);
     }
 }

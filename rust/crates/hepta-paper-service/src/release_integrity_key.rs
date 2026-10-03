@@ -2,6 +2,7 @@
 //! Only standard Ed25519 PKCS8/SPKI PEM is supported. Private bytes are never
 //! serialized in reports; temporary buffers are zeroized. No rotation, repair,
 //! overwrite or stale-lock recovery is performed.
+mod control;
 mod crypto;
 mod layout;
 mod storage;
@@ -618,6 +619,16 @@ pub fn release_integrity_key_cli_v1(
     argv: &[String],
     environment: &BTreeMap<String, String>,
 ) -> Result<ReleaseIntegrityKeyOutputV1> {
+    release_integrity_key_cli_with_hooks_v1(argv, environment, &mut NoHooks)
+}
+
+pub use control::release_integrity_key_cli_with_cancellation_v1;
+
+fn release_integrity_key_cli_with_hooks_v1(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    hooks: &mut dyn HookV1,
+) -> Result<ReleaseIntegrityKeyOutputV1> {
     let args = arguments(argv)?;
     if args.contains_key("help") {
         return Ok(ReleaseIntegrityKeyOutputV1 {
@@ -651,9 +662,9 @@ pub fn release_integrity_key_cli_v1(
         environment,
     )?;
     let value = if action == "status" {
-        inspect_local_release_integrity_key_v1(&context)?
+        inspect_local_release_integrity_key_with_hooks_v1(&context, hooks)?
     } else {
-        provision_local_release_integrity_key_v1(&context, true)?
+        provision_local_release_integrity_key_with_hooks_v1(&context, true, hooks)?
     };
     let exit_code = if value["ready"] == true { 0 } else { 2 };
     Ok(ReleaseIntegrityKeyOutputV1 {

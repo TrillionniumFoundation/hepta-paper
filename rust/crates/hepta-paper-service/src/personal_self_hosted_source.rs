@@ -117,7 +117,10 @@ fn parse_policy(root: &Path) -> Option<Vec<AllowlistEntry>> {
         return None;
     }
     let bytes = read_stable_file(&path, &metadata).ok()?;
-    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    parse_policy_bytes(&bytes)
+}
+fn parse_policy_bytes(bytes: &[u8]) -> Option<Vec<AllowlistEntry>> {
+    let value: Value = serde_json::from_slice(bytes).ok()?;
     let object = value.as_object()?;
     let mut keys = object.keys().cloned().collect::<Vec<_>>();
     keys.sort();
@@ -310,6 +313,63 @@ pub(crate) fn inspect_source_security(workspace_root: &Path) -> Option<bool> {
     let paths = tracked_paths(workspace_root)?;
     let files = tracked_text_files(workspace_root, &paths)?;
     let findings = source_findings(&files)?;
+    Some(findings_ready(&findings, &allowlist))
+}
+
+/// Ordinary callers retain the existing fixed Git/tool/source observation,
+/// cancellation and deadline owner. This only reads the same secret policy.
+pub(crate) fn inspect_source_security_with_control(
+    workspace_root: &Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> Option<bool> {
+    let mut observation =
+        crate::operational_status::bounded::Observation::with_deadline(cancelled, deadline).ok()?;
+    let policy_bytes = observation
+        .read_file(&workspace_root.join(POLICY_RELATIVE_PATH), MAX_POLICY_BYTES)
+        .ok()?;
+    let allowlist = parse_policy_bytes(&policy_bytes)?;
+    observation.checkpoint().ok()?;
+    let listed = observation
+        .git(
+            workspace_root,
+            "personal_tracked_sources",
+            &["ls-files", "-z", "--cached", "--"],
+            true,
+        )
+        .ok()?;
+    let mut paths = listed
+        .split(|b| *b == 0)
+        .filter(|b| !b.is_empty())
+        .map(|b| std::str::from_utf8(b).ok().and_then(safe_relative_path))
+        .collect::<Option<Vec<_>>>()?;
+    paths.sort();
+    paths.dedup();
+    let mut findings = Vec::new();
+    for relative in paths {
+        observation.entry().ok()?;
+        let path = workspace_root.join(&relative);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        let bytes = observation.read_file(&path, 32 * 1024 * 1024).ok()?;
+        if bytes.contains(&0) {
+            continue;
+        }
+        let file = TrackedText {
+            path: relative,
+            text: String::from_utf8_lossy(&bytes).into_owned(),
+        };
+        observation.checkpoint().ok()?;
+        findings.extend(source_findings(&[file])?);
+        observation.checkpoint().ok()?;
+    }
+    observation.checkpoint().ok()?;
     Some(findings_ready(&findings, &allowlist))
 }
 

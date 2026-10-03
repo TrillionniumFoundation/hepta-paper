@@ -1,7 +1,9 @@
-//! Explicit local amendments, including a bounded structural review/revision
-//! round. No model invocation or independent scientific acceptance is implied.
+//! Explicit local amendments, including bounded native or broker manuscript
+//! revision. The existing broker owns execution; amendments grant no authority.
 use super::*;
 use hepta_campaign_writer::WriterLeaseV1;
+
+mod broker_revision;
 /// Storage contract; the service additionally checks the typed definition,
 /// unchanged committed prefix, registry, pending dispatch and repair policy.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -86,12 +88,20 @@ fn repair_contract(
         return Err(WorkflowError::Definition);
     }
     let rejected = &old.steps[committed - 1];
+    if matches!(
+        old.template.workers.get(&rejected.module_id),
+        Some(WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. })
+    ) {
+        broker_revision::validate(old, next, committed)?;
+        return validate_repair_suffix(old, next, committed);
+    }
     let author = &next.steps[committed];
     let reviewer = &next.steps[committed + 1];
     let original_gate = rejected.gate.as_ref().ok_or(WorkflowError::Definition)?;
     let review_gate = reviewer.gate.as_ref().ok_or(WorkflowError::Definition)?;
-    // This V1 repair contract is deliberately limited to the known native
-    // structural reviewer. A general process/model reviewer needs a new contract.
+    // This branch retains the original native structural contract. Broker
+    // manuscript repair uses its separately versioned input contract above;
+    // arbitrary process reviewers remain unsupported.
     if !matches!(
         old.template.workers.get(&rejected.module_id),
         Some(WorkerBindingV1::Native)
@@ -139,6 +149,16 @@ fn repair_contract(
     {
         return Err(WorkflowError::Definition);
     }
+    validate_repair_suffix(old, next, committed)
+}
+
+fn validate_repair_suffix(
+    old: &LocalWorkflowV1,
+    next: &LocalWorkflowV1,
+    committed: usize,
+) -> Result<(), WorkflowError> {
+    let rejected = &old.steps[committed - 1];
+    let original_gate = rejected.gate.as_ref().ok_or(WorkflowError::Definition)?;
     // Remaining actions may reference historical scientific results, but cannot
     // reuse the rejected author/reviewer products in a later delivery package.
     for step in &next.steps[committed + 2..] {
@@ -162,7 +182,10 @@ pub(super) fn validate_transition(
         serde_json::from_str(&c.definition_json).map_err(|_| WorkflowError::History)?;
     next.validate()?;
     let count = usize::try_from(c.committed_steps).map_err(|_| WorkflowError::History)?;
-    if hash(old)? != c.previous_definition_hash
+    if next.version != old.version
+        || next.research_profile != old.research_profile
+        || next.provider_call_budget != old.provider_call_budget
+        || hash(old)? != c.previous_definition_hash
         || hash(&next)? != c.definition_hash
         || next.template.snapshot.campaign_id != record.campaign_id
         || old.template.writer_lease != c.previous_lease

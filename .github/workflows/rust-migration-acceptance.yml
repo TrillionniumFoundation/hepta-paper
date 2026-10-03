@@ -49,7 +49,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install qualified production Node runtime
@@ -62,8 +62,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(node --version)" = "v22.23.1"
+          printf 'HEPTA_TEST_NODE=%s\n' "$(realpath "$(command -v node)")" >> "$GITHUB_ENV"
           npm ci --ignore-scripts --no-audit --no-fund \
             2>&1 | tee "$EVIDENCE_ROOT/node-oracle-install.log"
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
           # Import the actual dependency closure before compiling Rust; otherwise
           # missing espree/eslint-scope fails much later inside differential tests.
           node --input-type=module -e \
@@ -73,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.98.0 --profile minimal
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
           rustup default 1.98.0
 
       - name: Record exact source and runtime identities
@@ -247,7 +249,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
       - name: Install real scientific tools and the pinned Rust compiler
         shell: bash
@@ -283,6 +285,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # This low-level library target runs in its own test process. Match
+          # the existing scientific worker's private child-file policy: Lean
+          # atomically replaces .olean outputs instead of truncating the seeded
+          # 0600 file. Never weaken output checks or change a library-global mask.
+          umask 077
           log="$HEPTA_SCIENTIFIC_TEST_EVIDENCE_ROOT/scientific-runtime.log"
           # Run the whole target, including installed-tool cases. No separate
           # handwritten test-name list or success from an empty filter.

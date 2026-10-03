@@ -236,6 +236,77 @@ fn effective_wal_schema_and_rows_match_node_and_repeated_private_snapshots() {
         .unwrap();
     assert!(evidence.assert_current().is_err());
 }
+
+#[test]
+fn actual_node_checkpointed_empty_wal_and_stale_shm_are_read_without_source_changes() {
+    let fixture = Fixture::new();
+    let path = fixture.path("native-store");
+    let binary = std::env::var_os("HEPTA_TEST_NODE").unwrap_or_else(|| "node".into());
+    let output = Command::new(binary)
+        .args([
+            "--input-type=module",
+            "-e",
+            r#"
+import fs from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+const path = process.argv[1];
+if (!path.startsWith('/tmp/hepta-rust-live-inventory-test-')) throw new Error('isolated_fixture_required');
+const database = new DatabaseSync(path);
+let wal, shm;
+try {
+  database.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE fixture_node_checkpoint(id TEXT PRIMARY KEY, value TEXT); INSERT INTO fixture_node_checkpoint VALUES('node','checkpointed');");
+  const checkpoint = database.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+  if (checkpoint.busy !== 0) throw new Error('fixture_checkpoint_busy');
+  wal = fs.readFileSync(path + '-wal');
+  shm = fs.readFileSync(path + '-shm');
+  if (wal.length !== 0 || shm.length === 0) throw new Error('fixture_empty_wal_and_stale_shm_required');
+} finally { database.close(); }
+fs.writeFileSync(path + '-wal', wal, { mode: 0o600 });
+fs.writeFileSync(path + '-shm', shm, { mode: 0o600 });
+process.stdout.write(JSON.stringify({node:process.version,walBytes:wal.length,shmBytes:shm.length}));
+"#,
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let created: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(created["node"], "v22.23.1");
+    assert_eq!(created["walBytes"], 0);
+    assert!(created["shmBytes"].as_u64().unwrap() > 0);
+    let before = source_bytes(&fixture.root);
+    let report = fixture.compare(false);
+    let native = report["instances"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["role"] == "native-store")
+        .unwrap();
+    assert_eq!(native["walFileIdentity"]["bytes"], "0");
+    assert!(
+        native["schemaObjects"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("table:fixture_node_checkpoint"))
+    );
+    let held = observe_state_database_inventory_v1(&fixture.root, &fixture.manifest).unwrap();
+    held.assert_current().unwrap();
+    assert_eq!(
+        held.inspect_database_v1("native-store").unwrap()["quickCheck"],
+        "ok"
+    );
+    assert_eq!(source_bytes(&fixture.root), before);
+    fs::write(
+        format!("{}-wal", path.display()),
+        b"not the retained zero WAL",
+    )
+    .unwrap();
+    assert!(held.assert_current().is_err());
+}
 #[test]
 fn actual_missing_unknown_schema_foreign_keys_and_exclusion_reports_match_node() {
     for mutation in [

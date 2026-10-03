@@ -4,7 +4,7 @@
 
 ## Development documentation
 
-The single current development-document entry point is [`docs/README.md`](docs/README.md).
+The single current development-document entry point is [`docs/README.md`](docs/README.md). Continue Rust delivery through the [single current candidate](docs/migration/BRANCH_CONSOLIDATION.md#current-candidate-and-callable-entrypoints), which also defines its integration base and signed delivery contract.
 
 Global status, plan, architecture, capability/module truth, scheduling, performance, qualification, security, and team governance live under `docs/system` and its machine records. `paper-core/docs` describes the current Node implementation; `docs/rust` describes the Rust control-plane migration. Neither subsystem is a competing global source of truth.
 

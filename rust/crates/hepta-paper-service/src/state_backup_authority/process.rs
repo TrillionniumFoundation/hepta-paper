@@ -25,29 +25,39 @@ pub struct ProcessStateBackupAuthorityTransportV1 {
 }
 impl ProcessStateBackupAuthorityTransportV1 {
     pub fn load(path: &Path, pin: &str) -> Result<Self> {
-        let (configuration, value) = load_configuration(path, pin)?;
+        Self::load_with_control(path, pin, None)
+    }
+    pub(crate) fn load_with_control(
+        path: &Path,
+        pin: &str,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
+        let (configuration, value) = load_configuration(path, pin, control.clone())?;
         let code = "autonomous_research_state_backup_authority_process_identity_mismatch";
-        let public_document = Snapshot::load(
+        let public_document = Snapshot::load_with_control(
             Path::new(text(&value, "publicKeyPath")?),
             text(&value, "publicKeySha256")?,
             64 * 1024,
             code,
+            control.clone(),
         )?;
-        let command = Snapshot::load(
+        let command = Snapshot::load_with_control(
             Path::new(text(&value, "commandPath")?),
             text(&value, "commandSha256")?,
             256 * 1024 * 1024,
             code,
+            control.clone(),
         )?;
         if !command.executable() {
             return Err(error(code));
         }
         let online_configuration = if number(&value["version"]) == Some(2) {
-            Some(Snapshot::load(
+            Some(Snapshot::load_with_control(
                 Path::new(text(&value, "onlineMutationAuthorityConfigurationPath")?),
                 text(&value, "onlineMutationAuthorityConfigurationSha256")?,
                 4 * 1024 * 1024,
                 "autonomous_research_state_backup_online_authority_identity_mismatch",
+                control.clone(),
             )?)
         } else {
             None
@@ -63,7 +73,7 @@ impl ProcessStateBackupAuthorityTransportV1 {
             timeout_ms,
         })
     }
-    pub(super) fn current(&self) -> Result<()> {
+    pub(crate) fn current(&self) -> Result<()> {
         for file in [&self.configuration, &self.public_document, &self.command]
             .into_iter()
             .chain(self.online_configuration.as_ref())

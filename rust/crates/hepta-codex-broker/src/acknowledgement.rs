@@ -185,17 +185,34 @@ pub fn apply_prepared_result_acknowledgement(
     let request = load_persisted_request(store, &acknowledgement.operation_id)?;
     let journal = store.load_journal(&acknowledgement.operation_id)?;
     validate_acknowledgement_subject(acknowledgement, &request, &journal)?;
-    store
-        .append_transition(
-            &acknowledgement.operation_id,
-            OperationState::ResultPrepared,
-            OperationState::Acknowledged,
-            acknowledgement.acknowledged_at_unix_ms,
-            Some(verified.acknowledgement_hash().clone()),
-            None,
-            fault,
-        )
-        .map_err(PreparedResultAcknowledgementError::Journal)
+    if journal.current_state == OperationState::Acknowledged {
+        return Ok(journal);
+    }
+    match store.append_transition(
+        &acknowledgement.operation_id,
+        OperationState::ResultPrepared,
+        OperationState::Acknowledged,
+        acknowledgement.acknowledged_at_unix_ms,
+        Some(verified.acknowledgement_hash().clone()),
+        None,
+        fault,
+    ) {
+        Ok(journal) => Ok(journal),
+        Err(BrokerJournalError::StateConflict {
+            expected: OperationState::ResultPrepared,
+            observed: OperationState::Acknowledged,
+        }) => {
+            // Another owner committed after our read. Only a definite terminal
+            // CAS conflict allows this readback; persistence errors stay errors.
+            let observed = store.load_journal(&acknowledgement.operation_id)?;
+            validate_acknowledgement_subject(acknowledgement, &request, &observed)?;
+            if observed.current_state != OperationState::Acknowledged {
+                return Err(PreparedResultAcknowledgementError::OperationNotPrepared);
+            }
+            Ok(observed)
+        }
+        Err(error) => Err(PreparedResultAcknowledgementError::Journal(error)),
+    }
 }
 
 fn validate_acknowledgement_time(
@@ -217,7 +234,10 @@ fn validate_acknowledgement_subject(
     request: &CodexExecutionRequestV1,
     journal: &OperationJournalV1,
 ) -> Result<(), PreparedResultAcknowledgementError> {
-    if journal.current_state != OperationState::ResultPrepared {
+    if !matches!(
+        journal.current_state,
+        OperationState::ResultPrepared | OperationState::Acknowledged
+    ) {
         return Err(PreparedResultAcknowledgementError::OperationNotPrepared);
     }
     let prepared_hash = journal
@@ -237,6 +257,21 @@ fn validate_acknowledgement_subject(
         || acknowledgement.lease_generation != request.lease_generation
     {
         return Err(PreparedResultAcknowledgementError::SubjectMismatch);
+    }
+    if journal.current_state == OperationState::Acknowledged {
+        let terminal = journal
+            .transitions
+            .last()
+            .filter(|transition| transition.to == OperationState::Acknowledged)
+            .ok_or(PreparedResultAcknowledgementError::OperationNotPrepared)?;
+        let expected = sha256_digest(&prepared_result_acknowledgement_signing_bytes(
+            acknowledgement,
+        )?)?;
+        if terminal.evidence_hash.as_ref() != Some(&expected)
+            || terminal.recorded_at_unix_ms != acknowledgement.acknowledged_at_unix_ms
+        {
+            return Err(PreparedResultAcknowledgementError::SubjectMismatch);
+        }
     }
     Ok(())
 }

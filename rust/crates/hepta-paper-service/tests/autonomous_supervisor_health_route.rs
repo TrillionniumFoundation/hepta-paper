@@ -252,3 +252,47 @@ fn unified_route_native_action_selector_uses_node_strict_parser_rules() {
     assert_eq!(report["ready"], false);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn unified_current_strict_and_full_health_modes_do_not_initialize_or_dispatch() {
+    let root = root();
+    for (option, field) in [
+        (
+            "--require-current-machine-intake",
+            "currentMachineIntakeReady",
+        ),
+        (
+            "--require-strict-machine-intake-reconciliation",
+            "strictMachineIntakeReconciliationReady",
+        ),
+        ("--require-fully-autonomous", "fullyAutonomousReady"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap())
+            .args([
+                "autonomous-supervisor",
+                "--action",
+                "health",
+                option,
+                "--runtime-root",
+            ])
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{option}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report[field], false, "{option}: {report}");
+        assert_eq!(
+            fs::read_dir(&root).unwrap().count(),
+            0,
+            "health must never provision"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}

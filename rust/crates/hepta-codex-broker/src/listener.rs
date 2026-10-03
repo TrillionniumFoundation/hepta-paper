@@ -290,7 +290,9 @@ impl BrokerListenerV1 {
 
     #[cfg(test)]
     fn abandon_for_test(mut self) {
-        drop(self.listener.take());
+        if let Some(listener) = self.listener.take() {
+            tests::make_stale_socket(listener);
+        }
         self.stopped = true;
     }
 }
@@ -838,19 +840,7 @@ mod tests {
         first.mark_ready().expect("ready");
         first.abandon_for_test();
         assert!(first_policy.socket_path.exists());
-        let mut close_propagation_attempts = 0_u16;
-        let second = loop {
-            match BrokerListenerV1::bind(policy(&tree, 2)) {
-                Ok(listener) => break listener,
-                Err(BrokerListenerError::LiveListenerExists)
-                    if close_propagation_attempts < 100 =>
-                {
-                    close_propagation_attempts += 1;
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                Err(error) => panic!("recover stale socket: {error}"),
-            }
-        };
+        let second = BrokerListenerV1::bind(policy(&tree, 2)).expect("recover stale socket");
         second.shutdown().expect("shutdown second");
     }
 
@@ -867,12 +857,27 @@ mod tests {
         );
         fs::remove_file(&policy.socket_path).expect("remove symlink");
         let stale = UnixListener::bind(&policy.socket_path).expect("unrecorded socket");
-        drop(stale);
+        // Retain a duplicate to model another test's fork-before-exec window.
+        // Closing only `stale` cannot make the shared socket cease listening.
+        let inherited = stale.try_clone().expect("inherited listener descriptor");
+        make_stale_socket(stale);
         fs::set_permissions(&policy.socket_path, fs::Permissions::from_mode(0o600))
             .expect("socket mode");
         assert_eq!(
             BrokerListenerV1::bind(policy).err(),
             Some(BrokerListenerError::UnrecordedStaleSocket),
         );
+        drop(inherited);
+    }
+
+    // Test fixtures explicitly stop listening before dropping their fd. Other
+    // process tests can briefly inherit CLOEXEC fds between fork and exec. A
+    // sleep/retry or accepting LiveListenerExists would hide the stale-path
+    // assertion. Production recovery remains unchanged and fails closed.
+    pub(super) fn make_stale_socket(listener: UnixListener) {
+        use std::os::fd::AsRawFd;
+        nix::sys::socket::shutdown(listener.as_raw_fd(), nix::sys::socket::Shutdown::Both)
+            .expect("stop listening through every duplicate descriptor");
+        drop(listener);
     }
 }

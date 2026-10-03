@@ -1,6 +1,8 @@
+mod observed;
 use super::*;
 use base64ct::{Base64, Encoding};
 use ed25519_dalek::{Signature, VerifyingKey};
+pub(crate) use observed::resolve_runtime_image_plugin_authority_from_observed_v1;
 use std::collections::BTreeSet;
 const ADAPTER: &str = "repository-system-benchmark-harness-v1";
 const INPUTS: &str = include_str!("plugin-inputs.v1.json");
@@ -419,7 +421,31 @@ fn trusted_key(v: &Value) -> Result<(VerifyingKey, String)> {
         digest(&der),
     ))
 }
-fn signatures(authority: &Value, trust: &Value, now: &str, builtin: bool) -> Result<Vec<Value>> {
+pub(crate) fn numerical_plugin_signatures_v1(
+    authority: &Value,
+    trust: &Value,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<Vec<Value>> {
+    let now = super::support::clock()?;
+    signatures_for_role(
+        authority,
+        trust,
+        &now,
+        false,
+        "advanced_numerical_plugin_authority",
+        Some(super::control::OperationControl::new(cancelled, deadline)),
+    )
+}
+fn signatures_for_role(
+    authority: &Value,
+    trust: &Value,
+    now: &str,
+    builtin: bool,
+    role: &str,
+    control: Option<super::control::OperationControl<'_>>,
+) -> Result<Vec<Value>> {
+    super::control::check(control)?;
     let now = instant(&now.into()).ok_or("immutable_signed_json_authority_time_window_invalid")?;
     let issued = instant(&authority["signedAt"])
         .ok_or("immutable_signed_json_authority_time_window_invalid")?;
@@ -443,6 +469,7 @@ fn signatures(authority: &Value, trust: &Value, now: &str, builtin: bool) -> Res
     let mut keys = Vec::new();
     let mut seen = BTreeSet::new();
     for key in array(&trust["keys"]) {
+        super::control::check(control)?;
         ensure(
             key.as_object().is_some_and(|o| {
                 o.keys().all(|k| {
@@ -458,6 +485,7 @@ fn signatures(authority: &Value, trust: &Value, now: &str, builtin: bool) -> Res
                         "revokedAt",
                     ]
                     .contains(&k.as_str())
+                        || (role == "advanced_numerical_plugin_authority" && k == "organization")
                 })
             }) && ident(&key["keyId"], 192, b"_.:-", false)
                 && (key["subjectId"].is_null() || ident(&key["subjectId"], 192, b"_.:-", false))
@@ -479,10 +507,11 @@ fn signatures(authority: &Value, trust: &Value, now: &str, builtin: bool) -> Res
     let mut verified = Vec::new();
     let mut seen = BTreeSet::new();
     for sig in sigs {
+        super::control::check(control)?;
         ensure(
             exact(sig, &["algorithm", "keyId", "role", "value"])
                 && sig["algorithm"] == "ed25519"
-                && sig["role"] == "empirical_plugin_authority"
+                && sig["role"] == role
                 && seen.insert(s(&sig["keyId"])),
             "immutable_signed_json_authority_signature_invalid",
         )?;
@@ -491,7 +520,7 @@ fn signatures(authority: &Value, trust: &Value, now: &str, builtin: bool) -> Res
             .find(|(k, _)| k["keyId"] == sig["keyId"])
             .ok_or("immutable_signed_json_authority_signature_invalid")?;
         ensure(
-            array(&record["roles"]).contains(&json!("empirical_plugin_authority")),
+            array(&record["roles"]).contains(&json!(role)),
             "immutable_signed_json_authority_signature_invalid",
         )?;
         for (field, before) in [
@@ -533,7 +562,9 @@ fn verify_bundle(
     builtin: bool,
     evaluators: &Value,
     oracle_types: &Value,
+    control: Option<super::control::OperationControl<'_>>,
 ) -> Result<PluginAuthority> {
+    super::control::check(control)?;
     ensure(
         exact(bundle, &["authority", "kind", "package", "version"])
             && bundle["version"] == 1
@@ -542,20 +573,19 @@ fn verify_bundle(
     )?;
     let supplied = &bundle["package"];
     let compiled = array(&supplied["registry"]["profiles"]);
-    let raw_profiles: Vec<_> = compiled
-        .iter()
-        .map(|p| {
-            without(
-                p,
-                &[
-                    "autonomousEmpiricalFamilyPluginProfileHash",
-                    "evaluatorDescriptorHash",
-                    "productionExecutable",
-                    "runtimeRegistryMutationAllowed",
-                ],
-            )
-        })
-        .collect();
+    let mut raw_profiles = Vec::with_capacity(compiled.len());
+    for profile in compiled {
+        super::control::check(control)?;
+        raw_profiles.push(without(
+            profile,
+            &[
+                "autonomousEmpiricalFamilyPluginProfileHash",
+                "evaluatorDescriptorHash",
+                "productionExecutable",
+                "runtimeRegistryMutationAllowed",
+            ],
+        ));
+    }
     let registry = registry(&json!(raw_profiles), evaluators, oracle_types)?;
     let package = package(
         &supplied["packageId"],
@@ -596,7 +626,15 @@ fn verify_bundle(
             && authority["packageHash"] == package["autonomousEmpiricalFamilyPluginPackageHash"],
         "autonomous_empirical_family_plugin_signed_bundle_invalid",
     )?;
-    let signed = signatures(authority, trust, now, builtin)?;
+    super::control::check(control)?;
+    let signed = signatures_for_role(
+        authority,
+        trust,
+        now,
+        builtin,
+        "empirical_plugin_authority",
+        control,
+    )?;
     let advanced: Vec<_> = array(oracle_types)
         .iter()
         .filter(|v| !["property-oracle-v1", "residual-bound-v1"].contains(&s(v)))
@@ -642,8 +680,6 @@ pub fn resolve_runtime_image_plugin_authority_v1(
     environment: &Value,
     now: &str,
 ) -> Result<PluginAuthority> {
-    let source = raw()?;
-    let evaluators = evaluator(&source["descriptors"])?;
     let bundle = s(&environment["HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE"]).trim();
     let trust = s(&environment["HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE"]).trim();
     if !bundle.is_empty() || !trust.is_empty() {
@@ -651,13 +687,30 @@ pub fn resolve_runtime_image_plugin_authority_v1(
             !bundle.is_empty() && !trust.is_empty(),
             "immutable_signed_json_bundle_configuration_incomplete",
         )?;
+        let bundle = parse(&read(Path::new(bundle), 4 * 1024 * 1024)?)?;
+        let trust = parse(&read(Path::new(trust), 1024 * 1024)?)?;
+        return resolve_plugin_documents(Some((&bundle, &trust)), now, None);
+    }
+    resolve_plugin_documents(None, now, None)
+}
+fn resolve_plugin_documents(
+    documents: Option<(&Value, &Value)>,
+    now: &str,
+    control: Option<super::control::OperationControl<'_>>,
+) -> Result<PluginAuthority> {
+    super::control::check(control)?;
+    let source = raw()?;
+    let evaluators = evaluator(&source["descriptors"])?;
+    super::control::check(control)?;
+    if let Some((bundle, trust)) = documents {
         return verify_bundle(
-            &parse(&read(Path::new(bundle), 4 * 1024 * 1024)?)?,
-            &parse(&read(Path::new(trust), 1024 * 1024)?)?,
+            bundle,
+            trust,
             now,
             false,
             &evaluators,
             &source["oracleTypes"],
+            control,
         );
     }
     let registry = registry(&source["profiles"], &evaluators, &source["oracleTypes"])?;
@@ -676,6 +729,7 @@ pub fn resolve_runtime_image_plugin_authority_v1(
         true,
         &evaluators,
         &source["oracleTypes"],
+        control,
     )
 }
 /// Check embedded raw data's recorded source provenance during migration. The

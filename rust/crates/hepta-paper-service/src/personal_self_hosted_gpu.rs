@@ -6,9 +6,19 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cli;
 mod files;
 mod publication;
+pub(crate) use files::{
+    gpu_check_active_v1, observe_missing_personal_gpu_receipt_v1,
+    read_retained_personal_gpu_receipt_v1,
+};
 pub use publication::write_personal_gpu_receipt_v1;
+#[cfg(test)]
+pub(crate) use publication::write_personal_gpu_receipt_with_control_v1;
+pub(crate) use publication::{
+    PersonalGpuPublicationInputV1, write_personal_gpu_receipt_for_observed_input_v1,
+};
 mod wire;
 pub use files::{PersonalGpuReceiptReadError, read_personal_gpu_receipt_v1};
 pub use wire::{

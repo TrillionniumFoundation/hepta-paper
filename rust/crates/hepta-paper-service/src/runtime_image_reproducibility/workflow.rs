@@ -38,7 +38,8 @@ fn blocked(blockers: Vec<String>, configuration: Option<Value>) -> Result<Value>
         json!({"version":2,"kind":"RuntimeImageReproducibilityVerificationReport","status":"runtime_image_reproducibility_blocked","ready":false,"configuration":config,"inspection":null,"receipt":null,"publication":null,"externalActionPerformed":false,"blockers":blockers}),
     )
 }
-fn catalog(root: &Path) -> Result<(Value, Value)> {
+fn catalog(root: &Path, control: Option<control::OperationControl<'_>>) -> Result<(Value, Value)> {
+    control::check(control)?;
     for (source, target) in [
         ("requirements.lock", "scientific-requirements.lock"),
         (
@@ -57,7 +58,16 @@ fn catalog(root: &Path) -> Result<(Value, Value)> {
             &format!("python_gpu_scientific_input_mirror_drift:{source}"),
         )?;
     }
-    let cas = crate::runtime_source_cas::inspect_runtime_source_cas_v1(root);
+    control::check(control)?;
+    let cas = match control {
+        Some(control) => crate::runtime_source_cas::inspect_runtime_source_cas_with_deadline_v1(
+            root,
+            control.cancelled(),
+            control.deadline(),
+        ),
+        None => crate::runtime_source_cas::inspect_runtime_source_cas_v1(root),
+    };
+    control::check(control)?;
     let mut definitions = json!({
  "python":{"profile":"python","contextPath":"runtime-images/python-scientific","definitionPaths":["Dockerfile","requirements.lock","hepta-dataset-access-supervisor"],"image":"hepta/python-scientific:0.14.0","imageDigest":"sha256:fcf1705c74de423957db8431b88814bbf2810fed04dbd8685329008ac43446cf","definitionManifestHash":"sha256:4e50953602c7feb132da5bd45f94beefe62395669b25b78d98aa18d8ed770b03"},
  "pythonGpu":{"profile":"pythonGpu","contextPath":"runtime-images/python-gpu","definitionPaths":["Dockerfile","requirements.lock","scientific-requirements.lock","hepta-dataset-access-supervisor"],"image":"hepta/python-gpu:0.15.0","imageDigest":"sha256:21acb5fb016d9fd17131215d16e1834fcfeb081e047718d49b6d58d8afa97e2b","definitionManifestHash":"sha256:0cfd59b6df1151cdc128ce97e231234b0ebc17e5312c2aece8f4bbb45cf0cf2f"},
@@ -74,20 +84,36 @@ fn catalog(root: &Path) -> Result<(Value, Value)> {
     }
     Ok((definitions, policies))
 }
-fn load(root: &Path, path: &Path, environment: &Value, now: &str) -> Result<Context> {
+fn load(
+    root: &Path,
+    path: &Path,
+    environment: &Value,
+    now: &str,
+    control: Option<control::OperationControl<'_>>,
+    require_builtin_three: bool,
+) -> Result<Context> {
+    control::check(control)?;
     let expected = environment["HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH"].as_str();
     let config =
         read_runtime_image_reproducibility_process_configuration_v1(path, expected, environment)?;
     let plugin = resolve_runtime_image_plugin_authority_v1(environment, now)?;
+    if require_builtin_three {
+        ensure(
+            plugin.scope["requiredProfiles"] == json!(PROFILES)
+                && plugin.startup_inspection["source"] == "repository-builtin-signed-bundle-v1",
+            "runtime_reproducibility_normal_builtin_three_profiles_required",
+        )?;
+    }
+    control::check(control)?;
     if plugin.startup_inspection["source"] == "repository-builtin-signed-bundle-v1" {
         verify_runtime_image_builtin_plugin_source_binding_v1(root)?;
     }
-    let (definitions, policies) = catalog(root)?;
+    let (definitions, policies) = catalog(root, control)?;
     let inputs = array(&plugin.scope["requiredProfiles"])
         .iter()
-        .map(|p| inspect_runtime_image_build_input_closure_v1(root, &definitions[s(p)]))
+        .map(|p| context::inspect_with_control(root, &definitions[s(p)], control))
         .collect::<Result<Vec<_>>>()?;
-    let binding = current_runtime_image_release_binding_v1(root)?;
+    let binding = context::release_binding_with_control(root, control)?;
     let inspection = configuration_inspection(Some(&config), &[])?;
     Ok(Context {
         config,
@@ -148,6 +174,37 @@ fn absolute(value: &Value, cwd: &Path) -> Result<PathBuf> {
 /// `nonce` are accepted for deterministic embedding; the CLI uses the real clock
 /// and fresh OS randomness. Online fenced publication is a separate authority API.
 pub fn runtime_image_reproducibility_report_v2(options: &Value) -> Result<Value> {
+    report_with_optional_control(options, None, false)
+}
+/// Normal embedding inherits one absolute deadline and the original flag.
+/// The legacy standalone embedding keeps its original configured timeouts.
+pub fn runtime_image_reproducibility_report_with_control_v2(
+    options: &Value,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<Value> {
+    report_with_optional_control(
+        options,
+        Some(control::OperationControl::new(cancelled, deadline)),
+        false,
+    )
+}
+pub(super) fn report_with_optional_control(
+    options: &Value,
+    control: Option<control::OperationControl<'_>>,
+    require_builtin_three: bool,
+) -> Result<Value> {
+    control::check(control)?;
+    let result = report_inner(options, control, require_builtin_three)?;
+    control::check(control)?;
+    Ok(result)
+}
+fn report_inner(
+    options: &Value,
+    control: Option<control::OperationControl<'_>>,
+    require_builtin_three: bool,
+) -> Result<Value> {
+    control::check(control)?;
     ensure(
         options.as_object().is_some_and(|o| {
             o.keys().all(|k| {
@@ -202,7 +259,17 @@ pub fn runtime_image_reproducibility_report_v2(options: &Value) -> Result<Value>
         };
     }
     let config_path = absolute(config, &cwd)?;
-    let context = match load(&root, &config_path, environment, &now) {
+    control::check(control)?;
+    let loaded = load(
+        &root,
+        &config_path,
+        environment,
+        &now,
+        control,
+        require_builtin_three,
+    );
+    control::check(control)?;
+    let context = match loaded {
         Ok(c) => c,
         Err(e) if action == "status" => return blocked(vec![e.to_string()], None),
         Err(e) => return Err(e),
@@ -232,6 +299,7 @@ pub fn runtime_image_reproducibility_report_v2(options: &Value) -> Result<Value>
             .join("autonomous-research/runtime-image-reproducibility/receipt.json")
     };
     if action == "status" {
+        control::check(control)?;
         let stored = match read_runtime_image_reproducibility_publication_v2(
             &receipt,
             &verification(&context, &now),
@@ -254,13 +322,17 @@ pub fn runtime_image_reproducibility_report_v2(options: &Value) -> Result<Value>
         Some(n) => n.to_owned(),
         None => nonce()?,
     };
+    control::check(control)?;
     let request = generate(&context, &now, &nonce)?;
+    control::check(control)?;
     if action == "request" {
         return Ok(
             json!({"version":1,"kind":"RuntimeImageReproducibilityRequestReport","status":"runtime_image_reproducibility_request_generated","request":request,"configuration":{"configurationIdentityHash":context.config.identity["configurationIdentityHash"],"trustIdentityHash":context.config.identity["trustIdentityHash"],"independentVerifierCount":2,"configurationPinned":true,"fullProductionReady":true,"privateSigningKeyLoaded":false},"externalActionPerformed":false}),
         );
     }
-    let responses = process::invoke_with_directory(&context.config, &request, &root)?;
+    let responses =
+        process::invoke_observed_with_directory(&context.config, &request, &root, control)?;
+    control::check(control)?;
     let issued = if options["now"].is_null() {
         clock()?
     } else {
@@ -273,22 +345,34 @@ pub fn runtime_image_reproducibility_report_v2(options: &Value) -> Result<Value>
         .ok_or("runtime_reproducibility_configuration_invalid")?;
     let receipt_value = build_runtime_image_reproducibility_receipt_v2(
         &request,
-        &responses,
+        &responses.value,
         &issued,
         &iso(issue_ms + age)?,
         &context.plugin.scope,
     )?;
     // Re-resolve every live authority and source edge after the processes return.
-    let current = load(&root, &config_path, environment, &issued)?;
+    control::check(control)?;
+    let current = load(
+        &root,
+        &config_path,
+        environment,
+        &issued,
+        control,
+        require_builtin_three,
+    )?;
+    control::check(control)?;
     let inspection = verify_runtime_image_reproducibility_receipt_v2(
         &receipt_value,
         &verification(&current, &issued),
     )?;
+    control::check(control)?;
     let publication = if action == "publish" {
-        publish_runtime_image_reproducibility_offline_v2(
+        let bytes = wire::receipt_bytes(&receipt_value, &responses.raw, control)?;
+        publication::publish_with_wire(
             &receipt,
             &receipt_value,
             &verification(&current, &issued),
+            Some(&bytes),
         )?
     } else {
         Value::Null

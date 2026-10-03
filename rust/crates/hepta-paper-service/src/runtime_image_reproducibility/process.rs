@@ -43,6 +43,17 @@ pub struct VerifierProcess {
 
 /// Load and pin both actual command/credential/backend identities. `expected_pin`
 /// is the Node-compatible configuration identity hash, not a JSON content hash.
+/// Shared borrowed predicate also bounds the CLI environment before JSON copies.
+pub(super) fn environment_entries_valid<'a>(
+    count: usize,
+    mut entries: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+) -> bool {
+    count <= 256
+        && entries.all(|(key, value)| {
+            key.len() <= 128
+                && value.is_some_and(|value| value.len() <= 65536 && !value.contains('\0'))
+        })
+}
 pub fn read_runtime_image_reproducibility_process_configuration_v1(
     path: &Path,
     expected_pin: Option<&str>,
@@ -92,13 +103,13 @@ pub fn read_runtime_image_reproducibility_process_configuration_v1(
         "runtime_reproducibility_configuration_invalid",
     )?;
     ensure(
-        environment.as_object().is_some_and(|o| {
-            o.len() <= 256
-                && o.iter().all(|(k, v)| {
-                    k.len() <= 128
-                        && v.as_str()
-                            .is_some_and(|s| s.len() <= 65536 && !s.contains('\0'))
-                })
+        environment.as_object().is_some_and(|object| {
+            environment_entries_valid(
+                object.len(),
+                object
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            )
         }),
         "runtime_reproducibility_environment_invalid",
     )?;
@@ -218,14 +229,21 @@ fn bounded_output(
         }
     }
 }
-fn invoke(p: &VerifierProcess, request: &Value, directory: &Path) -> Result<Value> {
-    let mut payload = serde_json::to_vec(request)
-        .map_err(|_| Error("runtime_reproducibility_json_invalid".into()))?;
-    payload.push(b'\n');
-    ensure(
-        payload.len() <= 32 * 1024 * 1024,
-        "runtime_reproducibility_request_resource_limit",
-    )?;
+pub(super) struct ObservedResponses {
+    pub(super) value: Value,
+    pub(super) raw: Vec<Vec<u8>>,
+}
+struct ObservedResponse {
+    value: Value,
+    raw: Vec<u8>,
+}
+fn invoke(
+    p: &VerifierProcess,
+    payload: &[u8],
+    directory: &Path,
+    control: Option<control::OperationControl<'_>>,
+) -> Result<ObservedResponse> {
+    control::check(control)?;
     let c = &p.command;
     let executable = p.executable.execution_handle()?;
     let mut command = Command::new(format!("/proc/self/fd/{}", executable.as_raw_fd()));
@@ -238,6 +256,7 @@ fn invoke(p: &VerifierProcess, request: &Value, directory: &Path) -> Result<Valu
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
+    control::check(control)?;
     let mut child = command
         .spawn()
         .map_err(|_| Error("runtime_reproducibility_verifier_process_failed".into()))?;
@@ -272,13 +291,16 @@ fn invoke(p: &VerifierProcess, request: &Value, directory: &Path) -> Result<Valu
     let (status, timed_out, stdout, stderr, write_result) = thread::scope(|scope| {
         let out = scope.spawn(|| bounded_output(output, true, &stopped, &overflow));
         let err = scope.spawn(|| bounded_output(err, false, &stopped, &overflow));
-        let write = scope.spawn(|| write_input(input, &payload, &stopped));
+        let write = scope.spawn(|| write_input(input, payload, &stopped));
         let mut timed_out = false;
         let status = loop {
             match child.try_wait() {
                 Ok(Some(s)) => break Some(s),
                 Ok(None) => {
-                    if started.elapsed() >= timeout || overflow.load(Ordering::Acquire) {
+                    if started.elapsed() >= timeout
+                        || overflow.load(Ordering::Acquire)
+                        || control::check(control).is_err()
+                    {
                         timed_out = true;
                         break None;
                     }
@@ -300,6 +322,9 @@ fn invoke(p: &VerifierProcess, request: &Value, directory: &Path) -> Result<Valu
     });
     drop(executable);
     p.executable.assert_current()?;
+    // The original process group has been killed/reaped and its pipe workers
+    // stopped before interruption is returned. No replacement flag or deadline.
+    control::check(control)?;
     let (stdout, out_complete) =
         stdout.map_err(|_| Error("runtime_reproducibility_verifier_process_failed".into()))?;
     let (_, err_complete) =
@@ -317,7 +342,11 @@ fn invoke(p: &VerifierProcess, request: &Value, directory: &Path) -> Result<Valu
         response.is_object(),
         "runtime_reproducibility_verifier_response_invalid",
     )?;
-    Ok(response)
+    control::check(control)?;
+    Ok(ObservedResponse {
+        value: response,
+        raw: stdout,
+    })
 }
 /// Reopen and re-hash all configuration inputs immediately before invoking the
 /// two processes concurrently. No shell, inherited credentials, or Node forwarding.
@@ -331,11 +360,55 @@ pub fn invoke_runtime_image_reproducibility_verifiers_v1(
         .ok_or("runtime_reproducibility_path_not_canonical")?;
     invoke_with_directory(configuration, request, directory)
 }
+/// Same pinned-FD owner with the caller's original cancellation and deadline.
+pub fn invoke_runtime_image_reproducibility_verifiers_with_control_v1(
+    configuration: &ProcessConfiguration,
+    request: &Value,
+    cancelled: &AtomicBool,
+    deadline: Instant,
+) -> Result<Value> {
+    let directory = configuration
+        .config_path
+        .parent()
+        .ok_or("runtime_reproducibility_path_not_canonical")?;
+    invoke_with_directory_and_control(
+        configuration,
+        request,
+        directory,
+        Some(control::OperationControl::new(cancelled, deadline)),
+    )
+}
 pub(super) fn invoke_with_directory(
     configuration: &ProcessConfiguration,
     request: &Value,
     directory: &Path,
 ) -> Result<Value> {
+    invoke_with_directory_and_control(configuration, request, directory, None)
+}
+pub(super) fn invoke_with_directory_and_control(
+    configuration: &ProcessConfiguration,
+    request: &Value,
+    directory: &Path,
+    control: Option<control::OperationControl<'_>>,
+) -> Result<Value> {
+    Ok(invoke_observed(configuration, request, directory, control, false)?.value)
+}
+pub(super) fn invoke_observed_with_directory(
+    configuration: &ProcessConfiguration,
+    request: &Value,
+    directory: &Path,
+    control: Option<control::OperationControl<'_>>,
+) -> Result<ObservedResponses> {
+    invoke_observed(configuration, request, directory, control, true)
+}
+fn invoke_observed(
+    configuration: &ProcessConfiguration,
+    request: &Value,
+    directory: &Path,
+    control: Option<control::OperationControl<'_>>,
+    constructor_wire: bool,
+) -> Result<ObservedResponses> {
+    control::check(control)?;
     ensure(
         configuration.pinned,
         "runtime_reproducibility_configuration_pin_required",
@@ -366,11 +439,28 @@ pub(super) fn invoke_with_directory(
             && request["trustIdentityHash"] == configuration.identity["trustIdentityHash"],
         "runtime_reproducibility_configuration_drift",
     )?;
+    control::check(control)?;
+    // The ordinary workflow uses original constructor order; the incumbent
+    // standalone invocation API retains its previous wire representation.
+    let payload = if constructor_wire {
+        wire::request_bytes(request, control)?
+    } else {
+        let mut bytes = serde_json::to_vec(request)
+            .map_err(|_| Error("runtime_reproducibility_json_invalid".into()))?;
+        bytes.push(b'\n');
+        bytes
+    };
+    ensure(
+        payload.len() <= 32 * 1024 * 1024,
+        "runtime_reproducibility_request_resource_limit",
+    )?;
+    let payload = payload.as_slice();
+    control::check(control)?;
     let results = thread::scope(|scope| {
         let handles: Vec<_> = current
             .processes
             .iter()
-            .map(|p| scope.spawn(move || invoke(p, request, directory)))
+            .map(|p| scope.spawn(move || invoke(p, payload, directory, control)))
             .collect();
         handles
             .into_iter()
@@ -380,5 +470,10 @@ pub(super) fn invoke_with_directory(
             })
             .collect::<Result<Vec<_>>>()
     })?;
-    Ok(json!(results))
+    control::check(control)?;
+    let (values, raw): (Vec<_>, Vec<_>) = results.into_iter().map(|r| (r.value, r.raw)).unzip();
+    Ok(ObservedResponses {
+        value: json!(values),
+        raw,
+    })
 }

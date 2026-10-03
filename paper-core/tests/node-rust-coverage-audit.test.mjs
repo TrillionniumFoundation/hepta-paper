@@ -2,11 +2,51 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { auditCurrentCoverage, auditNodeRustCommandMap, buildCoverageInventory } from '../../docs/tools/audit-node-rust-coverage.mjs';
+import { auditCurrentCoverage, auditNodeRustCommandMap, buildCoverageInventory, loadCurrentNodeRustCommandMapV2 } from '../../docs/tools/audit-node-rust-coverage.mjs';
 import { COMMAND_REGISTRY_ROUTES } from '../src/command-registry-routes.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 
+function loadEncodedCommandMap() {
+  return loadCurrentNodeRustCommandMapV2().map;
+}
+
+
 const report = auditCurrentCoverage();
+const loadedCommandMap = loadCurrentNodeRustCommandMapV2();
+const encodedCommandMap = loadEncodedCommandMap();
+
+test('sharded V2 manifest binds every canonical ledger byte exactly once', () => {
+  assert.equal(loadedCommandMap.manifest.kind, 'NodeRustCommandCompatibilityMapManifestV2');
+  assert.equal(loadedCommandMap.manifest.commandCount, 57);
+  assert.equal(loadedCommandMap.sourcePaths.length, 6);
+  assert.equal(new Set(loadedCommandMap.sourcePaths).size, loadedCommandMap.sourcePaths.length);
+  assert.ok(loadedCommandMap.manifest.shards.every((row) => /^sha256:[0-9a-f]{64}$/.test(row.sha256)));
+});
+
+test('indexed V2 command ledger expands to the complete validated route contract', () => {
+  assert.equal(encodedCommandMap.schemaVersion, 2);
+  assert.equal(encodedCommandMap.kind, 'NodeRustCommandCompatibilityMapV2');
+  assert.equal(new Set(encodedCommandMap.paths).size, encodedCommandMap.paths.length);
+  assert.equal(new Set(encodedCommandMap.symbols.map((entry) => JSON.stringify(entry))).size,
+    encodedCommandMap.symbols.length);
+  assert.ok(encodedCommandMap.commands.every((row) => row.tests.every(Number.isSafeInteger)
+    && row.rustSources.every(Number.isSafeInteger)
+    && row.callChain.every(Number.isSafeInteger)
+    && row.testCases.every(Number.isSafeInteger)));
+  const expanded = auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, encodedCommandMap);
+  assert.deepEqual(expanded.commands, report.commandMappings.commands);
+
+  const outOfRange = structuredClone(encodedCommandMap);
+  outOfRange.commands[0].tests[0] = outOfRange.paths.length;
+  assert.throws(() => auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, outOfRange),
+    /invalid indexed Node\/Rust command binding/);
+
+  const stale = structuredClone(encodedCommandMap);
+  stale.paths.push('zz-unused-source.rs');
+  assert.throws(() => auditNodeRustCommandMap(COMMAND_REGISTRY_ROUTES, stale),
+    /unused table entries/);
+});
+
 test('inventory retains every command and every argument-dependent effect', () => {
   assert.equal(report.commands.length, COMMAND_REGISTRY_ROUTES.length);
   for (const route of COMMAND_REGISTRY_ROUTES) {
@@ -59,8 +99,10 @@ test('partial command mappings bind both concrete Rust sources and tests', () =>
   assert.equal(full.compatibilityDecision, 'candidate');
   assert.ok(full.callChain.some((row) => row.symbol === 'inspect_full_suite_verification_v1'));
   assert.ok(full.testCases.some((row) => row.symbol === 'require_parity_reports_inventory_without_running_node_or_npm'));
-  assert.match(full.remaining, /never executes Node or npm/u);
-  assert.match(full.remaining, /cannot independently accept full-suite parity/u);
+  assert.ok(full.callChain.some((row) => row.symbol === 'execute_full_suite_verification_v1'));
+  assert.ok(full.testCases.some((row) => row.symbol === 'ordinary_native_verification_runs_real_rust_commands_and_binds_the_source'));
+  assert.ok(full.testCases.some((row) => row.symbol === 'real_suite_sigterm_and_deadline_keep_failure_receipts_and_reap_the_test_group'));
+  assert.equal(report.commandMappings.acceptedParity, false);
   assert.equal(report.fullReplacementEstablished, false);
 });
 
@@ -109,7 +151,7 @@ test('canonical command ledger owns every campaign action mode and explicit gap'
   assert.equal(report.commandMappings.productionActivation, false);
   assert.equal(report.commandMappings.nodeRetirement, false);
   assert.equal(modes.length, 15);
-  assert.equal(modes.filter((row) => row.scope === 'partial_local_source').length, 14);
+  assert.equal(modes.filter((row) => row.scope === 'partial_local_source').length, 15);
   assert.equal(new Set(modes.map((row) => row.nodeAction)).size, modes.length);
   for (const action of ['gc', 'retention-recovery-readiness', 'provision-retention-recovery']) {
     const row = modes.find((entry) => entry.nodeAction === action);
@@ -117,8 +159,10 @@ test('canonical command ledger owns every campaign action mode and explicit gap'
     assert.ok(row.callChain.length > 0 && row.tests.length > 0);
     assert.ok(row.remaining.length > 80);
   }
-  assert.equal(modes.filter((row) => row.scope === 'unmapped').length, 1);
-  assert.equal(modes.find((row) => row.nodeAction === 'cancel-node').scope, 'unmapped');
+  assert.equal(modes.filter((row) => row.scope === 'unmapped').length, 0);
+  const cancelNode = modes.find((row) => row.nodeAction === 'cancel-node');
+  assert.equal(cancelNode.scope, 'partial_local_source');
+  assert.ok(cancelNode.callChain.length > 0 && cancelNode.tests.length > 0);
   assert.ok(modes.find((row) => row.nodeAction === 'resume').remaining.includes('not equivalent'));
   assert.equal(report.acceptedParityRows, 0);
 });

@@ -70,6 +70,7 @@ fn full_original_format_archive_reopens_in_sqlite_and_the_actual_node_runtime() 
         "rebind2",
         "multirole",
         "aborted-tail",
+        "completed-backup",
     ] {
         let fixture = Fixture::node(scenario);
         let before = fs::read(fixture.path()).unwrap();
@@ -79,6 +80,13 @@ fn full_original_format_archive_reopens_in_sqlite_and_the_actual_node_runtime() 
             let verifier = fixture.load();
             let db = fixture.source(false);
             let exact = exact_rows(&db);
+            if scenario == "completed-backup" {
+                let rows = read_source_rows(&db).unwrap();
+                assert_eq!(rows.backups().len(), 1);
+                let finalization: Value =
+                    serde_json::from_str(rows.backups()[0][5].as_str().unwrap()).unwrap();
+                assert_eq!(finalization, fixture.oracle["completedBackup"]);
+            }
             let changes = db.total_changes();
             archive = verifier.build_offline_legacy_archive(&db).unwrap();
             check_archive(&fixture, &archive, &exact, "original-format.sqlite");
@@ -203,7 +211,7 @@ fn write_transactions_pending_histories_and_wrong_keys_refuse_without_altering_s
         "pending-rebind",
         "unactivated-rebind",
         "pending-mutation",
-        "completed-backup",
+        "pending-backup",
         "wrong-key",
     ] {
         let mut fixture = Fixture::node(if scenario == "wrong-key" {

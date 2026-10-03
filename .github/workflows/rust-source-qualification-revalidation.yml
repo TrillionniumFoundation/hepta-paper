@@ -14,6 +14,9 @@ on:
       - rust-source-snapshot
       - rust-supply-chain
       - workflow-lint
+      - repository-source-evidence
+      - rust-functional-source-closure
+      - rust-product-targets
       - rust-effective-source-qualification
     types: [completed]
 
@@ -82,6 +85,9 @@ jobs:
               'rust-source-snapshot',
               'rust-supply-chain',
               'workflow-lint',
+              'repository-source-evidence',
+              'rust-functional-source-closure',
+              'rust-product-targets',
           }
           allowed_triggers = required | {collector_name}
           sha_pattern = re.compile(r'^[0-9a-f]{40}$')

@@ -12,7 +12,7 @@ use std::{
 };
 use zbus::connection::socket::{ReadHalf, Socket, Split, WriteHalf};
 
-pub(super) const MAXIMUM_RECEIVED_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAXIMUM_RECEIVED_BYTES: usize = 4 * 1024 * 1024;
 const MAXIMUM_SENT_BYTES: usize = 1024 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
 
@@ -46,13 +46,13 @@ impl Resources {
 
 /// This witness owns no descriptors. Its zero count proves the read and write
 /// owners, including zbus's receiving task, have both been destroyed.
-pub(super) struct ClosedWitness(Weak<Resources>);
+pub(crate) struct ClosedWitness(Weak<Resources>);
 impl ClosedWitness {
-    pub(super) fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.0.strong_count() == 0
     }
 
-    pub(super) fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) {
         if let Some(resources) = self.0.upgrade() {
             // Interrupt both halves without waiting on zbus's async mutex.
             // The actual close and task destruction are checked separately.
@@ -62,18 +62,18 @@ impl ClosedWitness {
 }
 
 #[derive(Debug)]
-pub(super) struct BoundedSocket(Arc<Resources>);
+pub(crate) struct BoundedSocket(Arc<Resources>);
 #[derive(Debug)]
-pub(super) struct Reader {
+pub(crate) struct Reader {
     resources: Arc<Resources>,
     authentication_lines: u8,
     authentication_previous: Option<u8>,
 }
 #[derive(Debug)]
-pub(super) struct Writer(Arc<Resources>);
+pub(crate) struct Writer(Arc<Resources>);
 
 impl BoundedSocket {
-    pub(super) fn new(stream: UnixStream, deadline: Instant) -> io::Result<(Self, ClosedWitness)> {
+    pub(crate) fn new(stream: UnixStream, deadline: Instant) -> io::Result<(Self, ClosedWitness)> {
         let resources = Arc::new(Resources {
             socket: Arc::new(Async::new(stream)?),
             deadline,

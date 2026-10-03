@@ -36,10 +36,12 @@ fn request(root: &Path) -> InitialOnlineMutationCompositionRequestV1 {
         workspace_root: root.join("workspace"),
         runtime_root: root.join("runtime"),
         backup_root: root.join("backup"),
-        online_process_configuration_path: root.join("online.json"),
-        online_process_configuration_file_hash: "sha256:".to_owned() + &"0".repeat(64),
-        backup_process_configuration_path: root.join("backup.json"),
-        backup_process_configuration_file_hash: "sha256:".to_owned() + &"0".repeat(64),
+        authority_profile: InitialOnlineAuthorityProfileV1::Process {
+            online_configuration_path: root.join("online.json"),
+            online_configuration_file_hash: "sha256:".to_owned() + &"0".repeat(64),
+            backup_configuration_path: root.join("backup.json"),
+            backup_configuration_file_hash: "sha256:".to_owned() + &"0".repeat(64),
+        },
         resident_owner_id: "resident:test".into(),
         resident_lease_token: "token:test".into(),
         resident_lease_generation: 1,
@@ -108,19 +110,37 @@ fn request_from_fixture(value: &Value) -> InitialOnlineMutationCompositionReques
         workspace_root: path("workspace"),
         runtime_root: path("runtime"),
         backup_root: path("backupRoot"),
-        online_process_configuration_path: path("onlineProcess"),
-        online_process_configuration_file_hash: value["onlineProcessHash"].as_str().unwrap().into(),
-        backup_process_configuration_path: path("backupConfiguration"),
-        backup_process_configuration_file_hash: value["backupConfigurationHash"]
-            .as_str()
-            .unwrap()
-            .into(),
+        authority_profile: InitialOnlineAuthorityProfileV1::Process {
+            online_configuration_path: path("onlineProcess"),
+            online_configuration_file_hash: value["onlineProcessHash"].as_str().unwrap().into(),
+            backup_configuration_path: path("backupConfiguration"),
+            backup_configuration_file_hash: value["backupConfigurationHash"]
+                .as_str()
+                .unwrap()
+                .into(),
+        },
         resident_owner_id: value["lease"]["ownerId"].as_str().unwrap().into(),
         resident_lease_token: value["lease"]["leaseToken"].as_str().unwrap().into(),
         resident_lease_generation: value["lease"]["generation"].as_i64().unwrap(),
         schema_checkpoint_root: None,
     }
 }
+fn process_online_profile(request: &InitialOnlineMutationCompositionRequestV1) -> (&Path, &str) {
+    match &request.authority_profile {
+        InitialOnlineAuthorityProfileV1::Process {
+            online_configuration_path,
+            online_configuration_file_hash,
+            ..
+        } => (
+            online_configuration_path.as_path(),
+            online_configuration_file_hash.as_str(),
+        ),
+        InitialOnlineAuthorityProfileV1::InstalledV2 { .. } => {
+            panic!("expected process compatibility fixture")
+        }
+    }
+}
+
 #[test]
 fn actual_signed_initial_composition_retains_producers_and_refuses_native_authorization() {
     let root = Root::new();
@@ -168,7 +188,7 @@ fn actual_signed_initial_composition_retains_producers_and_refuses_native_author
             .is_err()
     );
     // A byte-identical replacement must fail retained inode pins.
-    let config = &request.online_process_configuration_path;
+    let (config, _) = process_online_profile(&request);
     let bytes = fs::read(config).unwrap();
     let swap = config.with_extension("replacement");
     fs::write(&swap, bytes).unwrap();

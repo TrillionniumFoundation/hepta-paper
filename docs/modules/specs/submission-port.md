@@ -61,6 +61,10 @@ Current implementation and contract roots:
 
 - `paper-domain/submission`
 - `paper-adapters`
+- `rust/crates/hepta-paper-service/src/native_business/local_submission_preflight/mod.rs`
+
+The Rust local artifact preparation owner and its exact worker/CAS boundaries
+are documented in the [development handoff](../../../rust/crates/hepta-paper-service/src/native_business/local_submission_preflight/HANDOFF.md).
 
 ## Concurrency and resources
 

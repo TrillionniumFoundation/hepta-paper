@@ -16,15 +16,37 @@ use hepta_paper_service::{
     state_database_inventory::observe_state_database_inventory_v1,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{BufRead, BufReader, Write},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
+fn file_digest(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+fn plan_from_audit(audit: &Value) -> Value {
+    let mut plan = audit["reserveRequest"].clone();
+    let planned_at = plan["requestedAt"].clone();
+    plan.as_object_mut().unwrap().remove("requestedAt");
+    plan["kind"] = json!("AutonomousResearchOnlineSchemaTransitionPlan");
+    plan["plannedAt"] = planned_at;
+    let mut base = plan.clone();
+    base.as_object_mut().unwrap().remove("transitionId");
+    plan["planHash"] = json!(
+        production_hash_record_v1("AutonomousResearchOnlineSchemaTransitionPlan", &base)
+            .unwrap()
+            .as_str()
+    );
+    plan["transitionId"] = json!(schema_transition_identity_v1(&plan).unwrap());
+    plan
+}
 
 struct Fixture {
     root: PathBuf,
@@ -305,12 +327,12 @@ fn prepares_real_signed_ten_database_final_receipt_and_rejects_splice() {
         &inventory,
         &authority,
     );
+    // A caller cannot promote a v1 audit by changing only its version. The
+    // altered plan no longer recomputes to its retained plan hash, so refusal is
+    // exact and precedes any target-configuration or publication observation.
     assert_eq!(
         v2_result.err().map(|error| error.code),
-        Some(
-            "autonomous_research_pristine_schema_rebind_target_configuration_restart_required"
-                .into()
-        )
+        Some("autonomous_research_online_schema_transition_inventory_invalid".into())
     );
 }
 
@@ -493,4 +515,162 @@ fn publication_crash_child() {
         &mut checkpoint,
     );
     panic!("crash checkpoint was not reached");
+}
+
+fn predecessor_process_configuration(fixture: &Fixture) -> (PathBuf, String) {
+    let command = fixture.root.join("predecessor-no-rpc");
+    fs::copy("/usr/bin/false", &command).unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o700)).unwrap();
+    let path = fixture.root.join("predecessor-process.json");
+    let value = json!({
+        "version": 1,
+        "kind": "AutonomousResearchOnlineMutationAuthorityProcessConfiguration",
+        "authorityConfigurationPath": fixture.value["configurationPath"],
+        "authorityConfigurationSha256": fixture.value["configurationFileHash"],
+        "commandPath": command,
+        "commandSha256": file_digest(&fs::read(&command).unwrap()),
+        "fixedArguments": [],
+        "timeoutMs": 1000
+    });
+    let bytes = serde_json::to_vec(&value).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    (path, file_digest(&bytes))
+}
+fn runtime_snapshot(root: &Path) -> Vec<(PathBuf, String)> {
+    fn visit(root: &Path, path: &Path, rows: &mut Vec<(PathBuf, String)>) {
+        let mut children = fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        children.sort();
+
+        for child in children {
+            let metadata = fs::symlink_metadata(&child).unwrap();
+            if metadata.is_dir() {
+                visit(root, &child, rows);
+            } else if metadata.is_file() {
+                rows.push((
+                    child.strip_prefix(root).unwrap().to_owned(),
+                    file_digest(&fs::read(&child).unwrap()),
+                ));
+            } else {
+                panic!("unexpected runtime entry: {}", child.display());
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    visit(root, root, &mut rows);
+    rows
+}
+fn predecessor_command(
+    fixture: &Fixture,
+    process: &Path,
+    process_hash: &str,
+    final_pin: Option<&str>,
+) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"));
+    command.args([
+        "autonomous-online-schema-transition",
+        "--action",
+        "plan",
+        "--runtime-root",
+        fixture.runtime.to_str().unwrap(),
+        "--authority-process-config",
+        process.to_str().unwrap(),
+        "--authority-process-config-sha256",
+        process_hash,
+    ]);
+    if let Some(pin) = final_pin {
+        command.args(["--expected-previous-final-receipt-sha256", pin]);
+    }
+    command
+}
+
+#[test]
+fn ordinary_plan_accepts_only_an_exact_signed_finalized_predecessor() {
+    let fixture = Fixture::new();
+    let final_path = fixture
+        .runtime
+        .join("autonomous-research/online-schema-transition/FINAL.json");
+    let final_bytes = fs::read(&final_path).unwrap();
+    let final_pin = file_digest(&final_bytes);
+    let audit: Value = serde_json::from_slice(&final_bytes).unwrap();
+    let plan = plan_from_audit(&audit);
+
+    let control = final_path.parent().unwrap();
+    let active_path = control.join("ACTIVE.json");
+    let active = json!({
+        "version": 1,
+        "kind": "AutonomousResearchOnlineSchemaTransitionState",
+        "phase": "finalized",
+        "plan": plan,
+        "reserveRequest": audit["reserveRequest"],
+        "reservation": audit["reservation"],
+        "installations": audit["installations"],
+        "finalReceiptHash": audit["schemaTransitionReceiptHash"]
+    });
+    fs::write(&active_path, serde_json::to_vec(&active).unwrap()).unwrap();
+    fs::set_permissions(&active_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let names = fs::read_dir(control)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(names, ["ACTIVE.json".into(), "FINAL.json".into()].into());
+    let (process, process_hash) = predecessor_process_configuration(&fixture);
+    let before = runtime_snapshot(&fixture.runtime);
+
+    let unpinned = predecessor_command(&fixture, &process, &process_hash, None)
+        .output()
+        .unwrap();
+    assert_eq!(unpinned.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&unpinned.stderr).contains("existing_control_requires_recovery")
+    );
+    assert_eq!(runtime_snapshot(&fixture.runtime), before);
+
+    let wrong = format!("sha256:{}", "0".repeat(64));
+    let rejected = predecessor_command(&fixture, &process, &process_hash, Some(&wrong))
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("previous_final_receipt_invalid"));
+    assert_eq!(runtime_snapshot(&fixture.runtime), before);
+
+    let accepted = predecessor_command(&fixture, &process, &process_hash, Some(&final_pin))
+        .output()
+        .unwrap();
+    assert_eq!(
+        accepted.status.code(),
+        Some(0),
+        "{} {}",
+        String::from_utf8_lossy(&accepted.stdout),
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let report: Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(report["controlPredecessorVerified"], true);
+    assert_eq!(report["previousFinalReceiptFileSha256"], final_pin);
+    assert_eq!(
+        report["readinessScope"],
+        "finalized_predecessor_native_source_plan_only"
+    );
+    assert_eq!(
+        report["plan"]["databaseScopeHash"],
+        audit["databaseScopeHash"]
+    );
+    assert_eq!(runtime_snapshot(&fixture.runtime), before);
+
+    let original_active = fs::read(&active_path).unwrap();
+    let mut changed: Value = serde_json::from_slice(&original_active).unwrap();
+    changed["phase"] = json!("pending");
+    fs::write(&active_path, serde_json::to_vec(&changed).unwrap()).unwrap();
+    let substituted = predecessor_command(&fixture, &process, &process_hash, Some(&final_pin))
+        .output()
+        .unwrap();
+    assert_eq!(substituted.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&substituted.stderr).contains("previous_finalized_control_invalid")
+    );
+    fs::write(&active_path, original_active).unwrap();
+    assert_eq!(runtime_snapshot(&fixture.runtime), before);
 }

@@ -1,5 +1,5 @@
 //! Descriptor-relative reads and durable, exclusive atomic local publication.
-use super::{Document, Result, error};
+use super::{Control, Document, Result, checkpoint, error};
 use nix::{
     fcntl::{OFlag, RenameFlags, open, openat, renameat2},
     sys::stat::{Mode, mkdirat},
@@ -292,6 +292,15 @@ impl RegistryLock {
         bytes: &[u8],
         prior: Option<&Snapshot>,
     ) -> Result<Publication<'a>> {
+        self.publish_with_control(bytes, prior, None)
+    }
+    pub fn publish_with_control<'a>(
+        &'a self,
+        bytes: &[u8],
+        prior: Option<&Snapshot>,
+        control: Control<'_>,
+    ) -> Result<Publication<'a>> {
+        checkpoint(control)?;
         self.assert_current()?;
         let temporary = std::ffi::OsString::from(format!(
             ".{}.{}.{}.tmp",
@@ -308,9 +317,20 @@ impl RegistryLock {
         .map_err(|_| error("portal_target_qualification_registry_write_failed"))?;
         let mut file = File::from(fd);
         let result = (|| -> Result<Publication<'a>> {
-            file.write_all(bytes)
-                .and_then(|_| file.sync_all())
-                .map_err(|_| error("portal_target_qualification_registry_write_failed"))?;
+            if control.is_some() {
+                for block in bytes.chunks(64 * 1024) {
+                    checkpoint(control)?;
+                    file.write_all(block)
+                        .map_err(|_| error("portal_target_qualification_registry_write_failed"))?;
+                }
+                file.sync_all()
+                    .map_err(|_| error("portal_target_qualification_registry_write_failed"))?;
+                checkpoint(control)?;
+            } else {
+                file.write_all(bytes)
+                    .and_then(|_| file.sync_all())
+                    .map_err(|_| error("portal_target_qualification_registry_write_failed"))?;
+            }
             let metadata = file
                 .metadata()
                 .map_err(|_| error("portal_target_qualification_registry_write_failed"))?;
@@ -320,6 +340,7 @@ impl RegistryLock {
             }
             // NOREPLACE protects a previously absent destination. EXCHANGE retains
             // the prior inode for exact rollback and detects uncoordinated replacement.
+            checkpoint(control)?;
             rename(
                 &self.directory,
                 &temporary,
@@ -337,6 +358,7 @@ impl RegistryLock {
                 had_prior: prior.is_some(),
                 finished: false,
             };
+            checkpoint(control)?;
             if let Some(prior) = prior {
                 let displaced = at_metadata(&self.directory, &temporary)?;
                 // rename changes ctime, so compare identity plus content timestamps.
@@ -353,6 +375,7 @@ impl RegistryLock {
                 publication.rollback()?;
                 return Err(error("portal_target_qualification_registry_write_failed"));
             }
+            checkpoint(control)?;
             Ok(publication)
         })();
         if result.is_err()

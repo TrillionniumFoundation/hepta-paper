@@ -167,6 +167,92 @@ fn autonomous_rejects_changed_definition_and_foreign_campaign_without_dispatch()
     success(invoke(&path, "status", &[]));
 }
 
+// Shape-only fixture: never a verified qualification or execution permit.
+fn non_authorizing_research_profile() -> ResearchWorkflowProfileV1 {
+    ResearchWorkflowProfileV1 {
+        version: 1,
+        stage: ResearchActivationStageV1::Canary,
+        repository: "TrillionniumFoundation/hepta-paper".into(),
+        commit: "a".repeat(40),
+        tree: "b".repeat(40),
+        qualification_binding_hash: format!("sha256:{:064x}", 41).parse().unwrap(),
+        qualification_trust_store_generation: 7,
+        qualification_expires_at_unix_ms: i64::MAX as u64 - 1,
+        qualified_codex_runtime_identity_hash: format!("sha256:{:064x}", 42).parse().unwrap(),
+        qualified_codex_role_runtime_identity_hashes_v2: Default::default(),
+        automatic_activation: false,
+        production_activation: false,
+        release_authority: false,
+        submission_authority: false,
+    }
+}
+
+#[test]
+fn autonomous_profile_bound_workflow_requires_opaque_v3_before_initialization() {
+    let temp = Temp::new();
+    let mut def = definition(&temp);
+    def.research_profile = Some(non_authorizing_research_profile());
+    let path = request(&temp, def);
+    let rejected = invoke(&path, "launch", &[]);
+    assert!(!rejected.status.success());
+    let report: Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert_eq!(report["researchQualificationRequired"], true);
+    assert_eq!(
+        report["error"],
+        "local_workflow_research_qualification_rejected"
+    );
+    assert!(!temp.state().exists());
+
+    let rejected = invoke(
+        &path,
+        "launch",
+        &[
+            "--research-qualification-request",
+            "/definitely/absent/research-v3.json",
+        ],
+    );
+    assert!(!rejected.status.success());
+    let report: Value = serde_json::from_slice(&rejected.stdout).unwrap();
+    assert_eq!(
+        report["error"],
+        "local_workflow_research_qualification_rejected"
+    );
+    assert!(!temp.state().exists());
+}
+
+#[test]
+fn persisted_definition_mismatch_precedes_research_qualification_admission() {
+    let temp = Temp::new();
+    let mut def = definition(&temp);
+    def.research_profile = Some(non_authorizing_research_profile());
+    let path = request(&temp, def);
+    let persisted: LocalWorkflowV1 = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let actual = initialize_local_workflow_v1(persisted).unwrap();
+    let wrong = format!("sha256:{:064x}", 99);
+    assert_ne!(actual.to_string(), wrong);
+    let absent_qualification = temp.0.join("absent-research-v3.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .args([
+            "autonomous-research",
+            "--campaign-id",
+            "campaign-service",
+            "--workflow-root",
+        ])
+        .arg(temp.state())
+        .args(["--definition-hash", &wrong, "--action", "converge"])
+        .arg("--research-qualification-request")
+        .arg(&absent_qualification)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["researchQualificationRequired"], true);
+    assert_eq!(report["researchQualificationAccepted"], false);
+    assert_eq!(report["error"], "local_workflow_definition_rejected");
+    assert!(!absent_qualification.exists());
+    assert_eq!(status(&temp, &actual).committed_steps, 0);
+}
+
 #[test]
 fn autonomous_local_authority_and_request_bounds_fail_before_state_creation() {
     let temp = Temp::new();
@@ -241,6 +327,8 @@ fn autonomous_executes_real_rust_workers_without_claiming_external_observation()
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
+        research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),
     };
@@ -280,6 +368,8 @@ fn autonomous_worker_crash_is_not_reexecuted_after_cli_restart() {
     );
     let mut def = LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
+        research_profile: None,
         template: template(&temp.state(), binding).unwrap(),
         steps: steps(),
     };
@@ -296,4 +386,91 @@ fn autonomous_worker_crash_is_not_reexecuted_after_cli_restart() {
     let observed = success(invoke(&path, "status", &[]));
     assert_eq!(observed["workflow"]["committedSteps"], 0);
     assert_eq!(observed["workflow"]["pendingStep"], true);
+}
+
+#[test]
+fn expired_research_profile_keeps_inspection_and_revision_bound_cancellation_available() {
+    let temp = Temp::new();
+    let mut def = definition(&temp);
+    let mut profile = non_authorizing_research_profile();
+    profile.qualification_expires_at_unix_ms = 1;
+    def.research_profile = Some(profile.clone());
+    let path = request(&temp, def);
+    let persisted: LocalWorkflowV1 = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let hash = initialize_local_workflow_v1(persisted).unwrap();
+    let initial = success(invoke(&path, "status", &[]));
+    let initial_revision = initial["workflow"]["campaignRevision"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let paused = success(invoke(
+        &path,
+        "pause",
+        &["--expected-revision", &initial_revision],
+    ));
+    let pause_revision = paused["workflow"]["campaignRevision"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let resumed = success(invoke(
+        &path,
+        "resume",
+        &["--expected-revision", &pause_revision],
+    ));
+    let resume_revision = resumed["workflow"]["campaignRevision"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let cancelled = success(invoke(
+        &path,
+        "cancel",
+        &["--expected-revision", &resume_revision],
+    ));
+    let replay = success(invoke(
+        &path,
+        "cancel",
+        &["--expected-revision", &resume_revision],
+    ));
+    assert_eq!(cancelled["workflow"], replay["workflow"]);
+    let terminal_revision = cancelled["workflow"]["campaignRevision"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    assert!(
+        !invoke(
+            &path,
+            "resume",
+            &["--expected-revision", &terminal_revision]
+        )
+        .status
+        .success()
+    );
+    for action in ["launch", "converge"] {
+        let output = invoke(&path, action, &[]);
+        assert!(!output.status.success());
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            report["error"],
+            "local_workflow_research_qualification_rejected"
+        );
+        assert_eq!(report["researchQualificationAccepted"], false);
+        assert_eq!(report["reconciliationRequired"], false);
+    }
+    for report in [&initial, &paused, &resumed, &cancelled, &replay] {
+        assert_eq!(
+            report["researchProfile"],
+            serde_json::to_value(&profile).unwrap()
+        );
+        assert_eq!(report["researchQualificationAccepted"], false);
+        assert_eq!(report["researchActivation"], false);
+        assert_eq!(report["releaseAuthority"], false);
+        assert_eq!(report["submissionAuthority"], false);
+        assert_eq!(report["workflow"]["committedSteps"], 0);
+        assert_eq!(report["workflow"]["budgetRemainingMicrousd"], 100);
+    }
+    assert_eq!(
+        status(&temp, &hash).campaign_state,
+        CampaignStateV1::Cancelled
+    );
+    assert_eq!(attempt_count(&temp), 0);
 }

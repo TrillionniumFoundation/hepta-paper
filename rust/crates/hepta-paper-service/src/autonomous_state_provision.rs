@@ -19,8 +19,9 @@ mod execution;
 pub(crate) mod files;
 mod inputs;
 mod publication;
+pub mod publication_recovery;
 pub mod recovery;
-mod schema;
+pub(crate) mod schema;
 
 const PROVISIONING_BLOCKER: &str = "rust_autonomous_state_provision_execute_not_ported";
 
@@ -65,6 +66,10 @@ Optional: --root WORKSPACE_PATH --machine-intake-genesis-authority external|root
 Recovery profile: autonomous-state-provision --recover-staging ABSOLUTE_REQUEST_JSON
 NativeStateProvisioningRecoveryRequestV1 selects inspect or explicit quarantine.
 It preserves unpublished bytes; it cannot adopt, delete or replace a runtime.
+Published recovery: autonomous-state-provision --recover-publication ABSOLUTE_REQUEST_JSON
+NativeStatePublicationRecoveryRequestV1 selects inspect or explicit finalize.
+A pinned prepared receipt and exact unchanged ten-database bytes are required;
+only a missing terminal receipt can be written, not any business database.
 "#;
 
 #[derive(Clone, Debug)]
@@ -228,10 +233,11 @@ pub fn parse_autonomous_state_provisioning_arguments(
         action,
         execute,
         expected_plan_id: values.get("plan-id").cloned(),
-        workspace_root: values
-            .get("root")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")),
+        workspace_root: match values.get("root") {
+            Some(root) => PathBuf::from(root),
+            None => crate::native_workspace::current_native_command_workspace_root_v1(None)
+                .map_err(error)?,
+        },
         runtime_root: absolute("runtime-root")?,
         machine_intake_config: absolute("machine-intake-config")?,
         topic_producer_profile: absolute("topic-producer-profile")?,

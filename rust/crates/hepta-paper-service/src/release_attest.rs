@@ -3,9 +3,17 @@
 //!
 //! The Node route also replays the differential suites, captures independently
 //! trusted release provenance, signs an evidence bundle and publishes it.  The
-//! native route composes only the locally reproducible release-state, trust
-//! gate, schema-25 freeze and archive checks.  It never signs, publishes,
+//! V1 entry composes the locally reproducible release-state, trust gate,
+//! schema-25 freeze and archive checks from supplied projections. The V2 source
+//! entry independently captures actual Git/source bytes and release snapshots.  It never signs, publishes,
 //! deletes, or authorizes a release.
+
+pub(crate) mod source_capture;
+
+pub use source_capture::{
+    ReleaseAttestationSourceRequestV2, inspect_release_attestation_source_v2,
+    inspect_release_attestation_source_with_cancellation_v2,
+};
 
 use crate::{
     LegacyDeletionDrillAttestationRequestV1, inspect_legacy_deletion_drill_attest_v1,

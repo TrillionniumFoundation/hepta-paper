@@ -275,3 +275,45 @@ The test uses a fresh host-clock lease and the existing service/CAS/SQLite owner
 Its command, replay, result and manuscript artifacts are retained under
 `r-autonomous-workflow`; the existing 57-route map links this case directly to
 `operator/autonomous-research`. It does not supply model authorship or review.
+
+## Atomic output tools and the launch environment
+
+The ordinary `hepta-scientific-worker` sets umask `0077` in its isolated process
+before it launches Python, R, Lean or LaTeX. The shared library must not change a
+multithreaded caller's process-global mask. Pre-creating an output with mode `0600`
+is sufficient for in-place truncation, but does not control a tool's subsequent
+atomic replacement. Lean 4.30.0 replaces `proof.olean`; a permissive caller mask
+therefore correctly causes the private-output validator to refuse its new inode.
+
+The installed-tool CI target calls that library in a disposable test process and
+explicitly uses the same private mask. This is environment setup, not acceptance
+of world-readable outputs or post-execution chmod. The normal workflow regression
+also atomically replaces its actually computed result, then verifies private
+mode, CAS contents, manuscript/bundle bindings, SQLite commit and exact replay.
+Its parent-mask regression reruns this ordinary owner chain from isolated child
+processes with masks `0022` and `0000`; it neither changes the concurrent host's
+mask nor relies on a scientific script to set one. Library direct-call safety
+refusals, malformed output, link and process-failure tests remain unchanged.
+
+## Explicit R tool selection for local verification
+
+The existing R runtime and autonomous-workflow cases share
+`tests/support/installed_rscript.rs`. `HEPTA_TEST_R_EXECUTABLE` selects an absolute
+real Rscript; without the override the established `/usr/bin/Rscript` default is
+retained. An explicitly invalid selection fails instead of searching PATH or
+falling back to another tool. The existing profile canonicalizes and hashes the
+actual executable, and the manifest and CAS assertions still bind its outputs.
+This test-only selector adds no serialized runtime/profile field or authority.
+
+A private-prefix build can therefore run the same cases without installing a
+system package. The production scientific process still receives only its fixed
+LANG/PATH/HOME/TMPDIR environment; RHOME, credentials and arbitrary caller
+environment are not inherited to make a relocated test pass. The selected R
+installation must work under that environment on its own. Its source/build and
+runtime file identities are retained as run evidence, not independent platform
+qualification or complete automatic dependency-closure discovery.
+
+The existing tool-equipped migration job continues to execute whole scientific
+runtime and workflow targets with `--include-ignored`. Local execution of these
+same cases is recorded separately for each exact-head and prospective-merge
+subject; changing the executable selection alone is not a passing result.

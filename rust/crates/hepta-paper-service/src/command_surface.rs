@@ -12,6 +12,10 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+mod publication;
+
+/// Closed ordinary package input/output budget; never a runtime authority.
+pub const COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1: u64 = 16 * 1024 * 1024;
 
 const ROUTED_SCRIPTS: &[&str] = &[
     "workspace:status",
@@ -131,6 +135,8 @@ pub enum CommandSurfaceError {
     Io(#[from] std::io::Error),
     #[error("package.json JSON is invalid")]
     Json(#[from] serde_json::Error),
+    #[error("{0}")]
+    Publication(&'static str),
 }
 
 fn package_path(root: &Path) -> PathBuf {
@@ -152,6 +158,7 @@ enum OrderedJson {
     /// Lone surrogate units cannot be represented by Rust's `String`, so the
     /// writer retains them until JSON serialization and emits `\uXXXX`.
     Utf16Unit(u16),
+    Utf16String(Vec<u16>),
     Array(Vec<Self>),
     Object(Vec<(String, Self)>),
 }
@@ -254,6 +261,7 @@ impl OrderedJson {
             Self::Number(value) => Value::Number(value),
             Self::String(value) => Value::String(value),
             Self::Utf16Unit(value) => Value::String(String::from_utf16_lossy(&[value])),
+            Self::Utf16String(value) => Value::String(String::from_utf16_lossy(&value)),
             Self::Array(values) => Value::Array(values.into_iter().map(Self::into_value).collect()),
             Self::Object(entries) => Value::Object(
                 entries
@@ -328,6 +336,11 @@ fn javascript_ordered_entries_for_ordered(value: &OrderedJson) -> Vec<(String, O
             .encode_utf16()
             .enumerate()
             .map(|(index, unit)| (index.to_string(), OrderedJson::Utf16Unit(unit)))
+            .collect(),
+        OrderedJson::Utf16String(value) => value
+            .iter()
+            .enumerate()
+            .map(|(index, unit)| (index.to_string(), OrderedJson::Utf16Unit(*unit)))
             .collect(),
         OrderedJson::Null
         | OrderedJson::Bool(_)
@@ -422,6 +435,13 @@ fn write_ordered_json_pretty(
         }
         OrderedJson::String(value) => {
             output.push_str(&serde_json::to_string(value).map_err(CommandSurfaceError::Json)?);
+        }
+        OrderedJson::Utf16String(value) => {
+            let encoded =
+                crate::online_runtime_activation::ordered_json::Json::Utf16String(value.clone())
+                    .stringify()
+                    .map_err(|_| CommandSurfaceError::InvalidPackage)?;
+            output.push_str(&encoded);
         }
         OrderedJson::Utf16Unit(value) => {
             if (0xd800..=0xdfff).contains(value) {
@@ -674,10 +694,20 @@ pub fn synchronize_command_surface_v1(
     root: &Path,
     write_package: bool,
 ) -> Result<Value, CommandSurfaceError> {
-    let path = package_path(root);
-    let mut package: Value = serde_json::from_slice(&fs::read(&path)?)?;
+    let publication = write_package
+        .then(|| publication::PackagePublication::open(root))
+        .transpose()?;
+    let source = match &publication {
+        Some(publication) => publication.input.bytes.clone(),
+        None => crate::native_workspace::read_native_workspace_package_bytes_with_limit_v1(
+            root,
+            COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1,
+        )
+        .map_err(|_| CommandSurfaceError::InvalidPackage)?,
+    };
+    let mut ordered = parse_ordered_node_package_v1(&source)?;
+    let mut package = ordered.clone().into_value();
     if write_package {
-        let mut ordered: OrderedJson = serde_json::from_slice(&fs::read(&path)?)?;
         let scripts = match &ordered {
             OrderedJson::Object(entries) => entries
                 .iter()
@@ -698,7 +728,13 @@ pub fn synchronize_command_surface_v1(
         let mut bytes = String::new();
         write_ordered_json_pretty(&ordered, &mut bytes, 0)?;
         bytes.push('\n');
-        fs::write(&path, bytes.as_bytes())?;
+        if bytes.len() as u64 > COMMAND_SURFACE_PACKAGE_MAX_BYTES_V1 {
+            return Err(CommandSurfaceError::InvalidPackage);
+        }
+        publication
+            .as_ref()
+            .ok_or(CommandSurfaceError::InvalidPackage)?
+            .commit(bytes.as_bytes())?;
         package = ordered.into_value();
     }
     inspection(&package)
@@ -746,4 +782,53 @@ pub fn synchronize_command_surface_json_v1(
     output.push_str(&encode(&value["blocked"])?);
     output.push('}');
     Ok(output)
+}
+
+/// Ordinary registry output keeps the Node command's pretty JSON bytes. The
+/// existing ordered synchronization owner performs the actual local mutation.
+pub fn synchronize_command_surface_pretty_json_v1(
+    root: &Path,
+    write_package: bool,
+) -> Result<String, CommandSurfaceError> {
+    let compact = synchronize_command_surface_json_v1(root, write_package)?;
+    let value: OrderedJson = serde_json::from_str(&compact)?;
+    let mut output = String::new();
+    write_ordered_json_pretty(&value, &mut output, 0)?;
+    Ok(output)
+}
+
+fn parse_ordered_node_package_v1(bytes: &[u8]) -> Result<OrderedJson, CommandSurfaceError> {
+    use hepta_legacy_compatibility::ProductionJsonValue as Node;
+    fn convert(value: Node) -> Result<OrderedJson, CommandSurfaceError> {
+        Ok(match value {
+            Node::Null => OrderedJson::Null,
+            Node::Bool(value) => OrderedJson::Bool(value),
+            Node::Number(value) => {
+                serde_json::Number::from_f64(value).map_or(OrderedJson::Null, OrderedJson::Number)
+            }
+            Node::String(value) => match String::from_utf16(&value) {
+                Ok(value) => OrderedJson::String(value),
+                Err(_) => OrderedJson::Utf16String(value),
+            },
+            Node::Array(values) => {
+                OrderedJson::Array(values.into_iter().map(convert).collect::<Result<_, _>>()?)
+            }
+            Node::Object(values) => OrderedJson::Object(
+                values
+                    .into_iter()
+                    .map(|(key, value)| {
+                        Ok((
+                            String::from_utf16(&key)
+                                .map_err(|_| CommandSurfaceError::InvalidPackage)?,
+                            convert(value)?,
+                        ))
+                    })
+                    .collect::<Result<_, CommandSurfaceError>>()?,
+            ),
+        })
+    }
+    convert(
+        hepta_legacy_compatibility::parse_production_json_v1(bytes)
+            .map_err(|_| CommandSurfaceError::InvalidPackage)?,
+    )
 }

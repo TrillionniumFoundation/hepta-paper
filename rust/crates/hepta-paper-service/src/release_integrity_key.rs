@@ -2,6 +2,7 @@
 //! Only standard Ed25519 PKCS8/SPKI PEM is supported. Private bytes are never
 //! serialized in reports; temporary buffers are zeroized. No rotation, repair,
 //! overwrite or stale-lock recovery is performed.
+mod control;
 mod crypto;
 mod layout;
 mod storage;
@@ -73,8 +74,14 @@ impl ReleaseIntegrityKeyContextV1 {
         runtime_root: Option<&Path>,
         environment: &BTreeMap<String, String>,
     ) -> Result<Self> {
-        let workspace_root =
-            normalize(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))?;
+        let cwd = std::env::current_dir()
+            .map_err(|_| error("native_workspace_working_directory_unavailable"))?;
+        let workspace_root = crate::native_workspace::resolve_native_command_workspace_root_v1(
+            &cwd,
+            environment,
+            None,
+        )
+        .map_err(error)?;
         let parent = workspace_root
             .parent()
             .ok_or_else(|| error("release_integrity_workspace_root_invalid"))?;
@@ -132,8 +139,40 @@ pub struct LoadedReleaseIntegrityKeyV1 {
     pub public_key_fingerprint: String,
     private_path: Option<PathBuf>,
     private_pem: Option<Zeroizing<Vec<u8>>>,
+    private_guard: Option<KeyGuard>,
+    private_named_metadata: Option<(PathBuf, fs::Metadata)>,
+    public_guard: KeyGuard,
+    runtime_chain: Chain,
+    signing_chain: Chain,
+    uid: u32,
 }
 impl LoadedReleaseIntegrityKeyV1 {
+    /// Recheck the exact held key files and physical namespace before signing
+    /// and publication. Private observation buffers are bounded and zeroized.
+    pub fn assert_current(&self) -> Result<()> {
+        unchanged(&self.runtime_chain)?;
+        private_chain(
+            &self.signing_chain,
+            self.uid,
+            "release_integrity_key_root_changed_after_read",
+        )?;
+        if let Some(guard) = &self.private_guard {
+            guard.assert_current()?;
+        }
+        if let Some((path, metadata)) = &self.private_named_metadata {
+            unchanged_file(path, metadata)?;
+        }
+        self.public_guard.assert_current()?;
+        let root = &self
+            .signing_chain
+            .last()
+            .ok_or_else(|| error("release_integrity_key_root_unsafe"))?
+            .0;
+        if names(root)? != [PRIVATE_NAME, PUBLIC_NAME] {
+            return Err(error("release_integrity_key_pair_shape_invalid"));
+        }
+        Ok(())
+    }
     pub fn private_path(&self) -> Option<&Path> {
         self.private_path.as_deref()
     }
@@ -191,13 +230,23 @@ fn inspect_pair(
     if names(&paths.root)? != [PRIVATE_NAME, PUBLIC_NAME] {
         return Err(error("release_integrity_key_pair_shape_invalid"));
     }
+    let public_key_pem = String::from_utf8(public.bytes.to_vec())
+        .map_err(|_| error("release_integrity_public_key_encoding_invalid"))?;
+    let public_key_fingerprint = fingerprint(&public.bytes);
+    let (private_bytes, private_guard) = private.into_parts();
+    let (_, public_guard) = public.into_parts();
     Ok(Some(LoadedReleaseIntegrityKeyV1 {
         public_path: paths.public,
-        public_key_pem: String::from_utf8(public.bytes.to_vec())
-            .map_err(|_| error("release_integrity_public_key_encoding_invalid"))?,
-        public_key_fingerprint: fingerprint(&public.bytes),
+        public_key_pem,
+        public_key_fingerprint,
         private_path: retain_private.then_some(paths.private),
-        private_pem: retain_private.then_some(private.bytes),
+        private_pem: retain_private.then_some(private_bytes),
+        private_guard: Some(private_guard),
+        private_named_metadata: None,
+        public_guard,
+        runtime_chain: root_chain,
+        signing_chain: key_chain,
+        uid,
     }))
 }
 fn status(
@@ -291,13 +340,22 @@ pub fn load_existing_local_release_integrity_key_with_hooks_v1(
     if names(&paths.root)? != [PRIVATE_NAME, PUBLIC_NAME] {
         return Err(error("release_integrity_key_pair_shape_invalid"));
     }
+    let public_key_pem = String::from_utf8(public.bytes.to_vec())
+        .map_err(|_| error("release_integrity_public_key_encoding_invalid"))?;
+    let public_key_fingerprint = fingerprint(&public.bytes);
+    let (_, public_guard) = public.into_parts();
     Ok(LoadedReleaseIntegrityKeyV1 {
         public_path: paths.public,
-        public_key_pem: String::from_utf8(public.bytes.to_vec())
-            .map_err(|_| error("release_integrity_public_key_encoding_invalid"))?,
-        public_key_fingerprint: fingerprint(&public.bytes),
+        public_key_pem,
+        public_key_fingerprint,
         private_path: None,
         private_pem: None,
+        private_guard: None,
+        private_named_metadata: Some((paths.private, private)),
+        public_guard,
+        runtime_chain: root_chain,
+        signing_chain: key_chain,
+        uid,
     })
 }
 fn provision_report(context: &ReleaseIntegrityKeyContextV1, created: bool) -> Result<Value> {
@@ -561,6 +619,16 @@ pub fn release_integrity_key_cli_v1(
     argv: &[String],
     environment: &BTreeMap<String, String>,
 ) -> Result<ReleaseIntegrityKeyOutputV1> {
+    release_integrity_key_cli_with_hooks_v1(argv, environment, &mut NoHooks)
+}
+
+pub use control::release_integrity_key_cli_with_cancellation_v1;
+
+fn release_integrity_key_cli_with_hooks_v1(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    hooks: &mut dyn HookV1,
+) -> Result<ReleaseIntegrityKeyOutputV1> {
     let args = arguments(argv)?;
     if args.contains_key("help") {
         return Ok(ReleaseIntegrityKeyOutputV1 {
@@ -594,9 +662,9 @@ pub fn release_integrity_key_cli_v1(
         environment,
     )?;
     let value = if action == "status" {
-        inspect_local_release_integrity_key_v1(&context)?
+        inspect_local_release_integrity_key_with_hooks_v1(&context, hooks)?
     } else {
-        provision_local_release_integrity_key_v1(&context, true)?
+        provision_local_release_integrity_key_with_hooks_v1(&context, true, hooks)?
     };
     let exit_code = if value["ready"] == true { 0 } else { 2 };
     Ok(ReleaseIntegrityKeyOutputV1 {

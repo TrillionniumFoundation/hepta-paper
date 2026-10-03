@@ -8,6 +8,20 @@ use hepta_codex_broker::CapabilityKeyRevocationV1;
 
 use super::*;
 
+// The child must first acquire a real SQLite write lock. Reserve enough genuine
+// clock time for that bounded setup even when the full package runs in parallel;
+// the test still waits past and observes the actual signed deadline.
+const REAL_LOCK_DEADLINE_WINDOW_MS: u64 = 4_000;
+const REAL_LOCK_DEADLINE_WAIT_LIMIT: Duration = Duration::from_secs(8);
+const REAL_LOCK_SETUP_LIMIT: Duration = Duration::from_secs(8);
+static REAL_LOCK_WAIT_TESTS: Mutex<()> = Mutex::new(());
+
+fn serialize_real_lock_wait() -> std::sync::MutexGuard<'static, ()> {
+    REAL_LOCK_WAIT_TESTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 // Positive temporal evidence always uses SystemBrokerClockV1. The two named
 // fault modes are negative clock-source injections, not observations of a real
 // operating-system clock failure or a changed system clock.
@@ -37,7 +51,7 @@ impl BrokerClockV1 for LockClock {
             self.release_initial
                 .lock()
                 .map_err(|_| BrokerServerError::ClockUnavailable)?
-                .recv_timeout(Duration::from_secs(4))
+                .recv_timeout(REAL_LOCK_SETUP_LIMIT)
                 .map_err(|_| BrokerServerError::ClockUnavailable)?;
         }
         if call == 2 {
@@ -92,7 +106,7 @@ impl ClockProbe {
         loop {
             let (call, sampled) = self
                 .samples
-                .recv_timeout(Duration::from_secs(4))
+                .recv_timeout(REAL_LOCK_SETUP_LIMIT)
                 .expect("bounded actual clock sample");
             if call == expected_call {
                 return sampled;
@@ -109,11 +123,14 @@ impl ClockProbe {
 
 struct SqliteWriter {
     child: Child,
+    witness: PathBuf,
 }
 
 impl SqliteWriter {
-    fn acquire(fixture: &Fixture) -> Self {
-        let ready = fixture.root.join("writer-held");
+    fn spawn(fixture: &Fixture) -> Self {
+        // Initialize the exact journal before the independent process opens it.
+        drop(fixture.journal());
+        let witness = fixture.root.join("writer-state");
         let child = Command::new(std::env::current_exe().expect("actual test executable"))
             .args([
                 "--exact",
@@ -122,27 +139,43 @@ impl SqliteWriter {
                 "--nocapture",
             ])
             .env("HEPTA_BROKER_WAIT_CHILD_DB", fixture.journal_path())
-            .env("HEPTA_BROKER_WAIT_CHILD_READY", &ready)
+            .env("HEPTA_BROKER_WAIT_CHILD_READY", &witness)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .expect("independent SQLite writer child");
-        let mut writer = Self { child };
+        let mut writer = Self { child, witness };
+        writer.wait_for_state(b"started", "writer startup timeout");
+        writer
+    }
+
+    fn acquire_lock(&mut self) {
+        self.child
+            .stdin
+            .as_mut()
+            .expect("writer lock channel")
+            .write_all(b"lock\n")
+            .expect("request actual write lock");
+        self.wait_for_state(b"held", "writer lock timeout");
+    }
+
+    fn wait_for_state(&mut self, expected: &[u8], timeout_message: &str) {
         let started = Instant::now();
-        while !ready.exists() {
+        loop {
             assert!(
-                writer.child.try_wait().expect("writer status").is_none(),
-                "writer exited before acquiring lock"
+                self.child.try_wait().expect("writer status").is_none(),
+                "writer exited before publishing state"
             );
+            if fs::read(&self.witness).ok().as_deref() == Some(expected) {
+                break;
+            }
             assert!(
-                started.elapsed() < Duration::from_secs(3),
-                "writer lock timeout"
+                started.elapsed() < REAL_LOCK_SETUP_LIMIT,
+                "{timeout_message}"
             );
             thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(fs::read(ready).expect("actual lock witness"), b"held");
-        writer
     }
 
     fn release(mut self) -> u64 {
@@ -160,7 +193,7 @@ impl SqliteWriter {
                 break;
             }
             assert!(
-                started.elapsed() < Duration::from_secs(3),
+                started.elapsed() < REAL_LOCK_SETUP_LIMIT,
                 "writer exit timeout"
             );
             thread::sleep(Duration::from_millis(5));
@@ -180,7 +213,8 @@ impl Drop for SqliteWriter {
 #[ignore = "owned helper process invoked by the real lock-wait regressions"]
 fn sqlite_writer() {
     let path = std::env::var_os("HEPTA_BROKER_WAIT_CHILD_DB").expect("owned database");
-    let ready = std::env::var_os("HEPTA_BROKER_WAIT_CHILD_READY").expect("owned witness");
+    let witness =
+        PathBuf::from(std::env::var_os("HEPTA_BROKER_WAIT_CHILD_READY").expect("owned witness"));
     let connection = rusqlite::Connection::open_with_flags(
         PathBuf::from(path),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -189,15 +223,17 @@ fn sqlite_writer() {
     connection
         .busy_timeout(Duration::from_secs(2))
         .expect("bounded child lock wait");
+    fs::write(&witness, b"started").expect("publish initialized writer witness");
+    let mut input = std::io::stdin().lock();
+    let mut line = String::new();
+    input.read_line(&mut line).expect("parent lock request");
+    assert_eq!(line, "lock\n");
     connection
         .execute_batch("BEGIN IMMEDIATE")
         .expect("actual write lock");
-    fs::write(PathBuf::from(ready), b"held").expect("publish held-lock witness");
-    let mut line = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut line)
-        .expect("parent release");
+    fs::write(&witness, b"held").expect("publish held-lock witness");
+    line.clear();
+    input.read_line(&mut line).expect("parent release");
     assert_eq!(line, "release\n");
     connection
         .execute_batch("COMMIT")
@@ -209,22 +245,23 @@ fn locked_server(
     manager: Arc<CapabilityTrustBundleManagerV1>,
     request: &CodexExecutionRequestV1,
     mode: ClockMode,
+    mut writer: SqliteWriter,
 ) -> (RunningServer, SqliteWriter, ClockProbe, u64) {
     let probe = ClockProbe::new(mode);
     let mut server = fixture.server(manager, probe.clock.clone());
+    writer.acquire_lock();
     let (bytes, _) = encoded(request);
     server
         .client()
         .write_all(&bytes)
         .expect("genuinely signed Unix request");
-    // The worker is initialized and has read the whole frame, but has not yet
-    // taken its first current-time sample. Hold SQLite independently before
-    // allowing this actual sample and initial authentication to proceed.
+    // The independent writer is already holding the journal transaction before
+    // the worker takes its first post-frame current-time sample. Child startup
+    // is intentionally outside the signed capability window.
     probe
         .before_initial
-        .recv_timeout(Duration::from_secs(3))
+        .recv_timeout(REAL_LOCK_SETUP_LIMIT)
         .expect("worker reached after-read clock");
-    let writer = SqliteWriter::acquire(fixture);
     probe
         .release_initial
         .send(())
@@ -240,7 +277,7 @@ fn wait_until(deadline: u64) {
     let started = Instant::now();
     while now() <= deadline {
         assert!(
-            started.elapsed() < Duration::from_secs(4),
+            started.elapsed() < REAL_LOCK_DEADLINE_WAIT_LIMIT,
             "real-time deadline was not reached"
         );
         thread::sleep(Duration::from_millis(5));
@@ -281,10 +318,17 @@ fn resign(fixture: &Fixture, request: &mut CodexExecutionRequestV1) {
 
 #[test]
 fn real_sqlite_lock_wait_cannot_preserve_an_expired_signed_capability() {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
-    let request = fixture.request(now() + 2_500);
-    let (server, writer, probe, initial) =
-        locked_server(&fixture, fixture.manager(), &request, ClockMode::System);
+    let writer = SqliteWriter::spawn(&fixture);
+    let request = fixture.request(now() + REAL_LOCK_DEADLINE_WINDOW_MS);
+    let (server, writer, probe, initial) = locked_server(
+        &fixture,
+        fixture.manager(),
+        &request,
+        ClockMode::System,
+        writer,
+    );
     wait_until(request.request_capability.expires_at_unix_ms);
     assert!(initial < request.request_capability.expires_at_unix_ms);
     probe.assert_not_revalidated_while_locked();
@@ -295,14 +339,21 @@ fn real_sqlite_lock_wait_cannot_preserve_an_expired_signed_capability() {
 
 #[test]
 fn real_sqlite_lock_wait_past_the_signed_request_deadline_does_not_reserve() {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
-    let mut request = fixture.request(now() + 2_500);
+    let writer = SqliteWriter::spawn(&fixture);
+    let mut request = fixture.request(now() + REAL_LOCK_DEADLINE_WINDOW_MS);
     // The protocol requires capability expiry <= request deadline. Both end at
     // this genuine deadline; this is not an invalid longer-lived capability.
     request.absolute_deadline_unix_ms = request.request_capability.expires_at_unix_ms;
     resign(&fixture, &mut request);
-    let (server, writer, probe, _) =
-        locked_server(&fixture, fixture.manager(), &request, ClockMode::System);
+    let (server, writer, probe, _) = locked_server(
+        &fixture,
+        fixture.manager(),
+        &request,
+        ClockMode::System,
+        writer,
+    );
     wait_until(request.absolute_deadline_unix_ms);
     probe.assert_not_revalidated_while_locked();
     writer.release();
@@ -312,11 +363,18 @@ fn real_sqlite_lock_wait_past_the_signed_request_deadline_does_not_reserve() {
 
 #[test]
 fn manager_disabled_during_real_sqlite_lock_wait_is_rechecked() {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
+    let writer = SqliteWriter::spawn(&fixture);
     let manager = fixture.manager();
     let request = fixture.request(now() + 20_000);
-    let (server, writer, probe, _) =
-        locked_server(&fixture, manager.clone(), &request, ClockMode::System);
+    let (server, writer, probe, _) = locked_server(
+        &fixture,
+        manager.clone(),
+        &request,
+        ClockMode::System,
+        writer,
+    );
     manager.disable().expect("disable actual retained manager");
     probe.assert_not_revalidated_while_locked();
     writer.release();
@@ -326,8 +384,10 @@ fn manager_disabled_during_real_sqlite_lock_wait_is_rechecked() {
 
 #[test]
 fn expired_request_after_lock_does_not_return_an_existing_success() {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
-    let request = fixture.request(now() + 2_500);
+    let writer = SqliteWriter::spawn(&fixture);
+    let request = fixture.request(now() + REAL_LOCK_DEADLINE_WINDOW_MS);
     let (bytes, _) = encoded(&request);
     {
         let mut journal = fixture.journal();
@@ -344,8 +404,13 @@ fn expired_request_after_lock_does_not_return_an_existing_success() {
         )
         .expect("actual existing reservation");
     }
-    let (server, writer, probe, _) =
-        locked_server(&fixture, fixture.manager(), &request, ClockMode::System);
+    let (server, writer, probe, _) = locked_server(
+        &fixture,
+        fixture.manager(),
+        &request,
+        ClockMode::System,
+        writer,
+    );
     wait_until(request.request_capability.expires_at_unix_ms);
     probe.assert_not_revalidated_while_locked();
     writer.release();
@@ -416,12 +481,19 @@ fn signed_bundle(
 
 #[test]
 fn signed_manager_reload_during_real_sqlite_lock_wait_is_rechecked() {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
+    let writer = SqliteWriter::spawn(&fixture);
     let manager = fixture.manager();
     let (_, _, previous) = manager.snapshot(now()).expect("original bundle");
     let request = fixture.request(now() + 20_000);
-    let (server, writer, probe, _) =
-        locked_server(&fixture, manager.clone(), &request, ClockMode::System);
+    let (server, writer, probe, _) = locked_server(
+        &fixture,
+        manager.clone(),
+        &request,
+        ClockMode::System,
+        writer,
+    );
     let (envelope, authority) = signed_bundle(&fixture, 2, Some(previous.clone()), None, None);
     let installed = manager
         .install(&envelope, now(), &authority)
@@ -434,8 +506,10 @@ fn signed_manager_reload_during_real_sqlite_lock_wait_is_rechecked() {
 }
 
 fn request_key_expires_during_wait(revocation: bool) {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
-    let transition_at = now() + 2_500;
+    let writer = SqliteWriter::spawn(&fixture);
+    let transition_at = now() + REAL_LOCK_DEADLINE_WINDOW_MS;
     let (envelope, authority) = signed_bundle(
         &fixture,
         1,
@@ -449,8 +523,13 @@ fn request_key_expires_during_wait(revocation: bool) {
     let original_hash = verified.bundle_hash().clone();
     let manager = Arc::new(CapabilityTrustBundleManagerV1::new(verified));
     let request = fixture.request(now() + 20_000);
-    let (server, writer, probe, _) =
-        locked_server(&fixture, manager.clone(), &request, ClockMode::System);
+    let (server, writer, probe, _) = locked_server(
+        &fixture,
+        manager.clone(),
+        &request,
+        ClockMode::System,
+        writer,
+    );
     wait_until(transition_at);
     // The unchanged signed bundle remains usable through its other active key.
     // Only the request's signer has become ineligible.
@@ -476,8 +555,10 @@ fn same_bundle_scheduled_revocation_is_rechecked_after_real_sqlite_lock_wait() {
 
 #[test]
 fn fresh_request_after_lock_uses_new_time_and_exact_existing_preserves_first_time() {
+    let _serial = serialize_real_lock_wait();
     for already_reserved in [false, true] {
         let fixture = Fixture::new();
+        let writer = SqliteWriter::spawn(&fixture);
         let request = fixture.request(now() + 20_000);
         let (bytes, request_hash) = encoded(&request);
         let first_time = now();
@@ -498,8 +579,13 @@ fn fresh_request_after_lock_uses_new_time_and_exact_existing_preserves_first_tim
             )
             .expect("first public explicit-time reservation");
         }
-        let (mut server, writer, probe, initial) =
-            locked_server(&fixture, fixture.manager(), &request, ClockMode::System);
+        let (mut server, writer, probe, initial) = locked_server(
+            &fixture,
+            fixture.manager(),
+            &request,
+            ClockMode::System,
+            writer,
+        );
         probe.assert_not_revalidated_while_locked();
         let released_at = writer.release();
         let refreshed = probe.sample(2);
@@ -544,13 +630,16 @@ fn fresh_request_after_lock_uses_new_time_and_exact_existing_preserves_first_tim
 
 #[test]
 fn clock_source_failure_after_real_lock_wait_leaves_no_reservation() {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
+    let writer = SqliteWriter::spawn(&fixture);
     let request = fixture.request(now() + 20_000);
     let (server, writer, probe, _) = locked_server(
         &fixture,
         fixture.manager(),
         &request,
         ClockMode::FailAfterLock,
+        writer,
     );
     probe.assert_not_revalidated_while_locked();
     writer.release();
@@ -563,13 +652,16 @@ fn clock_source_failure_after_real_lock_wait_leaves_no_reservation() {
 
 #[test]
 fn injected_backward_clock_after_real_lock_wait_cannot_extend_initial_validity() {
+    let _serial = serialize_real_lock_wait();
     let fixture = Fixture::new();
+    let writer = SqliteWriter::spawn(&fixture);
     let request = fixture.request(now() + 20_000);
     let (server, writer, probe, _) = locked_server(
         &fixture,
         fixture.manager(),
         &request,
         ClockMode::RegressAfterLock,
+        writer,
     );
     probe.assert_not_revalidated_while_locked();
     writer.release();

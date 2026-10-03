@@ -124,6 +124,18 @@ pub enum NativeBusinessJobV1 {
         metadata: std::collections::BTreeMap<String, String>,
         idempotency_key: String,
     },
+    /// Compute a bounded research data report from actual immutable CAS inputs.
+    ResearchDataWorkerV1 {
+        request: super::research_data::NativeResearchDataWorkerRequestV1,
+    },
+    /// Recompute a source-preview assessment from actual captured CAS bytes.
+    ResearchObservedAssessmentFromCasV1 {
+        request: crate::native_research_assessment::NativeResearchCasAssessmentRequestV1,
+    },
+    /// Read actual CAS artifacts and prepare a non-authorizing local dry-run.
+    PrepareLocalSubmissionFromCasV1 {
+        request: super::local_submission_preflight::CasLocalSubmissionPreparationRequestV1,
+    },
     /// Prepare a deterministic submission package without external-effect authority.
     PrepareSubmission {
         venue_id: String,
@@ -146,13 +158,16 @@ impl NativeBusinessJobV1 {
     #[must_use]
     pub fn capability_id(&self) -> &'static str {
         match self {
+            Self::ResearchDataWorkerV1 { .. }
+            | Self::ResearchObservedAssessmentFromCasV1 { .. } => "CAP-EVD-VERIFY",
             Self::AuthorDraft { .. } => "CAP-AUTHOR",
             Self::ReviewerAssessment { .. } => "CAP-REVIEW",
             Self::FormalCertificate { .. } => "CAP-FORMAL",
             Self::EmpiricalAggregate { .. } | Self::EmpiricalInference { .. } => "CAP-EMPIRICAL",
             Self::NumericalLinearSolve { .. } => "CAP-NUMERICAL",
             Self::BuildPackage { .. } => "CAP-BUILD",
-            Self::PrepareSubmission { .. }
+            Self::PrepareLocalSubmissionFromCasV1 { .. }
+            | Self::PrepareSubmission { .. }
             | Self::LegacySubmissionManifestV1 { .. }
             | Self::LegacySubmissionIntentV1 { .. } => "CAP-SUBMIT",
         }

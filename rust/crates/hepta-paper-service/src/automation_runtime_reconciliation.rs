@@ -15,23 +15,24 @@ use std::{fs, os::unix::fs::MetadataExt, path::Path};
 // package-deletion admission before obtaining its writable connection.
 mod legacy_terminal_residue;
 mod offline_execution;
+pub(crate) mod ordinary;
 // Real online callback code is tested below; production entry remains sealed
 // until the concrete retained activation composition is implemented.
 #[allow(dead_code)]
 mod online_execution;
 mod scoped_execution;
-mod sqlite_number;
+pub(crate) mod sqlite_number;
 pub(crate) use online_execution::{OnlineReconciliationBindingV1, OnlineReconciliationRequestV1};
 pub use scoped_execution::*;
 
 /// Fixed business bridge for the sealed owning composition. Callers cannot
 /// substitute SQL, a plan registry, an authority transport or a clock here.
 #[allow(dead_code)]
-pub(crate) fn execute_retained_online_reconciliation_v1(
+pub(crate) fn execute_retained_online_reconciliation_v1<
+    T: crate::sqlite_mutation_coordinator::authority::MutationAuthorityTransportV1,
+>(
     connection: &mut Connection,
-    coordinator: &mut crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorV1<
-        crate::sqlite_mutation_coordinator::authority::ProcessMutationAuthorityTransportV1,
-    >,
+    coordinator: &mut crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorV1<T>,
     binding: &OnlineReconciliationBindingV1,
     request: &OnlineReconciliationRequestV1,
     before_apply: impl FnOnce() -> crate::sqlite_mutation_coordinator::Result<()>,
@@ -92,7 +93,9 @@ fn canonical_database(path: &Path) -> Result<(), AutomationRuntimeReconciliation
     Ok(())
 }
 
-fn open_database(path: &Path) -> Result<Connection, AutomationRuntimeReconciliationError> {
+pub(crate) fn open_database(
+    path: &Path,
+) -> Result<Connection, AutomationRuntimeReconciliationError> {
     canonical_database(path)?;
     let text = path
         .to_str()
@@ -169,6 +172,30 @@ fn rows<P: Params>(
     let mut statement = connection.prepare(sql)?;
     let mapped = statement.query_map(params, row_object)?;
     Ok(mapped.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+pub(crate) fn rows_with_control<P: Params>(
+    connection: &Connection,
+    sql: &str,
+    params: P,
+    control: Option<&ordinary::ReconciliationReadControlV1>,
+) -> Result<Vec<Value>, AutomationRuntimeReconciliationError> {
+    let Some(control) = control else {
+        return rows(connection, sql, params);
+    };
+    control.checkpoint()?;
+    let mut statement = connection.prepare(sql)?;
+    let mut selected = statement.query(params)?;
+    let mut output = Vec::new();
+    while let Some(row) = selected
+        .next()
+        .map_err(|error| control.map_database(error))?
+    {
+        control.charge_row(row)?;
+        output.push(row_object(row)?);
+    }
+    control.checkpoint()?;
+    Ok(output)
 }
 
 fn valid_campaign_id(value: &str) -> bool {
@@ -303,6 +330,24 @@ fn plan_on_connection_at(
     no_progress_seconds: f64,
     campaign_id: Option<&str>,
 ) -> Result<Value, AutomationRuntimeReconciliationError> {
+    plan_on_connection_at_with_control(
+        connection,
+        now,
+        cutoff_now_millis,
+        no_progress_seconds,
+        campaign_id,
+        None,
+    )
+}
+
+fn plan_on_connection_at_with_control(
+    connection: &Connection,
+    now: &str,
+    cutoff_now_millis: i64,
+    no_progress_seconds: f64,
+    campaign_id: Option<&str>,
+    control: Option<&ordinary::ReconciliationReadControlV1>,
+) -> Result<Value, AutomationRuntimeReconciliationError> {
     if crate::journal_connector_coverage::qualification::canonical_instant_millis(now).is_none()
         || !no_progress_seconds.is_finite()
     {
@@ -328,94 +373,108 @@ fn plan_on_connection_at(
     let no_progress_cutoff = crate::sqlite_mutation_coordinator::clock::iso(cutoff_millis)
         .map_err(|_| AutomationRuntimeReconciliationError::Input)?;
     let expired_nodes = if let Some(id) = campaign_id {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.status,n.lease_owner,n.lease_expires_at,n.attempt_id,n.lease_generation,n.node_revision,c.revision AS campaign_revision FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE c.status='running' AND n.status IN ('leased','running') AND n.lease_expires_at IS NOT NULL AND julianday(n.lease_expires_at)<=julianday(?1) AND n.campaign_id=?2 ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![now, id],
+            control,
         )?
     } else {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.status,n.lease_owner,n.lease_expires_at,n.attempt_id,n.lease_generation,n.node_revision,c.revision AS campaign_revision FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE c.status='running' AND n.status IN ('leased','running') AND n.lease_expires_at IS NOT NULL AND julianday(n.lease_expires_at)<=julianday(?1) ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![now],
+            control,
         )?
     };
     let expired_resource_leases = if let Some(id) = campaign_id {
-        rows(
+        rows_with_control(
             connection,
             "SELECT lease_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,acquired_at,renewed_at,expires_at FROM automation_resource_leases WHERE expires_at<=?1 AND campaign_id=?2 ORDER BY lease_id",
             rusqlite::params![now, id],
+            control,
         )?
     } else {
-        rows(
+        rows_with_control(
             connection,
             "SELECT lease_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,acquired_at,renewed_at,expires_at FROM automation_resource_leases WHERE expires_at<=?1 ORDER BY lease_id",
             rusqlite::params![now],
+            control,
         )?
     };
     let expired_waiters = if let Some(id) = campaign_id {
-        rows(
+        rows_with_control(
             connection,
             "SELECT waiter_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,requested_at,renewed_at,expires_at FROM automation_resource_waiters WHERE expires_at IS NOT NULL AND expires_at<=?1 AND campaign_id=?2 ORDER BY waiter_id",
             rusqlite::params![now, id],
+            control,
         )?
     } else {
-        rows(
+        rows_with_control(
             connection,
             "SELECT waiter_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,requested_at,renewed_at,expires_at FROM automation_resource_waiters WHERE expires_at IS NOT NULL AND expires_at<=?1 ORDER BY waiter_id",
             rusqlite::params![now],
+            control,
         )?
     };
     let no_progress_campaigns = if let Some(id) = campaign_id {
-        rows(
+        rows_with_control(
             connection,
             "SELECT c.campaign_id,c.paper_id,c.updated_at,c.current_phase,c.revision,count(n.node_id) AS queued_node_count FROM paper_campaigns c JOIN campaign_nodes n ON n.campaign_id=c.campaign_id AND n.status='queued' WHERE c.status='running' AND c.updated_at<=?1 AND c.campaign_id=?2 AND NOT EXISTS(SELECT 1 FROM campaign_nodes active WHERE active.campaign_id=c.campaign_id AND active.status IN ('leased','running')) GROUP BY c.campaign_id,c.paper_id,c.updated_at,c.current_phase,c.revision ORDER BY c.updated_at,c.campaign_id",
             rusqlite::params![no_progress_cutoff, id],
+            control,
         )?
     } else {
-        rows(
+        rows_with_control(
             connection,
             "SELECT c.campaign_id,c.paper_id,c.updated_at,c.current_phase,c.revision,count(n.node_id) AS queued_node_count FROM paper_campaigns c JOIN campaign_nodes n ON n.campaign_id=c.campaign_id AND n.status='queued' WHERE c.status='running' AND c.updated_at<=?1 AND NOT EXISTS(SELECT 1 FROM campaign_nodes active WHERE active.campaign_id=c.campaign_id AND active.status IN ('leased','running')) GROUP BY c.campaign_id,c.paper_id,c.updated_at,c.current_phase,c.revision ORDER BY c.updated_at,c.campaign_id",
             rusqlite::params![no_progress_cutoff],
+            control,
         )?
     };
     let terminal_campaign_queued_nodes = if let Some(id) = campaign_id {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.node_revision,c.status AS campaign_status,c.stop_reason,c.revision AS campaign_revision FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed') AND CAST(coalesce(json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion'),0) AS INTEGER)=1 AND n.campaign_id=?1 ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![id],
+            control,
         )?
     } else {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.node_revision,c.status AS campaign_status,c.stop_reason,c.revision AS campaign_revision FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed') AND CAST(coalesce(json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion'),0) AS INTEGER)=1 ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![],
+            control,
         )?
     };
     let terminal_campaign_active_nodes = if let Some(id) = campaign_id {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.status,n.lease_owner,n.lease_expires_at,n.attempt_id,n.lease_generation,n.node_revision,n.prepared_integration_status,c.status AS campaign_status,c.stop_reason,c.revision AS campaign_revision FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status IN ('leased','running') AND c.status IN ('failed','cancelled','stopped','completed') AND CAST(coalesce(json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion'),0) AS INTEGER)=1 AND n.campaign_id=?1 ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![id],
+            control,
         )?
     } else {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.status,n.lease_owner,n.lease_expires_at,n.attempt_id,n.lease_generation,n.node_revision,n.prepared_integration_status,c.status AS campaign_status,c.stop_reason,c.revision AS campaign_revision FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status IN ('leased','running') AND c.status IN ('failed','cancelled','stopped','completed') AND CAST(coalesce(json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion'),0) AS INTEGER)=1 ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![],
+            control,
         )?
     };
     let preserved_legacy_terminal_nodes = if let Some(id) = campaign_id {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.status,n.lease_owner,n.lease_expires_at,n.attempt_id,n.lease_generation,n.node_revision,n.prepared_integration_status,c.status AS campaign_status,c.stop_reason FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status IN ('queued','leased','running') AND c.status IN ('failed','cancelled','stopped','completed') AND CAST(coalesce(json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion'),0) AS INTEGER)<>1 AND n.campaign_id=?1 ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![id],
+            control,
         )?
     } else {
-        rows(
+        rows_with_control(
             connection,
             "SELECT n.node_id,n.campaign_id,n.status,n.lease_owner,n.lease_expires_at,n.attempt_id,n.lease_generation,n.node_revision,n.prepared_integration_status,c.status AS campaign_status,c.stop_reason FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status IN ('queued','leased','running') AND c.status IN ('failed','cancelled','stopped','completed') AND CAST(coalesce(json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion'),0) AS INTEGER)<>1 ORDER BY n.campaign_id,n.node_id",
             rusqlite::params![],
+            control,
         )?
     };
 

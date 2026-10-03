@@ -1,12 +1,14 @@
 //! Policy-v0 legacy terminal residue maintenance, behind typed writer admission.
 //! Queued rows remain untouched. Their framed digest is observational: the
 //! incumbent transaction checks queued count, not an equality fence on that hash.
-use super::{AutomationRuntimeReconciliationError as Error, rows, valid_campaign_id};
+use super::{AutomationRuntimeReconciliationError as Error, rows_with_control, valid_campaign_id};
 use hepta_legacy_compatibility::production_hash_record_v1;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params, params_from_iter};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 pub(super) mod online;
+#[cfg(test)]
+use super::rows;
 type Result<T> = std::result::Result<T, Error>;
 fn failure(code: &'static str) -> Error {
     Error::Precondition(code)
@@ -188,15 +190,23 @@ fn queued_record(row: &Value) -> Result<Record> {
         .field("updatedAt", row["updated_at"].clone()))
 }
 fn queued_state(db: &Connection, campaign: &str) -> Result<(usize, String)> {
+    queued_state_with_control(db, campaign, None)
+}
+fn queued_state_with_control(
+    db: &Connection,
+    campaign: &str,
+    control: Option<&super::ordinary::ReconciliationReadControlV1>,
+) -> Result<(usize, String)> {
     let mut digest = Sha256::new();
     digest.update(b"LegacyTerminalPreservedQueuedNodeState:v1\0");
     let mut last: Option<String> = None;
     let mut count = 0;
     loop {
-        let page = rows(
+        let page = rows_with_control(
             db,
             "SELECT node_id,status,node_revision,lease_owner,lease_expires_at,attempt_id,lease_generation,prepared_integration_status,prepared_result_sha256,result_sha256,failure_class,failure_sha256,updated_at FROM campaign_nodes WHERE campaign_id=?1 AND status='queued' AND (?2 IS NULL OR node_id>?2) ORDER BY node_id LIMIT 512",
             params![campaign, last],
+            control,
         )?;
         for row in &page {
             let encoded = queued_record(row)?.wire()?;
@@ -217,14 +227,22 @@ fn queued_state(db: &Connection, campaign: &str) -> Result<(usize, String)> {
     Ok((count, format!("sha256:{}", hex::encode(digest.finalize()))))
 }
 fn read_campaign(db: &Connection, campaign: &str) -> Result<(Value, &'static str)> {
+    read_campaign_with_control(db, campaign, None)
+}
+fn read_campaign_with_control(
+    db: &Connection,
+    campaign: &str,
+    control: Option<&super::ordinary::ReconciliationReadControlV1>,
+) -> Result<(Value, &'static str)> {
     require(
         valid_campaign_id(campaign),
         "legacy_terminal_active_residue_campaign_id_invalid",
     )?;
-    let parents = rows(
+    let parents = rows_with_control(
         db,
         "SELECT campaign_id,paper_id,status,revision,stop_reason,spec_json,json_type(spec_json,'$.terminalSiblingSettlementPolicyVersion') AS policy_type,json_extract(spec_json,'$.terminalSiblingSettlementPolicyVersion') AS policy_version FROM paper_campaigns WHERE campaign_id=? LIMIT 2",
         [campaign],
+        control,
     )?;
     require(
         parents.len() == 1 && parents[0]["campaign_id"] == campaign,
@@ -265,16 +283,38 @@ pub(super) fn plan_with_clock(
     )?;
     plan_on_connection(db, &now_iso()?, campaign)
 }
+pub(super) fn plan_with_clock_and_control(
+    db: &Connection,
+    campaign: &str,
+    now_iso: &mut impl FnMut() -> Result<String>,
+    control: &super::ordinary::ReconciliationReadControlV1,
+) -> Result<Value> {
+    control.checkpoint()?;
+    require(
+        valid_campaign_id(campaign),
+        "legacy_terminal_active_residue_campaign_id_invalid",
+    )?;
+    plan_on_connection_with_control(db, &now_iso()?, campaign, Some(control))
+}
 pub(super) fn plan_on_connection(
     db: &Connection,
     planned_at: &str,
     campaign: &str,
 ) -> Result<Value> {
-    let (parent, encoding) = read_campaign(db, campaign)?;
-    let raw = rows(
+    plan_on_connection_with_control(db, planned_at, campaign, None)
+}
+fn plan_on_connection_with_control(
+    db: &Connection,
+    planned_at: &str,
+    campaign: &str,
+    control: Option<&super::ordinary::ReconciliationReadControlV1>,
+) -> Result<Value> {
+    let (parent, encoding) = read_campaign_with_control(db, campaign, control)?;
+    let raw = rows_with_control(
         db,
         "SELECT node_id,campaign_id,status,lease_owner,lease_expires_at,attempt_id,lease_generation,node_revision,prepared_integration_status FROM campaign_nodes WHERE campaign_id=? AND status IN ('leased','running') ORDER BY node_id",
         [campaign],
+        control,
     )?;
     let now = millis(planned_at)
         .ok_or_else(|| failure("legacy_terminal_active_residue_clock_invalid"))?;
@@ -301,11 +341,16 @@ pub(super) fn plan_on_connection(
         )?;
         nodes.push(node);
     }
-    let (queued_count, queued_hash) = queued_state(db, campaign)?;
-    let coordinated = rows(
+    let (queued_count, queued_hash) = if let Some(control) = control {
+        queued_state_with_control(db, campaign, Some(control))?
+    } else {
+        queued_state(db, campaign)?
+    };
+    let coordinated = rows_with_control(
         db,
         "SELECT 'lease' AS row_kind,lease_id AS row_id FROM automation_resource_leases WHERE campaign_id=?1 OR node_id IN (SELECT node_id FROM campaign_nodes WHERE campaign_id=?1) UNION ALL SELECT 'waiter' AS row_kind,waiter_id AS row_id FROM automation_resource_waiters WHERE campaign_id=?1 OR node_id IN (SELECT node_id FROM campaign_nodes WHERE campaign_id=?1) ORDER BY row_kind,row_id",
         [campaign],
+        control,
     )?;
     require(
         coordinated.is_empty(),

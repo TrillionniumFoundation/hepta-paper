@@ -39,6 +39,23 @@ impl VerifiedRecoverabilityActivationBindingV1 {
 impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
     SharedRecoverabilityEpochFenceV1<B, O>
 {
+    pub(crate) fn assert_owner_inputs_with<T: MutationAuthorityTransportV1>(
+        &self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        check: impl FnOnce(
+            &PinnedMutationAuthorityV1<T>,
+            &PinnedMutationAuthorityV1<O>,
+            &crate::state_backup_authority::PinnedStateBackupAuthorityV1<B>,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        let state = self.state.try_borrow().map_err(|_| denied("fence_busy"))?;
+        check(
+            authority,
+            &state.controller.service.online,
+            &state.controller.service.backup,
+        )
+    }
+
     fn activation_projection<T: MutationAuthorityTransportV1>(
         &self,
         inventory: &ObservedStateDatabaseInventoryV1,
@@ -107,10 +124,11 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         Ok((value, source.clone()))
     }
 
-    // The generic core is private, permitting synthetic signed fixture brokers
-    // in this module's tests. The crate-visible entry below accepts only actual
-    // process transports and supplies the process-pin checks itself.
-    fn observe_activation_binding_with_pins<T: MutationAuthorityTransportV1>(
+    // The crate-visible generic core accepts only a caller-supplied retained
+    // owner-currentness check. Product composition supplies either the exact
+    // process pins or the installed socket/deployment pins; fixtures can provide
+    // synthetic signed brokers only inside this module's tests.
+    pub(crate) fn observe_activation_binding_with_pins<T: MutationAuthorityTransportV1>(
         &self,
         inventory: &ObservedStateDatabaseInventoryV1,
         authority: &PinnedMutationAuthorityV1<T>,
@@ -129,7 +147,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
         })
     }
 
-    fn assert_activation_binding_with_pins<T: MutationAuthorityTransportV1>(
+    pub(crate) fn assert_activation_binding_with_pins<T: MutationAuthorityTransportV1>(
         &self,
         binding: &VerifiedRecoverabilityActivationBindingV1,
         inventory: &ObservedStateDatabaseInventoryV1,
@@ -149,7 +167,7 @@ impl<B: StateBackupAuthorityTransportV1, O: MutationAuthorityTransportV1>
     // Temporal tail only. The owning composition must first perform the full
     // currentness check above, finish all other I/O, then supply its own final
     // clock sample. This never rereads files, verifies signatures or calls RPC.
-    fn assert_activation_binding_time(
+    pub(crate) fn assert_activation_binding_time(
         &self,
         binding: &VerifiedRecoverabilityActivationBindingV1,
         now: i64,
@@ -241,38 +259,6 @@ impl
                 == state.controller.service.online.process_configuration_hash(),
             &suffix("activation_binding_process_subject_mismatch"),
         )
-    }
-
-    pub(crate) fn observe_activation_binding_v1(
-        &self,
-        inventory: &ObservedStateDatabaseInventoryV1,
-        authority: &PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1>,
-    ) -> Result<VerifiedRecoverabilityActivationBindingV1> {
-        self.observe_activation_binding_with_pins(inventory, authority, || {
-            self.assert_process_subject_current(authority)
-        })
-    }
-
-    pub(crate) fn assert_activation_binding_current_v1(
-        &self,
-        binding: &VerifiedRecoverabilityActivationBindingV1,
-        inventory: &ObservedStateDatabaseInventoryV1,
-        authority: &PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1>,
-    ) -> Result<()> {
-        self.assert_activation_binding_with_pins(binding, inventory, authority, || {
-            self.assert_process_subject_current(authority)
-        })
-    }
-
-    /// Check retained temporal bounds at the owning composition's final clock
-    /// sample, after its full currentness checks and all filesystem/signature
-    /// work. This is deliberately insufficient as a standalone scope check.
-    pub(crate) fn assert_activation_binding_valid_at_v1(
-        &self,
-        binding: &VerifiedRecoverabilityActivationBindingV1,
-        now: i64,
-    ) -> Result<()> {
-        self.assert_activation_binding_time(binding, now)
     }
 }
 

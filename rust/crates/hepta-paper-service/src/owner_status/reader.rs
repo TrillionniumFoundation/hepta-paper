@@ -61,6 +61,41 @@ impl Snapshot {
     }
 }
 pub(crate) fn read(path: &Path, private: bool) -> Result<Snapshot> {
+    read_inner(path, private, None, None)
+}
+pub(crate) fn read_with_observation(
+    path: &Path,
+    private: bool,
+    observation: &mut dyn crate::operational_status::ProvenanceObservationV1,
+) -> Result<Snapshot> {
+    read_inner(path, private, Some(observation), None)
+}
+pub(crate) fn read_with_cancellation(
+    path: &Path,
+    private: bool,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<Snapshot> {
+    read_inner(path, private, None, Some(cancelled))
+}
+fn read_inner(
+    path: &Path,
+    private: bool,
+    mut observation: Option<&mut dyn crate::operational_status::ProvenanceObservationV1>,
+    cancelled: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<Snapshot> {
+    let check_cancelled = || {
+        if cancelled.is_some_and(|value| value.load(std::sync::atomic::Ordering::Acquire)) {
+            Err(error("owner_acceptance_cancelled"))
+        } else {
+            Ok(())
+        }
+    };
+    check_cancelled()?;
+    if let Some(observation) = observation.as_deref_mut() {
+        observation
+            .checkpoint()
+            .map_err(|failure| error(&failure.0))?;
+    }
     if !path.is_absolute() || path.components().any(|v| matches!(v, Component::ParentDir)) {
         return Err(error("owner_acceptance_path_invalid"));
     }
@@ -129,10 +164,35 @@ pub(crate) fn read(path: &Path, private: bool) -> Result<Snapshot> {
         return Err(error("owner_acceptance_file_invalid"));
     }
     let mut bytes = Vec::new();
-    (&mut file)
-        .take(16 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| error("owner_acceptance_read_failed"))?;
+    let mut block = [0; 64 * 1024];
+    while (bytes.len() as u64) < before.len() {
+        check_cancelled()?;
+        let mut capacity = (before.len() - bytes.len() as u64).min(block.len() as u64) as usize;
+        if let Some(observation) = observation.as_deref_mut() {
+            observation
+                .checkpoint()
+                .map_err(|failure| error(&failure.0))?;
+            capacity = observation
+                .read_capacity(capacity)
+                .map_err(|failure| error(&failure.0))?;
+        }
+        if capacity == 0 {
+            return Err(error("owner_acceptance_read_capacity_invalid"));
+        }
+        let count = file
+            .read(&mut block[..capacity])
+            .map_err(|_| error("owner_acceptance_read_failed"))?;
+        if count == 0 {
+            break;
+        }
+        if let Some(observation) = observation.as_deref_mut() {
+            observation
+                .consume(count)
+                .map_err(|failure| error(&failure.0))?;
+        }
+        bytes.extend_from_slice(&block[..count]);
+    }
+    check_cancelled()?;
     if bytes.len() as u64 != before.len()
         || !same(
             &before,

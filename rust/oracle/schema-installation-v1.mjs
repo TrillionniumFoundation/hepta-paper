@@ -54,6 +54,7 @@ function projection(input){
 function normalizeCopy(input){assertRoot(input.root);const candidate=path.join(input.root,input.relativePath);schema.normalizeCopiedDatabaseJournal(candidate);schema.assertSchemaTransitionNoSidecars(candidate);return{sha256:fileSha256HashSync(candidate)};}
 const {fixture:businessFixture,createAuthority,stateDatabaseManifest}=await import('../../paper-core/tests/support/autonomous-research-online-schema-transition-fixture.mjs');
 const {AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST:writerManifest}=await import('../../paper-adapters/automation/autonomous-research-online-writer-operation-manifest.mjs');
+const {autonomousResearchOnlineWriterOperationManifestHash}=await import('../../paper-domain/automation/autonomous-research-online-writer-manifest.mjs');
 const authorities=new Map();
 function fullFixture(input){
  assertRoot(input.root);fs.mkdirSync(input.root,{recursive:true,mode:0o700});
@@ -73,9 +74,21 @@ function fullFixture(input){
  }
  const keys=crypto.generateKeyPairSync('ed25519');
  const publicKeyPath=path.join(input.root,'public.json');fs.writeFileSync(publicKeyPath,JSON.stringify({version:1,kind:'AutonomousResearchOnlineMutationAuthorityPublicKey',authorityId:trust.authorityId,keyId:trust.keyId,algorithm:'ed25519',publicKeyPem:keys.publicKey.export({type:'spki',format:'pem'})}),{mode:0o600});
- const configurationPath=path.join(input.root,'authority.json');fs.writeFileSync(configurationPath,JSON.stringify({...trust,kind:'AutonomousResearchOnlineMutationAuthorityConfiguration',publicKeyPath,publicKeySha256:hashBytes(fs.readFileSync(publicKeyPath))}),{mode:0o600});
- authorities.set(input.root,{raw,keys,runtimeRoot,trust});
- return{runtimeRoot,stateDatabaseManifest,writerManifest,trust,configurationPath,configurationFileHash:hashBytes(fs.readFileSync(configurationPath)),expectedPreRebindPristineRuntimeStateHash};
+ const publicKeySha256=hashBytes(fs.readFileSync(publicKeyPath));
+ const sourceConfiguration={...trust,kind:'AutonomousResearchOnlineMutationAuthorityConfiguration',publicKeyPath,publicKeySha256};
+ const configurationPath=path.join(input.root,'authority.json');fs.writeFileSync(configurationPath,JSON.stringify(sourceConfiguration),{mode:0o600});
+ let targetConfigurationPath=null;let targetConfigurationFileHash=null;let targetAuthorityConfigurationHash=null;let targetTrust=null;
+ if(input.version===2){
+  const targetWriterManifestHash=autonomousResearchOnlineWriterOperationManifestHash(writerManifest);
+  targetTrust={...trust,writerManifestHash:targetWriterManifestHash};
+  const targetConfiguration={...targetTrust,kind:'AutonomousResearchOnlineMutationAuthorityConfiguration',publicKeyPath,publicKeySha256};
+  targetConfigurationPath=path.join(input.root,'authority-target.json');fs.writeFileSync(targetConfigurationPath,JSON.stringify(targetConfiguration),{mode:0o600});
+  targetConfigurationFileHash=hashBytes(fs.readFileSync(targetConfigurationPath));
+  const targetPrivateConfiguration={version:1,kind:'HeptaLocalAutonomousResearchStateAuthorityConfiguration',authorityId:trust.authorityId,keyId:trust.keyId,scopeId:trust.scopeId,databaseScopeHash:trust.databaseScopeHash,writerManifestHash:targetWriterManifestHash,privateKeyPath:path.join(input.root,'authority-private.pem'),stateDatabasePath:path.join(input.root,'authority.sqlite'),socketPath:path.join(input.root,'authority-target.sock'),maximumReservationLeaseMs:trust.maximumReservationLeaseMs,maximumObservationAgeMs:trust.maximumObservationAgeMs};
+  targetAuthorityConfigurationHash=hashRecord('HeptaLocalAutonomousResearchStateAuthorityConfiguration',targetPrivateConfiguration);
+ }
+ authorities.set(input.root,{raw,keys,runtimeRoot,trust,targetTrust,targetAuthorityConfigurationHash});
+ return{runtimeRoot,stateDatabaseManifest,writerManifest,trust,configurationPath,configurationFileHash:hashBytes(fs.readFileSync(configurationPath)),targetConfigurationPath,targetConfigurationFileHash,targetAuthorityConfigurationHash,expectedPreRebindPristineRuntimeStateHash};
 }
 function fullPlan(input){assertRoot(input.root);return schema.buildAutonomousResearchOnlineSchemaTransitionPlan({...input.setup,clock:{now:()=>new Date(NOW)},requestedLeaseMs:60000,requiredExecutionWindowMs:1000,expectedPreRebindPristineRuntimeStateHash:input.expectedPreRebindPristineRuntimeStateHash??input.setup.expectedPreRebindPristineRuntimeStateHash});}
 const {autonomousResearchOnlineMutationSignedPayload}=await import('../../paper-domain/automation/autonomous-research-online-mutation-contract.mjs');
@@ -89,7 +102,7 @@ function reserveMaintenance(input){
   value.previousGlobalSequence=0;
   value.previousDatabaseHeads=input.request.instances.map(instance=>{const db=new DatabaseSync(path.join(authority.runtimeRoot,instance.sourceRelativePath),{readOnly:true});try{const row=db.prepare('SELECT * FROM autonomous_research_online_mutation_authority_metadata WHERE singleton=1').get();if(value.previousGlobalHash&&value.previousGlobalHash!==row.genesis_global_hash)throw new Error('fixture_global_head_mismatch');value.previousGlobalHash=row.genesis_global_hash;return{databaseRole:instance.databaseRole,databaseInstanceId:instance.databaseInstanceId,sequence:row.genesis_database_sequence,hash:row.genesis_database_hash,schemaHash:row.schema_hash,stateHash:row.genesis_state_hash};}finally{db.close();}});
   value.databaseGenesis=schemaContract.buildAutonomousResearchPristineSchemaRebindGenesis({request:input.request,previousGlobalHash:value.previousGlobalHash,previousDatabaseHeads:value.previousDatabaseHeads});
-  value.targetAuthorityConfigurationHash=hashRecord('SyntheticTargetAuthorityConfiguration',{transitionId:input.request.transitionId});value.authorityRestartRequired=true;
+  value.targetAuthorityConfigurationHash=authority.targetAuthorityConfigurationHash;value.authorityRestartRequired=true;
  }
 
  if(input.mode==='unfenced')value.allRegisteredMutationsFenced=false;
@@ -137,5 +150,37 @@ function installationPreview(input) {
  } finally {for(const lock of locks){try{lock.database.close();}catch{ /* Already closed by source installer. */ }}fs.rmSync(root,{recursive:true,force:true});}
 }
 
+// The existing Node fixture constructs the exact completion contract; the
+// ephemeral key adds a real signature, never independent installed authority.
+function finalizeMaintenance(input) {
+ assertRoot(input.root);const authority=authorities.get(input.root);
+ if(!authority?.lastReceipt)throw new Error('missing_temporary_reservation');
+ authority.finalizationRequests??=[];
+ authority.finalizationRequests.push(structuredClone(input.request));
+ let value;
+ if(input.request.version===2){
+  value={version:2,kind:'AutonomousResearchOnlineSchemaTransitionFinalizationReceipt',status:'autonomous_research_online_schema_transition_finalized',authorityId:authority.trust.authorityId,keyId:authority.trust.keyId,requestHash:hashRecord('AutonomousResearchOnlineSchemaTransitionFinalizeRequest',input.request),protocol:input.request.protocol,scopeId:input.request.scopeId,databaseScopeHash:input.request.databaseScopeHash,writerManifestHash:input.request.writerManifestHash,transitionId:input.request.transitionId,transitionInventoryHash:input.request.transitionInventoryHash,schemaBundleHash:input.request.schemaBundleHash,reservationId:input.request.reservationId,reservationReceiptHash:input.request.reservationReceiptHash,postInventoryHash:input.request.postInventoryHash,postPristineRuntimeStateHash:input.request.postPristineRuntimeStateHash,installations:input.request.installations,globalSequence:authority.lastReceipt.databaseGenesis[0].globalSequence,globalHash:authority.lastReceipt.databaseGenesis[0].globalHash,transitionMode:authority.lastReceipt.transitionMode,sourceWriterManifestHash:authority.lastReceipt.sourceWriterManifestHash,targetAuthorityConfigurationHash:authority.lastReceipt.targetAuthorityConfigurationHash,authorityRestartRequired:true,finalizedAt:input.request.completedAt,allRegisteredMutationsFencedThroughFinalize:true};
+ }else value={...authority.raw.client.finalizeSchemaTransition({request:input.request,reservation:authority.lastReceipt,now:new Date(input.request.completedAt)})};
+ delete value.signature;
+ value.signature=crypto.sign(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(value)),authority.keys.privateKey).toString('base64');
+ authority.lastFinalization=structuredClone(value);
+ return {receipt:value,accepted:schemaContract.verifyAutonomousResearchOnlineSchemaTransitionFinalization({receipt:value,request:input.request,reservation:authority.lastReceipt,trust:authority.trust,now:new Date(input.request.completedAt),verifySignature:v=>crypto.verify(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(v)),authority.keys.publicKey,Buffer.from(v.signature,'base64'))})};
+}
+
+function observeMaintenance(input) {
+ assertRoot(input.root);const authority=authorities.get(input.root);
+ if(!authority?.lastReceipt)throw new Error('missing_temporary_reservation');
+ authority.observationRequests??=[];
+ authority.observationRequests.push(structuredClone(input.request));
+ let value;
+ if(input.request.version===2){
+  const observedAt=input.request.requestedAt;
+  value={version:2,kind:'AutonomousResearchOnlineSchemaTransitionObservationReceipt',status:'autonomous_research_online_schema_transition_observed_finalized',authorityId:authority.trust.authorityId,keyId:authority.trust.keyId,requestHash:hashRecord('AutonomousResearchOnlineSchemaTransitionObserveRequest',input.request),protocol:input.request.protocol,scopeId:input.request.scopeId,databaseScopeHash:input.request.databaseScopeHash,writerManifestHash:input.request.writerManifestHash,transitionId:input.request.transitionId,transitionInventoryHash:input.request.transitionInventoryHash,schemaBundleHash:input.request.schemaBundleHash,finalizationReceiptHash:input.request.finalizationReceiptHash,postInventoryHash:input.request.postInventoryHash,postPristineRuntimeStateHash:input.request.postPristineRuntimeStateHash,transitionState:'finalized',globalSequence:authority.lastFinalization.globalSequence,globalHash:authority.lastFinalization.globalHash,transitionMode:input.request.transitionMode,sourceWriterManifestHash:input.request.sourceWriterManifestHash,authorityConfigurationActivated:true,observedAt,expiresAt:new Date(Date.parse(observedAt)+authority.trust.maximumObservationAgeMs).toISOString()};
+ }else value={...authority.raw.client.observeSchemaTransition({request:input.request,now:new Date(input.request.requestedAt)})};
+ delete value.signature;
+ value.signature=crypto.sign(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(value)),authority.keys.privateKey).toString('base64');
+ return {receipt:value,accepted:schemaContract.verifyAutonomousResearchOnlineSchemaTransitionObservation({receipt:value,request:input.request,trust:authority.trust,now:new Date(input.request.requestedAt),verifySignature:v=>crypto.verify(null,Buffer.from(autonomousResearchOnlineMutationSignedPayload(v)),authority.keys.publicKey,Buffer.from(v.signature,'base64'))})};
+}
+
 const rl=readline.createInterface({input:process.stdin,crlfDelay:Infinity});
-for await(const line of rl){try{const input=JSON.parse(line);const value=input.operation==='installation-preview'?installationPreview(input):input.operation==='make-wal'?makeWal(input):input.operation==='normalize-scope'?normalizeScope(input):input.operation==='fixture'?fixture(input):input.operation==='normalize-copy'?normalizeCopy(input):input.operation==='full-fixture'?fullFixture(input):input.operation==='full-plan'?fullPlan(input):input.operation==='reserve-maintenance'?reserveMaintenance(input):projection(input);process.stdout.write(JSON.stringify({ok:true,value,profile:productionOracleProfile()})+'\n');}catch(error){process.stdout.write(JSON.stringify({ok:false,error:error.message,profile:productionOracleProfile()})+'\n');}}
+for await(const line of rl){try{const input=JSON.parse(line);const authority=authorities.get(input.root);const value=input.operation==='observation-requests'?authority?.observationRequests??[]:input.operation==='finalization-requests'?authority?.finalizationRequests??[]:input.operation==='observe-maintenance'?observeMaintenance(input):input.operation==='finalize-maintenance'?finalizeMaintenance(input):input.operation==='installation-preview'?installationPreview(input):input.operation==='make-wal'?makeWal(input):input.operation==='normalize-scope'?normalizeScope(input):input.operation==='fixture'?fixture(input):input.operation==='normalize-copy'?normalizeCopy(input):input.operation==='full-fixture'?fullFixture(input):input.operation==='full-plan'?fullPlan(input):input.operation==='reserve-maintenance'?reserveMaintenance(input):projection(input);process.stdout.write(JSON.stringify({ok:true,value,profile:productionOracleProfile()})+'\n');}catch(error){process.stdout.write(JSON.stringify({ok:false,error:error.message,profile:productionOracleProfile()})+'\n');}}

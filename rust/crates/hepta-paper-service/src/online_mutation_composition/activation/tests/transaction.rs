@@ -88,7 +88,13 @@ fn retained_composition(historical: bool) {
     let guard = inventory.native_store_transaction_guard_v1().unwrap();
     let recovery = prepared
         .fence
-        .retain_native_store_transaction_v1(&prepared.fence_binding, &guard, &prepared.verifier)
+        .retain_native_store_with_pins(&prepared.fence_binding, &guard, &prepared.verifier, || {
+            assert_product_owner_current(
+                prepared.installed_authority.as_ref(),
+                &prepared.fence,
+                &prepared.verifier,
+            )
+        })
         .unwrap_or_else(|e| panic!("recovery {} {}", e.code, e.details));
     let calls = fs::read(root.0.join("calls.jsonl")).unwrap();
     let target = request

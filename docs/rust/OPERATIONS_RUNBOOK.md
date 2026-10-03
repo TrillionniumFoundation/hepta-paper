@@ -6,10 +6,10 @@ writer, release or submission use.
 
 ## 1. Candidate discipline
 
-Use one convergence branch and one integration PR.
+Use the [single current candidate](../migration/BRANCH_CONSOLIDATION.md#current-candidate-and-callable-entrypoints) and its integration PR. The same contract owns branch identity and signed delivery; query the live head/base before every append.
 
 ```text
-integration branch codex/full-rust-replacement-progress-20260916
+candidate/base    docs/migration/BRANCH_CONSOLIDATION.md
 static truth      docs/rust/current-status.v1.json
 required checks   docs/rust/qualification/source-required-checks.v1.json
 effective result  effective-status.v1.json workflow artifact

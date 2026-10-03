@@ -196,10 +196,8 @@ pub fn parse_autonomous_intake_authority_rotation_arguments(
         return Err("autonomous_intake_authority_rotation_plan_hash_required".to_owned());
     }
     if options.runtime_root.is_none() {
-        options.runtime_root = Some(absolute_path(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../../hepta-paper-runtime/native-runtime"),
-        ));
+        options.runtime_root =
+            Some(crate::native_workspace::current_native_command_runtime_root_v1()?);
     }
     options.runtime_root = options.runtime_root.map(absolute_path);
     options.next_machine_intake_config = options.next_machine_intake_config.map(absolute_path);
@@ -332,18 +330,23 @@ fn compute_plan_hash(payload: &Value) -> Result<String, serde_json::Error> {
 }
 
 fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions, apply: bool) -> Value {
-    let default_runtime_root = absolute_path(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../../hepta-paper-runtime/native-runtime"),
-    );
-    let runtime_root = options
+    let runtime_root = match options
         .runtime_root
-        .as_deref()
-        .unwrap_or(&default_runtime_root);
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(crate::native_workspace::current_native_command_runtime_root_v1)
+    {
+        Ok(root) => root,
+        Err(cause) => {
+            return json!({"version":1,"kind":"AutonomousResearchMachineIntakeAuthorityRotationPlanReport",
+            "status":"autonomous_research_machine_intake_authority_rotation_blocked","ready":false,
+            "executeRequired":true,"plan":null,"blockers":[cause],"externalActionPerformed":false,"networkUse":false,"providerCostUsd":0});
+        }
+    };
     let config = read_reference(options.next_machine_intake_config.as_deref());
     let profile = read_reference(options.topic_producer_profile.as_deref());
     let authority_root = inspect_directory(Path::new(AUTHORITY_ROTATION_ROOT));
-    let runtime_identity = inspect_directory(runtime_root);
+    let runtime_identity = inspect_directory(&runtime_root);
     let config_v2 = config["declaredVersion"] == 2 && config["machineAppendEnabled"] == true;
     let profile_hash_matches = config["machineProducerProfileHash"].is_string()
         && config["machineProducerProfileHash"] == profile["declaredProducerProfileHash"];

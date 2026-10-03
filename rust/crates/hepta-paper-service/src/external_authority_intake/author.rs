@@ -219,7 +219,7 @@ fn canonical_hash(kind: &str, value: &Value) -> Option<String> {
         .map(|hash| hash.as_str().to_owned())
 }
 
-fn normalize_numbers(value: &mut Value) {
+pub(super) fn normalize_numbers(value: &mut Value) {
     match value {
         Value::Number(_) => {
             if let Some(normalized) = production_stable_json_v1(value)
@@ -266,7 +266,8 @@ fn resolve_path(path: &Path) -> Option<PathBuf> {
     resolved.is_absolute().then_some(resolved)
 }
 
-fn read_pinned(path: &Path) -> Option<Vec<u8>> {
+fn read_pinned(path: &Path, control: Option<&super::Control<'_>>) -> Option<Vec<u8>> {
+    super::check_control(control).ok()?;
     let candidate = resolve_path(path)?;
     let canonical = fs::canonicalize(&candidate).ok()?;
     if canonical != candidate {
@@ -286,7 +287,7 @@ fn read_pinned(path: &Path) -> Option<Vec<u8>> {
     }
     let mut file = OpenOptions::new()
         .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
         .open(&candidate)
         .ok()?;
     let opened = file.metadata().ok()?;
@@ -294,10 +295,23 @@ fn read_pinned(path: &Path) -> Option<Vec<u8>> {
         return None;
     }
     let mut bytes = Vec::new();
-    file.by_ref()
-        .take(MAXIMUM_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
+    let mut buffer = [0; 64 * 1024];
+    loop {
+        super::check_control(control).ok()?;
+        let remaining = MAXIMUM_CONFIG_BYTES
+            .saturating_add(1)
+            .saturating_sub(bytes.len() as u64);
+        if remaining == 0 {
+            return None;
+        }
+        let capacity = remaining.min(buffer.len() as u64) as usize;
+        let count = file.read(&mut buffer[..capacity]).ok()?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
+    super::check_control(control).ok()?;
     let after = file.metadata().ok()?;
     let path_after = fs::symlink_metadata(&candidate).ok()?;
     (bytes.len() as u64 == before.len()
@@ -438,6 +452,14 @@ struct TrustStore {
 }
 
 fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStore, String> {
+    parse_trust_store_for_role(value, expected_ids, SIGNER_ROLE)
+}
+
+fn parse_trust_store_for_role(
+    value: &Value,
+    expected_ids: &[String],
+    required_role: &str,
+) -> Result<TrustStore, String> {
     if !exact(value, &["version", "kind", "keys"])
         || value["version"] != 1
         || value["kind"] != "AuthorityTrustStore"
@@ -530,7 +552,7 @@ fn parse_trust_store(value: &Value, expected_ids: &[String]) -> Result<TrustStor
     let role_ok = keys.iter().any(|key| {
         key.value["roles"]
             .as_array()
-            .is_some_and(|roles| roles.iter().any(|role| role == SIGNER_ROLE))
+            .is_some_and(|roles| roles.iter().any(|role| role == required_role))
     });
     if !role_ok {
         return Err("pinned_external_evidence_trust_role_missing".into());
@@ -599,6 +621,11 @@ fn signature_string(value: &Value) -> Result<String, EnvelopeErrors> {
         .ok_or_else(|| "immutable_signed_json_authority_signature_invalid".into())
 }
 
+struct EvidencePolicy<'a> {
+    subject_kind: &'a str,
+    required_role: &'a str,
+}
+
 fn envelope_valid(
     value: &Value,
     subject_hash: &str,
@@ -607,6 +634,29 @@ fn envelope_valid(
     now: i64,
     maximum_lifetime: u64,
 ) -> Result<EnvelopeVerification, EnvelopeErrors> {
+    envelope_valid_for_policy(
+        value,
+        subject_hash,
+        trust,
+        expected_ids,
+        now,
+        maximum_lifetime,
+        EvidencePolicy {
+            subject_kind: SUBJECT_KIND,
+            required_role: SIGNER_ROLE,
+        },
+    )
+}
+
+fn envelope_valid_for_policy(
+    value: &Value,
+    subject_hash: &str,
+    trust: &TrustStore,
+    expected_ids: &[String],
+    now: i64,
+    maximum_lifetime: u64,
+    policy: EvidencePolicy<'_>,
+) -> Result<EnvelopeVerification, EnvelopeErrors> {
     if !exact(value, ENVELOPE_KEYS) {
         return Err("pinned_external_evidence_envelope_shape_invalid".into());
     }
@@ -614,7 +664,7 @@ fn envelope_valid(
         || value["kind"] != "PinnedExternalEvidenceEnvelope"
         || !identifier(&value["subjectKind"])
         || !sha(&value["subjectHash"])
-        || value["subjectKind"] != SUBJECT_KIND
+        || value["subjectKind"] != policy.subject_kind
         || value["subjectHash"] != subject_hash
         || !value["signatures"]
             .as_array()
@@ -652,7 +702,7 @@ fn envelope_valid(
         let key_id = signature_string(&signature["keyId"])?;
         if !exact(signature, SIGNATURE_KEYS)
             || signature["algorithm"] != "ed25519"
-            || signature_string(&signature["role"])? != SIGNER_ROLE
+            || signature_string(&signature["role"])? != policy.required_role
             || key_id.is_empty()
             || !seen.insert(key_id.clone())
         {
@@ -665,7 +715,7 @@ fn envelope_valid(
             .ok_or("immutable_signed_json_authority_signature_invalid")?;
         if !key.value["roles"]
             .as_array()
-            .is_some_and(|roles| roles.iter().any(|role| role == SIGNER_ROLE))
+            .is_some_and(|roles| roles.iter().any(|role| role == policy.required_role))
         {
             return Err("immutable_signed_json_authority_signature_invalid".into());
         }
@@ -826,11 +876,16 @@ fn canonical_json(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
 }
 
 /// Inspect an author configuration without invoking any external action.
-pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, now: &str) -> Value {
+pub(super) fn inspect_author(
+    path: Option<&Path>,
+    expected_hash: Option<&str>,
+    now: &str,
+    control: Option<&super::Control<'_>>,
+) -> Value {
     let Some(path) = path else {
         return blocked("autonomous_research_author_identity_configuration_path_missing");
     };
-    let Some(bytes) = read_pinned(path) else {
+    let Some(bytes) = read_pinned(path, control) else {
         return blocked("autonomous_research_author_identity_configuration_file_invalid");
     };
     let mut parsed = match serde_json::from_slice::<Value>(&bytes) {
@@ -1087,13 +1142,79 @@ pub(super) fn inspect_author(path: Option<&Path>, expected_hash: Option<&str>, n
     Value::Object(object)
 }
 
+/// Reuse the pinned Ed25519 verifier for a passive sibling evidence contract.
+/// Static validity and cryptographic currency remain separate.
+pub(super) struct PassiveEvidenceInspection {
+    pub(super) verified_keys: Vec<Value>,
+    pub(super) cryptographic_ready: bool,
+}
+
+pub(super) fn inspect_passive_evidence(
+    bundle: &Value,
+    subject_kind: &str,
+    subject_hash: &str,
+    required_role: &str,
+    now: i64,
+) -> Option<PassiveEvidenceInspection> {
+    let ids = bundle["signerKeyIds"]
+        .as_array()?
+        .iter()
+        .map(|v| v.as_str().map(str::to_owned))
+        .collect::<Option<Vec<_>>>()?;
+    let trust = parse_trust_store_for_role(&bundle["trustStore"], &ids, required_role).ok()?;
+    if bundle["trustStoreHash"] != trust.hash
+        || canonical_envelope_hash(&bundle["authorityEnvelope"]).is_none()
+        || bundle["authorityEnvelope"]["subjectKind"] != subject_kind
+        || bundle["authorityEnvelope"]["subjectHash"] != subject_hash
+    {
+        return None;
+    }
+    let lifetime = bundle["maximumLifetimeMs"].as_u64()?;
+    let result = envelope_valid_for_policy(
+        &bundle["authorityEnvelope"],
+        subject_hash,
+        &trust,
+        &ids,
+        now,
+        lifetime,
+        EvidencePolicy {
+            subject_kind,
+            required_role,
+        },
+    );
+    let verified_keys = match &result {
+        Ok((_, _, verified, _, _)) => trust
+            .keys
+            .iter()
+            .filter(|k| verified.contains(&k.id))
+            .map(|k| {
+                let mut v = k.value.clone();
+                v["publicKeySpkiHash"] = json!(k.spki_hash);
+                v
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    Some(PassiveEvidenceInspection {
+        verified_keys,
+        cryptographic_ready: result.is_ok(),
+    })
+}
+
+pub(super) fn hardware_bundle_order(bytes: &[u8]) -> bool {
+    wire_order::canonical_kms_bundle_key_order(bytes)
+}
+pub(super) fn instant_millis(value: &Value) -> Option<i64> {
+    instant(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn malformed_and_missing_inputs_fail_closed() {
         assert_eq!(
-            inspect_author(None, None, "2026-07-29T04:00:00.000Z")["blockers"],
+            inspect_author(None, None, "2026-07-29T04:00:00.000Z", None)["blockers"],
             json!(["autonomous_research_author_identity_configuration_path_missing"])
         );
     }

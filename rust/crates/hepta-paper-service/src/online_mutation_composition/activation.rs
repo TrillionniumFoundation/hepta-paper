@@ -26,13 +26,11 @@ use crate::{
     },
     sqlite_mutation_coordinator::{
         Result, SqliteMutationCoordinatorOptionsV1, SqliteMutationCoordinatorV1,
-        authority::{PinnedMutationAuthorityV1, ProcessMutationAuthorityTransportV1},
+        authority::PinnedMutationAuthorityV1,
         clock::{MutationClockV1, SystemMutationClockV1},
         error,
     },
-    state_backup_authority::{
-        PinnedStateBackupAuthorityV1, ProcessStateBackupAuthorityTransportV1,
-    },
+    state_backup_authority::PinnedStateBackupAuthorityV1,
     state_database_inventory::{
         ObservedStateDatabaseInventoryV1, observe_state_database_inventory_v1,
     },
@@ -48,37 +46,52 @@ use crate::{
     state_safety::evaluate_state_safety_readiness_v1,
 };
 use serde_json::{Value, json};
-use std::{cell::Cell, fs, path::PathBuf};
+use std::{
+    cell::Cell,
+    fs,
+    path::{Path, PathBuf},
+};
 
 mod admission;
 mod admission_hashes;
+mod authority_transport;
 mod execution;
+mod installation;
 mod native_process;
 mod schema;
 mod signing_preview;
 mod temporal;
 mod transaction;
 mod transfer;
+use authority_transport::{BackupAuthorityTransportV1, OnlineAuthorityTransportV1};
+use installation::RetainedInstalledAuthorityV2;
 use schema::{PreparedSchemaInputV1, RetainedSchemaEvidenceV1};
 #[cfg(test)]
 mod tests;
 
-type Online = PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1>;
-type Fence = SharedRecoverabilityEpochFenceV1<
-    ProcessStateBackupAuthorityTransportV1,
-    ProcessMutationAuthorityTransportV1,
->;
+type Online = PinnedMutationAuthorityV1<OnlineAuthorityTransportV1>;
+type Fence =
+    SharedRecoverabilityEpochFenceV1<BackupAuthorityTransportV1, OnlineAuthorityTransportV1>;
 const NATIVE_BINDING_REQUIRED: &str =
     "autonomous_research_online_native_provenance_binding_required";
+
+pub(crate) enum InitialOnlineAuthorityProfileV1 {
+    Process {
+        online_configuration_path: PathBuf,
+        online_configuration_file_hash: String,
+        backup_configuration_path: PathBuf,
+        backup_configuration_file_hash: String,
+    },
+    InstalledV2 {
+        deployment: Box<crate::ProductionDeploymentManifestV2>,
+    },
+}
 
 pub(crate) struct InitialOnlineMutationCompositionRequestV1 {
     pub workspace_root: PathBuf,
     pub runtime_root: PathBuf,
     pub backup_root: PathBuf,
-    pub online_process_configuration_path: PathBuf,
-    pub online_process_configuration_file_hash: String,
-    pub backup_process_configuration_path: PathBuf,
-    pub backup_process_configuration_file_hash: String,
+    pub authority_profile: InitialOnlineAuthorityProfileV1,
     pub resident_owner_id: String,
     pub resident_lease_token: String,
     pub resident_lease_generation: i64,
@@ -104,7 +117,8 @@ pub(crate) struct PreparedInitialOnlineMutationCompositionV1 {
     fence: Fence,
     fence_binding: VerifiedRecoverabilityActivationBindingV1,
     verifier: Online,
-    coordinator: SqliteMutationCoordinatorV1<ProcessMutationAuthorityTransportV1>,
+    installed_authority: Option<RetainedInstalledAuthorityV2>,
+    coordinator: SqliteMutationCoordinatorV1<OnlineAuthorityTransportV1>,
     checked_at: Cell<i64>,
     // Package lock remains held until the prepared object is dropped. This
     // filesystem exclusion is neither a cutover fence nor write authorization.
@@ -114,6 +128,34 @@ fn fail(suffix: &str) -> crate::sqlite_mutation_coordinator::SqliteMutationCoord
     error(format!(
         "autonomous_research_online_initial_composition_{suffix}"
     ))
+}
+fn online_profile_hash(authority: &Online) -> String {
+    authority.inspect_transport_v1(|transport| transport.profile_hash().to_owned())
+}
+fn assert_product_owner_current(
+    installed: Option<&RetainedInstalledAuthorityV2>,
+    fence: &Fence,
+    authority: &Online,
+) -> Result<()> {
+    if let Some(installed) = installed {
+        installed.assert_current()?;
+        if installed.profile_hash() != online_profile_hash(authority) {
+            return Err(fail("installed_authority_profile_mismatch"));
+        }
+    }
+    fence.assert_owner_inputs_with(authority, |external, internal, backup| {
+        external.assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
+        internal.assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
+        backup.assert_transport_current_v1(BackupAuthorityTransportV1::assert_current)?;
+        if online_profile_hash(external) != online_profile_hash(internal) {
+            return Err(fail("authority_transport_profile_mismatch"));
+        }
+        Ok(())
+    })?;
+    if let Some(installed) = installed {
+        installed.assert_current()?;
+    }
+    Ok(())
 }
 fn validate_request(request: &InitialOnlineMutationCompositionRequestV1) -> Result<()> {
     let roots = [
@@ -141,11 +183,68 @@ fn validate_request(request: &InitialOnlineMutationCompositionRequestV1) -> Resu
     }
     Ok(())
 }
-fn load_online(request: &InitialOnlineMutationCompositionRequestV1) -> Result<Online> {
-    Online::load_process(
-        &request.online_process_configuration_path,
-        &request.online_process_configuration_file_hash,
+fn load_process_online(path: &Path, hash: &str) -> Result<Online> {
+    let authority = PinnedMutationAuthorityV1::<
+        crate::sqlite_mutation_coordinator::authority::ProcessMutationAuthorityTransportV1,
+    >::load_process(path, hash)?;
+    let profile_hash = authority.process_configuration_hash().to_owned();
+    Ok(
+        authority.map_transport(|inner| OnlineAuthorityTransportV1::Process {
+            inner: Box::new(inner),
+            profile_hash,
+        }),
     )
+}
+
+struct LoadedAuthorityOwnersV1 {
+    installed_authority: Option<RetainedInstalledAuthorityV2>,
+    authority: Online,
+    verifier: Online,
+    recovery_online: Online,
+    backup: PinnedStateBackupAuthorityV1<BackupAuthorityTransportV1>,
+}
+
+fn load_authority_owners(
+    request: &InitialOnlineMutationCompositionRequestV1,
+) -> Result<LoadedAuthorityOwnersV1> {
+    match &request.authority_profile {
+        InitialOnlineAuthorityProfileV1::Process {
+            online_configuration_path,
+            online_configuration_file_hash,
+            backup_configuration_path,
+            backup_configuration_file_hash,
+        } => {
+            let authority =
+                load_process_online(online_configuration_path, online_configuration_file_hash)?;
+            let verifier =
+                load_process_online(online_configuration_path, online_configuration_file_hash)?;
+            let recovery_online =
+                load_process_online(online_configuration_path, online_configuration_file_hash)?;
+            let backup = PinnedStateBackupAuthorityV1::<
+                crate::state_backup_authority::ProcessStateBackupAuthorityTransportV1,
+            >::load_process(
+                backup_configuration_path, backup_configuration_file_hash
+            )?
+            .map_transport(|inner| BackupAuthorityTransportV1::Process(Box::new(inner)));
+            Ok(LoadedAuthorityOwnersV1 {
+                installed_authority: None,
+                authority,
+                verifier,
+                recovery_online,
+                backup,
+            })
+        }
+        InitialOnlineAuthorityProfileV1::InstalledV2 { deployment } => {
+            let installed = installation::load_installed_authority_v2(deployment)?;
+            Ok(LoadedAuthorityOwnersV1 {
+                installed_authority: Some(installed.retained),
+                authority: installed.authority,
+                verifier: installed.verifier,
+                recovery_online: installed.recovery_online,
+                backup: installed.backup,
+            })
+        }
+    }
 }
 
 pub(crate) fn prepare_initial_online_mutation_composition_v1(
@@ -169,17 +268,17 @@ fn construct(
             .join("paper-core/config/autonomous-research-state-databases.v1.json"),
     )?;
     let builtin = BuiltinOnlineMutationPlansV1::load()?;
-    let mut authority = load_online(request)?;
-    let verifier = load_online(request)?;
-    let recovery_online = load_online(request)?;
-    let backup = PinnedStateBackupAuthorityV1::load_process(
-        &request.backup_process_configuration_path,
-        &request.backup_process_configuration_file_hash,
-    )?;
-    authority.assert_process_current_v1()?;
-    verifier.assert_process_current_v1()?;
-    recovery_online.assert_process_current_v1()?;
-    backup.assert_process_current_v1()?;
+    let LoadedAuthorityOwnersV1 {
+        installed_authority,
+        mut authority,
+        verifier,
+        recovery_online,
+        backup,
+    } = load_authority_owners(request)?;
+    authority.assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
+    verifier.assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
+    recovery_online.assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
+    backup.assert_transport_current_v1(BackupAuthorityTransportV1::assert_current)?;
     let initial_inventory =
         observe_state_database_inventory_v1(&request.runtime_root, &manifest.value)?;
     let checked_at = Cell::new(i64::MIN);
@@ -224,7 +323,10 @@ fn construct(
     let fence = Fence::new(controller);
     // Renewal can change the head, so it always precedes the fresh active chain.
     fence.reconcile_with_validity(0)?;
-    let fence_binding = fence.observe_activation_binding_v1(inventory, &authority)?;
+    let fence_binding =
+        fence.observe_activation_binding_with_pins(inventory, &authority, || {
+            assert_product_owner_current(installed_authority.as_ref(), &fence, &authority)
+        })?;
     let source = verify_online_writer_static_coverage_v1(
         &request.workspace_root,
         builtin.writer_manifest(),
@@ -259,14 +361,16 @@ fn construct(
     {
         return Err(fail("recoverability_active_head_mismatch"));
     }
-    fence.assert_activation_binding_current_v1(&fence_binding, inventory, &authority)?;
+    fence.assert_activation_binding_with_pins(&fence_binding, inventory, &authority, || {
+        assert_product_owner_current(installed_authority.as_ref(), &fence, &authority)
+    })?;
     startup.assert_current(&initial_inventory, &authority, &mut clock)?;
     schema.assert_current(
         inventory, &source, &active, &finalized, &authority, &mut clock,
     )?;
     manifest.assert_current()?;
     package.assert_current().map_err(|e| error(e.to_string()))?;
-    authority.assert_process_current_v1()?;
+    authority.assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
     // All external proof production precedes the actual coordinator. No generic
     // fence, caller clock, arbitrary manifest or writable connection is accepted.
     let coordinator = SqliteMutationCoordinatorV1::new(
@@ -332,6 +436,7 @@ fn construct(
         fence,
         fence_binding,
         verifier,
+        installed_authority,
         coordinator,
         checked_at,
         package,
@@ -350,7 +455,8 @@ impl PreparedInitialOnlineMutationCompositionV1 {
             .assert_current()
             .map_err(|e| error(e.to_string()))?;
         self.manifest.assert_current()?;
-        self.verifier.assert_process_current_v1()?;
+        self.verifier
+            .assert_transport_current_v1(OnlineAuthorityTransportV1::assert_current)?;
         // Startup retains and checks its real post-write inventory. Its original
         // input remains the immutable subject binding, not a current byte claim.
         self.startup
@@ -380,10 +486,17 @@ impl PreparedInitialOnlineMutationCompositionV1 {
             &self.source,
             &mut clock,
         )?;
-        self.fence.assert_activation_binding_current_v1(
+        self.fence.assert_activation_binding_with_pins(
             &self.fence_binding,
             inventory,
             &self.verifier,
+            || {
+                assert_product_owner_current(
+                    self.installed_authority.as_ref(),
+                    &self.fence,
+                    &self.verifier,
+                )
+            },
         )?;
         self.coordinator.assert_configuration_current()?;
         self.package

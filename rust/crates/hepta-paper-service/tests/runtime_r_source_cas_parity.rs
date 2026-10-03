@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
+    os::unix::fs::FileTypeExt,
     process::{Command, Stdio},
 };
 
@@ -161,4 +162,205 @@ fn source_cas_verifier_matches_node_for_verified_and_tampered_archives() {
     let _ = fs::remove_dir_all(tampered_root);
     let _ = fs::remove_dir_all(extra_root);
     let _ = fs::remove_dir_all(uppercase_root);
+}
+
+fn bounded_native_status(root: &std::path::Path) -> (std::process::Output, bool) {
+    bounded_native_cas(root, &["--action", "status"])
+}
+fn bounded_native_cas(root: &std::path::Path, args: &[&str]) -> (std::process::Output, bool) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("runtime-r-source-cas")
+        .arg(root)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    let mut timed_out = false;
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(3) {
+            child.kill().unwrap();
+            timed_out = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    (child.wait_with_output().unwrap(), timed_out)
+}
+
+#[test]
+fn native_status_refuses_fifo_inputs_without_waiting_for_a_writer() {
+    let mut timeouts = Vec::new();
+    for (name, relative) in [
+        ("fifo-lock", "renv.lock"),
+        ("fifo-manifest", "source-cas/manifest.json"),
+    ] {
+        let (root, _) = fixture(name);
+        let input = root.join("runtime-images/r-scientific").join(relative);
+        fs::remove_file(&input).unwrap();
+        nix::unistd::mkfifo(
+            &input,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .unwrap();
+        let (output, timed_out) = bounded_native_status(&root);
+        if timed_out {
+            timeouts.push(relative);
+        } else {
+            assert!(!output.status.success());
+            let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["ready"], false);
+            assert!(fs::symlink_metadata(&input).unwrap().file_type().is_fifo());
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+    assert!(
+        timeouts.is_empty(),
+        "ordinary status waited for FIFO writers: {timeouts:?}"
+    );
+}
+
+#[test]
+fn native_status_refuses_manifest_symlink_instead_of_following_it() {
+    let (root, _) = fixture("manifest-link");
+    let manifest = root.join("runtime-images/r-scientific/source-cas/manifest.json");
+    let target = root.join("external-manifest.json");
+    fs::rename(&manifest, &target).unwrap();
+    let before = fs::read(&target).unwrap();
+    std::os::unix::fs::symlink(&target, &manifest).unwrap();
+    let (output, timed_out) = bounded_native_status(&root);
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!timed_out);
+    assert_eq!(report["ready"], false);
+    assert_eq!(fs::read(&target).unwrap(), before);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_status_bounds_documents_and_archives_before_reading_sparse_inputs() {
+    for (name, relative, length) in [
+        ("large-lock", "renv.lock", 16 * 1024 * 1024 + 1),
+        (
+            "large-manifest",
+            "source-cas/manifest.json",
+            16 * 1024 * 1024 + 1,
+        ),
+        ("large-sums", "source-cas/SHA256SUMS", 16 * 1024 * 1024 + 1),
+        (
+            "large-index",
+            "source-cas/PACKAGES.tsv",
+            16 * 1024 * 1024 + 1,
+        ),
+        (
+            "large-archive",
+            "source-cas/src/contrib/demo_1.0.0.tar.gz",
+            256 * 1024 * 1024 + 1,
+        ),
+    ] {
+        let (root, _) = fixture(name);
+        let input = root.join("runtime-images/r-scientific").join(relative);
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&input)
+            .unwrap();
+        file.set_len(length).unwrap();
+        drop(file);
+        let before = fs::metadata(&input).unwrap();
+        let (output, timed_out) = bounded_native_status(&root);
+        assert!(!timed_out, "{relative} was not bounded before reading");
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["ready"], false);
+        assert_eq!(
+            report["blockers"][0], "r_runtime_source_cas_observation_limit_exceeded",
+            "{relative}: {report}"
+        );
+        assert_eq!(fs::metadata(&input).unwrap().len(), before.len());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn native_status_refuses_deep_empty_directory_closure_and_linked_fifo() {
+    let (root, archive) = fixture("deep-empty");
+    let original = fs::read(&archive).unwrap();
+    let mut directory = root.join("runtime-images/r-scientific/source-cas");
+    for _ in 0..65 {
+        directory = directory.join("nested");
+        fs::create_dir(&directory).unwrap();
+    }
+    let (output, timed_out) = bounded_native_status(&root);
+    assert!(!timed_out);
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["blockers"][0],
+        "r_runtime_source_cas_observation_depth_exceeded"
+    );
+    assert_eq!(fs::read(&archive).unwrap(), original);
+    assert!(directory.is_dir());
+    fs::remove_dir_all(root).unwrap();
+    let (root, _) = fixture("linked-fifo");
+    let target = root.join("fifo");
+    nix::unistd::mkfifo(
+        &target,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
+    let manifest = root.join("runtime-images/r-scientific/source-cas/manifest.json");
+    fs::remove_file(&manifest).unwrap();
+    std::os::unix::fs::symlink(&target, &manifest).unwrap();
+    let (output, timed_out) = bounded_native_status(&root);
+    assert!(!timed_out, "status followed a link to an unreadable FIFO");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["ready"], false);
+    assert!(fs::symlink_metadata(target).unwrap().file_type().is_fifo());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ordinary_acquisition_rejects_fifo_replay_and_initial_lock_without_publication() {
+    for (name, initial, relative) in [
+        ("replay-fifo-lock", false, "renv.lock"),
+        ("replay-fifo-manifest", false, "source-cas/manifest.json"),
+        ("initial-fifo-lock", true, "renv.lock"),
+    ] {
+        let (root, archive) = fixture(name);
+        let context = root.join("runtime-images/r-scientific");
+        let before = fs::read(&archive).unwrap();
+        if initial {
+            fs::remove_dir_all(context.join("source-cas")).unwrap();
+        }
+        let input = context.join(relative);
+        fs::remove_file(&input).unwrap();
+        nix::unistd::mkfifo(
+            &input,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .unwrap();
+        let (output, timed_out) = bounded_native_cas(
+            &root,
+            &["--action", "acquire", "--seed", "/unconsumed-missing-seed"],
+        );
+        assert!(
+            !timed_out,
+            "{relative}: acquire entered the blocking status/lock read"
+        );
+        assert!(!output.status.success());
+        assert!(fs::read_dir(&context).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".source-cas.staging-")
+        }));
+        assert!(fs::symlink_metadata(&input).unwrap().file_type().is_fifo());
+        if initial {
+            assert!(!context.join("source-cas").exists());
+        } else {
+            assert_eq!(fs::read(&archive).unwrap(), before);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 }

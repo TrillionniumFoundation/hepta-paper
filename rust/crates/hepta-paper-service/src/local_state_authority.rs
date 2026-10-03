@@ -19,6 +19,8 @@ mod backup;
 pub(crate) mod configuration;
 pub mod migration;
 mod mutation;
+mod request_control;
+use request_control::RequestControl;
 mod schema;
 mod schema_rebind;
 mod server;
@@ -26,6 +28,9 @@ mod storage;
 pub use server::LocalStateAuthorityServerV1;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+type RequestCheckpoint = Box<dyn FnMut(&'static str) + Send>;
 
 /// This service owns authority state, not a business database. Its private key
 /// is loaded only from the configured authority installation. No key creation,
@@ -35,6 +40,8 @@ pub struct LocalStateAuthorityRuntimeV1 {
     connection: Connection,
     context: Context,
     inputs: storage::Inputs,
+    #[cfg(test)]
+    request_checkpoint: Option<RequestCheckpoint>,
 }
 impl LocalStateAuthorityRuntimeV1 {
     pub fn open(configuration_path: &std::path::Path) -> Result<Self> {
@@ -42,10 +49,16 @@ impl LocalStateAuthorityRuntimeV1 {
         let (connection, database_identity) = storage::open_database(&context)?;
         inputs.bind_database(database_identity)?;
         inputs.assert_current()?;
+        // Open/schema activation retains the original five-second busy policy.
+        // Serving uses short explicit BEGIN retries so stop/deadline observations
+        // cannot be hidden inside SQLite's blocking busy handler.
+        connection.busy_timeout(std::time::Duration::ZERO)?;
         Ok(Self {
             connection,
             context,
             inputs,
+            #[cfg(test)]
+            request_checkpoint: None,
         })
     }
     pub fn socket_path(&self) -> Result<&std::path::Path> {
@@ -55,13 +68,25 @@ impl LocalStateAuthorityRuntimeV1 {
         )?))
     }
     pub fn handle(&mut self, request: &Value) -> Result<Value> {
+        self.handle_with_control(request, &RequestControl::local())
+    }
+    fn handle_with_control(
+        &mut self,
+        request: &Value,
+        control: &RequestControl<'_>,
+    ) -> Result<Value> {
+        control.check()?;
         self.inputs.assert_current()?;
         if !request.is_object() {
             return Err(error("local_state_authority_request_invalid"));
         }
-        let transaction = self
-            .connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        #[cfg(test)]
+        if let Some(checkpoint) = self.request_checkpoint.as_mut() {
+            checkpoint("before_transaction");
+        }
+        let transaction = control.begin(&self.connection)?;
+        self.inputs.assert_current()?;
+        control.check()?;
         assert_current_identity(&transaction, &self.context)?;
         let kind = text(request, "kind")?;
         let value = match kind {
@@ -90,14 +115,24 @@ impl LocalStateAuthorityRuntimeV1 {
         };
         self.inputs.assert_current()?;
         self.context.now()?;
+        #[cfg(test)]
+        if let Some(checkpoint) = self.request_checkpoint.as_mut() {
+            checkpoint("before_commit");
+        }
+        // A stop/expired request observed before this commit point rolls back
+        // the existing transaction. A signal racing COMMIT is resolved only by
+        // persisted protocol facts; it cannot erase or refund an applied write.
+        control.check()?;
         transaction.commit()?;
+        #[cfg(test)]
+        if let Some(checkpoint) = self.request_checkpoint.as_mut() {
+            checkpoint("after_commit");
+        }
         Ok(value)
     }
     pub fn inspect(&mut self) -> Result<Value> {
         self.inputs.assert_current()?;
-        let tx = self
-            .connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let tx = RequestControl::local().begin(&self.connection)?;
         assert_current_identity(&tx, &self.context)?;
         let current = metadata(&tx)?;
         let rebind = schema_rebind::inspect(&tx, &self.context)?;

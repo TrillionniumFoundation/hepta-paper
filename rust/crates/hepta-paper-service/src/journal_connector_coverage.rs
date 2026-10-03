@@ -7,7 +7,7 @@
 //! nor verified qualification can become live submission authority.
 
 pub mod qualification;
-mod qualification_authority;
+pub(crate) mod qualification_authority;
 mod qualification_json;
 
 use hepta_legacy_compatibility::{ProductionCollationV1, production_hash_record_v1};
@@ -781,6 +781,13 @@ pub struct JournalConnectorCoverageOutputV2 {
 
 /// Read-only command semantics. Pass the actual process environment in the CLI;
 /// injecting it here makes tests independent of the developer's credentials.
+/// Original standalone parser admission without source/environment observation.
+pub(crate) fn validate_journal_connector_coverage_cli_arguments_v2(
+    argv: &[String],
+) -> Result<bool> {
+    Ok(parse_arguments(argv)?.contains_key("help"))
+}
+
 pub fn journal_connector_coverage_cli_v2(
     argv: &[String],
     environment: &BTreeMap<String, String>,
@@ -798,6 +805,30 @@ pub fn journal_connector_coverage_cli_at_v2(
     argv: &[String],
     environment: &BTreeMap<String, String>,
     now_unix_ms: i64,
+) -> Result<JournalConnectorCoverageOutputV2> {
+    journal_connector_coverage_at_with_directory_v2(argv, environment, now_unix_ms, None)
+}
+
+/// Ordinary registry workers resolve relative qualification inputs in their
+/// selected physical workspace. This context grants no portal authority.
+pub fn journal_connector_coverage_in_working_directory_v2(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    working_directory: &std::path::Path,
+) -> Result<JournalConnectorCoverageOutputV2> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| error("portal_target_qualification_clock_invalid"))?;
+    let now = i64::try_from(now.as_millis())
+        .map_err(|_| error("portal_target_qualification_clock_invalid"))?;
+    journal_connector_coverage_at_with_directory_v2(argv, environment, now, Some(working_directory))
+}
+
+fn journal_connector_coverage_at_with_directory_v2(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    now_unix_ms: i64,
+    working_directory: Option<&std::path::Path>,
 ) -> Result<JournalConnectorCoverageOutputV2> {
     let args = parse_arguments(argv)?;
     if args.contains_key("help") {
@@ -823,14 +854,20 @@ pub fn journal_connector_coverage_cli_at_v2(
                 .map(String::as_str)
                 .filter(|value| !value.is_empty())
         };
+        let resolved = |value: &str| {
+            let path = std::path::Path::new(value);
+            working_directory.map_or_else(|| path.to_owned(), |root| root.join(path))
+        };
+        let registry_path = resolved(registry_path);
+        let trust_store_path = selected(
+            "qualification-trust-store",
+            "HEPTA_PORTAL_TARGET_QUALIFICATION_TRUST_STORE",
+        )
+        .map(resolved);
         let inspection = qualification::inspect_portal_target_qualification_registry_v1(
             qualification::PortalTargetQualificationOptionsV1 {
-                registry_path: std::path::Path::new(registry_path),
-                trust_store_path: selected(
-                    "qualification-trust-store",
-                    "HEPTA_PORTAL_TARGET_QUALIFICATION_TRUST_STORE",
-                )
-                .map(std::path::Path::new),
+                registry_path: &registry_path,
+                trust_store_path: trust_store_path.as_deref(),
                 expected_registry_hash: selected(
                     "qualification-registry-hash",
                     "HEPTA_PORTAL_TARGET_QUALIFICATION_REGISTRY_HASH",

@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   buildTestImpactGraph,
+  requiresNativeRouteToolchain,
   selectImpactedTests,
   shardImpactedTests,
 } from '../src/test-impact-graph.mjs';
@@ -405,4 +406,30 @@ test('runner emits a real repository impact plan without executing tests', () =>
   assert.ok(report.selectedTestCount >= 1);
   assert.ok(report.changedFiles.includes('paper-core/src/test-impact-graph.mjs'));
   assert.equal(report.shardCount, 4);
+});
+
+test('ordinary frontend toolchain planning follows actual transitive imports and keeps unrelated or empty shards independent', () => {
+  const sources = {
+    'paper-core/tests/ordinary.test.mjs': "import './support/native.mjs';\n",
+    'paper-core/tests/support/native.mjs': "import '../../../docs/tools/node-rust-route-acceptance.mjs';\nimport './cycle.mjs';\n",
+    'paper-core/tests/support/cycle.mjs': "import './native.mjs';\n",
+    'docs/tools/node-rust-route-acceptance.mjs': 'export function buildNativeOwners() {}\n',
+    'paper-core/tests/unrelated.test.mjs': 'export const observation = true;\n',
+  };
+  const graph = buildTestImpactGraph({ files: Object.keys(sources), readSource: file => sources[file] });
+  assert.equal(requiresNativeRouteToolchain({ graph, tests: ['paper-core/tests/ordinary.test.mjs'] }), true);
+  assert.equal(requiresNativeRouteToolchain({ graph, tests: ['paper-core/tests/unrelated.test.mjs'] }), false);
+  assert.equal(requiresNativeRouteToolchain({ graph, tests: [] }), false);
+});
+
+test('the selected ordinary workspace frontend receives qualified Cargo in its actual shard plan', () => {
+  const target = 'paper-core/tests/native-workspace-default-root.test.mjs';
+  const result = spawnSync(process.execPath, ['paper-core/bin/run-impacted-tests.mjs',
+    '--changed-file', target, '--shard-count', '1', '--shard-index', '0', '--dry-run', '--json'], {
+    cwd: root, encoding: 'utf8', timeout: 30_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.ok(report.shardTests.includes(target));
+  assert.equal(report.requiresNativeRouteToolchain, true);
 });

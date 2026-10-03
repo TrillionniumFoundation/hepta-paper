@@ -38,6 +38,7 @@
       "issue": 21,
       "packageId": "EXT-CODEX-ROLE-001",
       "schemas": [
+        "authenticated-codex-role-canary-v2.schema.json",
         "authenticated-codex-role-canary-v1.schema.json"
       ],
       "executor": "codex_account_owner_and_distinct_role_principals",

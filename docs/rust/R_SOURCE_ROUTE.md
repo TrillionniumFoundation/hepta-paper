@@ -6,6 +6,19 @@ The repository records an inaccessible external gitlink at
 fetched and verified that commit, and no equivalence to another source is
 claimed.
 
+Source capture and ordinary `verify-full` may bind `core` and this R asset as
+unmaterialized gitlink **references**. Clean acceptance requires an actual empty
+directory, selected-tree and index mode `160000`, the exact recorded commit ID,
+and held no-follow ancestor and leaf identity before and after observation. A
+versioned, closed `gitlinkReferenceProfile` in a route source subject records
+those observations with at most 16,384 references and 4,096 ancestors per
+reference. It proves no nested source bytes, commit-object availability,
+equivalence, release or submission authority. Missing leaves remain dirty
+source diagnostics or are refused; materialized content, hidden files, aliases,
+changed directory identity and index or tree mismatches are refused. Capture
+never initializes or fetches the references and never invokes Git from their
+leaf directories, where Git could otherwise discover the parent repository.
+
 A separately identifiable public historical route exists in this repository:
 
 ```text

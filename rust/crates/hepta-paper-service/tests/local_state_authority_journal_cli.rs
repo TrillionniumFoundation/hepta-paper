@@ -4,8 +4,9 @@
 #[path = "local_state_authority_journal_cli/legacy_archive.rs"]
 mod legacy_archive;
 
+use base64ct::{Base64, Encoding};
 use ed25519_dalek::{
-    SigningKey, VerifyingKey,
+    Signature, SigningKey, VerifyingKey,
     pkcs8::{DecodePublicKey, EncodePublicKey},
 };
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
@@ -240,6 +241,34 @@ fn catalog(db: &Connection) -> Vec<(String, String, String, Option<String>)> {
         .unwrap()
 }
 
+fn assert_completed_backup_history(
+    fixture: &Fixture,
+    original_rows: &[Vec<Vec<Value>>],
+    inspected: &Value,
+) {
+    assert_eq!(original_rows[5].len(), 1);
+    assert_eq!(
+        inspected["history"]["rowCounts"]["authority_backup_reservation"],
+        1
+    );
+    let backup = &original_rows[5][0];
+    let reservation: Value = serde_json::from_str(backup[3].as_str().unwrap()).unwrap();
+    let finalization: Value = serde_json::from_str(backup[5].as_str().unwrap()).unwrap();
+    assert_eq!(finalization, fixture.oracle["completedBackup"]);
+    for receipt in [&reservation, &finalization] {
+        let signature = Signature::from_slice(
+            &Base64::decode_vec(receipt["signature"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        let payload = hepta_paper_service::state_backup_authority::state_backup_authority_signature_payload_v1(receipt)
+            .unwrap();
+        fixture
+            .public
+            .verify_strict(payload.as_bytes(), &signature)
+            .unwrap();
+    }
+}
+
 #[test]
 fn help_parses_every_argument_before_source_io_and_binary_refuses_non_utf8() {
     let valid_hash = digest(b"nonexistent inputs");
@@ -310,8 +339,13 @@ fn help_parses_every_argument_before_source_io_and_binary_refuses_non_utf8() {
 }
 
 #[test]
-fn actual_inspect_and_detached_export_preserve_all_native_schema_and_raw_history() {
-    for scenario in ["uninitialized", "rebind2", "aborted-tail"] {
+fn actual_inspect_and_native_export_preserve_sql_and_completed_backup_receipts() {
+    for scenario in [
+        "uninitialized",
+        "rebind2",
+        "aborted-tail",
+        "completed-backup",
+    ] {
         let fixture = Fixture::node(scenario);
         let original_rows = snapshot(&fixture.database());
         let original_bytes = fs::read(fixture.database()).unwrap();
@@ -327,6 +361,9 @@ fn actual_inspect_and_detached_export_preserve_all_native_schema_and_raw_history
         assert_eq!(inspected["sourceConnectionClosed"], true);
         assert_eq!(inspected["sourceLogicalDataWritten"], false);
         assert_eq!(inspected["sourcePath"], json!(fixture.database()));
+        if scenario == "completed-backup" {
+            assert_completed_backup_history(&fixture, &original_rows, &inspected);
+        }
         assert!(!fixture.output.exists());
         // Exercise the documented --key=value spelling on the real export path.
         let arguments = fixture.arguments(true);
@@ -465,13 +502,13 @@ fn wrong_pins_and_actual_wrong_public_key_never_produce_an_artifact() {
 }
 
 #[test]
-fn pending_and_unqualified_backup_histories_are_refused_without_source_changes() {
+fn pending_journal_histories_are_refused_without_source_changes() {
     for scenario in [
         "pending-mutation",
         "pending-schema",
         "pending-rebind",
         "unactivated-rebind",
-        "completed-backup",
+        "pending-backup",
     ] {
         let fixture = Fixture::node(scenario);
         let original_rows = snapshot(&fixture.database());

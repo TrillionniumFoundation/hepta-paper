@@ -246,6 +246,7 @@ fn actual_node_images_preserve_every_legacy_sql_value_and_boot_the_real_native_r
         "rebind2",
         "multirole",
         "aborted-tail",
+        "completed-backup",
     ] {
         let fixture = Fixture::node(scenario);
         let original = fs::read(fixture.path()).unwrap();
@@ -256,6 +257,12 @@ fn actual_node_images_preserve_every_legacy_sql_value_and_boot_the_real_native_r
             let db = fixture.source(false);
             let source = exact_rows(&db);
             let rows = read_source_rows(&db).unwrap();
+            if scenario == "completed-backup" {
+                assert_eq!(rows.backups().len(), 1);
+                let finalization: Value =
+                    serde_json::from_str(rows.backups()[0][5].as_str().unwrap()).unwrap();
+                assert_eq!(finalization, fixture.oracle["completedBackup"]);
+            }
             let changes = db.total_changes();
             image = verifier.build_offline_native_image(&db).unwrap();
             check_image(&image, &source, &fixture.public);
@@ -429,7 +436,7 @@ fn pending_wrong_key_backup_and_tampering_never_yield_an_image_or_change_source(
         "pending-rebind",
         "unactivated-rebind",
         "pending-mutation",
-        "completed-backup",
+        "pending-backup",
         "wrong-key",
         "tampered-head",
     ] {

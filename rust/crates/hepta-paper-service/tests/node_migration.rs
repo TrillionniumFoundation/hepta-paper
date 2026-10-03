@@ -150,3 +150,494 @@ fn rejects_migration_when_a_response_consumer_lease_is_present() {
         Err(NodeMigrationError::ActiveLease)
     ));
 }
+
+#[test]
+fn rejects_dangling_sidecars_without_following_or_replacing_them() {
+    use std::os::unix::fs::symlink;
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let temp = Temp::new();
+        let path = temp.database();
+        let before = fs::read(&path).unwrap();
+        let sidecar = PathBuf::from(format!("{}{suffix}", path.display()));
+        let missing = temp.0.join("unrelated-missing-target");
+        symlink(&missing, &sidecar).unwrap();
+        let result = migrate_node_store_v1(&path, Some(1));
+        assert!(
+            matches!(result, Err(NodeMigrationError::Sidecar)),
+            "{suffix}: {result:?}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read_link(&sidecar).unwrap(), missing);
+        assert!(!missing.exists());
+    }
+}
+
+#[test]
+fn ordinary_cli_refuses_actual_hot_journal_without_recovering_source_bytes() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command, Stdio};
+    let temp = Temp::new();
+    let path = temp.database();
+    migrate_node_store_v1(&path, Some(2)).unwrap();
+    let c = Connection::open(&path).unwrap();
+    c.execute_batch(
+        "CREATE TABLE crash_probe(id INTEGER PRIMARY KEY, payload BLOB);
+        INSERT INTO crash_probe VALUES(1, zeroblob(262144));",
+    )
+    .unwrap();
+    drop(c);
+    // The real child spills uncommitted pages. Exiting without SQLite cleanup
+    // leaves its actual hot rollback journal; no journal bytes are fabricated.
+    let mut child = Command::new("python3")
+        .args(["-u", "-c", "import sqlite3,sys,os
+c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA cache_size=1');c.execute('BEGIN IMMEDIATE');c.execute('UPDATE crash_probe SET payload=randomblob(262144)');print('uncommitted',flush=True);sys.stdin.readline();os._exit(0)"])
+        .arg(&path).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut line)
+        .unwrap();
+    assert_eq!(line.trim(), "uncommitted");
+    child.stdin.take().unwrap().write_all(b"exit\n").unwrap();
+    assert!(child.wait().unwrap().success());
+    let journal = PathBuf::from(format!("{}-journal", path.display()));
+    let journal_before = fs::read(&journal).unwrap();
+    assert!(journal_before.len() > 512);
+    assert!(journal_before[..8].iter().any(|byte| *byte != 0));
+    let before = fs::read(&path).unwrap();
+    for _ in 0..2 {
+        let result = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("store-migrate")
+            .arg(&path)
+            .arg("3")
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stderr).contains("sidecar"));
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            before,
+            "refusal must not recover source"
+        );
+        assert_eq!(fs::read(&journal).unwrap(), journal_before);
+    }
+}
+
+#[test]
+fn late_schema_error_rolls_back_the_whole_requested_range() {
+    use std::process::Command;
+    let temp = Temp::new();
+    let path = temp.database();
+    let db = Connection::open(&path).unwrap();
+    // This pre-existing incompatible table fails the second migration, after
+    // the first migration's real DDL has already run inside the owner.
+    db.execute_batch("CREATE TABLE jobs(incompatible TEXT);")
+        .unwrap();
+    drop(db);
+    let before = fs::read(&path).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("store-migrate")
+        .arg(&path)
+        .arg("3")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "no intermediate migration may commit"
+    );
+    let db = Connection::open(&path).unwrap();
+    let count: i64 = db
+        .query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name='schema_migrations'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn wal_header_without_sidecars_is_refused_without_creating_them() {
+    let temp = Temp::new();
+    let path = temp.database();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+    drop(db);
+    let before = fs::read(&path).unwrap();
+    assert_eq!(before[18], 2);
+    assert!(matches!(
+        migrate_node_store_v1(&path, Some(1)),
+        Err(NodeMigrationError::Sidecar)
+    ));
+    assert_eq!(fs::read(&path).unwrap(), before);
+    for suffix in ["-wal", "-shm", "-journal"] {
+        assert!(fs::symlink_metadata(format!("{}{suffix}", path.display())).is_err());
+    }
+}
+
+#[test]
+fn ordinary_node_and_rust_upgrade_preserve_real_results_and_same_schema_history() {
+    use std::process::Command;
+    let temp = Temp::new();
+    let native = temp.database();
+    migrate_node_store_v1(&native, Some(20)).unwrap();
+    let db = Connection::open(&native).unwrap();
+    db.execute_batch("INSERT INTO papers(slug,title,canonical_dir) VALUES ('retained','existing result','/local/result');
+        INSERT INTO artifacts(slug,kind,path,sha256,bytes) VALUES ('retained','result','result.bin','retained-digest',17);").unwrap();
+    drop(db);
+    for name in ["workspace", "assets", "runtime", "legacy"] {
+        let dir = temp.0.join(name);
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let original = temp.0.join("runtime/hepta-paper.sqlite");
+    fs::copy(&native, &original).unwrap();
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let node = Command::new("node")
+        .current_dir(&repository)
+        .args(["paper-core/bin/hepta-store.mjs", "migrate"])
+        .env("HEPTA_PAPER_WORKSPACE_ROOT", temp.0.join("workspace"))
+        .env("HEPTA_PAPER_ASSET_ROOT", temp.0.join("assets"))
+        .env("HEPTA_PAPER_RUNTIME_ROOT", temp.0.join("runtime"))
+        .env("PAPER_FACTORY_LEGACY_ROOT", temp.0.join("legacy"))
+        .output()
+        .unwrap();
+    assert!(
+        node.status.success(),
+        "{}",
+        String::from_utf8_lossy(&node.stderr)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("store-migrate")
+        .arg(&native)
+        .arg("25")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(receipt["beforeVersion"], 20);
+    assert_eq!(
+        receipt["appliedVersions"],
+        serde_json::json!([21, 22, 23, 24, 25])
+    );
+    assert_eq!(receipt["productionActivation"], false);
+    assert_eq!(receipt["nodeRetirementVerified"], false);
+    fn rows(path: &std::path::Path, sql: &str) -> Vec<Vec<String>> {
+        let db =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut statement = db.prepare(sql).unwrap();
+        let count = statement.column_count();
+        statement
+            .query_map([], |row| {
+                (0..count).map(|i| row.get::<_, String>(i)).collect()
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+    for sql in [
+        "SELECT type,name,tbl_name,coalesce(sql,'') FROM sqlite_schema WHERE substr(name,1,7)!='sqlite_' ORDER BY type,name",
+        "SELECT CAST(version AS TEXT),name,migration_sha256 FROM schema_migrations ORDER BY version",
+        "SELECT slug,title,canonical_dir FROM papers ORDER BY slug",
+        "SELECT slug,kind,path,sha256,CAST(bytes AS TEXT) FROM artifacts ORDER BY artifact_id",
+    ] {
+        assert_eq!(rows(&native, sql), rows(&original, sql), "{sql}");
+    }
+    let before = fs::read(&native).unwrap();
+    let replay = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("store-migrate")
+        .arg(&native)
+        .arg("25")
+        .output()
+        .unwrap();
+    assert!(replay.status.success());
+    let replay: serde_json::Value = serde_json::from_slice(&replay.stdout).unwrap();
+    assert_eq!(replay["appliedVersions"], serde_json::json!([]));
+    assert_eq!(replay["databaseSha256"], receipt["databaseSha256"]);
+    assert_eq!(fs::read(&native).unwrap(), before);
+}
+
+#[test]
+fn ordinary_migration_cli_accepts_bounded_timeout_without_changing_node_results() {
+    let temp = Temp::new();
+    let path = temp.database();
+    for (target, expected_before) in [(2, 0), (3, 2), (3, 3)] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("store-migrate")
+            .arg(&path)
+            .arg(target.to_string())
+            .args(["--timeout-ms", "30000"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let receipt: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(receipt["beforeVersion"], expected_before);
+        assert_eq!(receipt["targetVersion"], target);
+        assert_eq!(receipt["productionActivation"], false);
+        assert_eq!(receipt["nodeRetirementVerified"], false);
+    }
+}
+
+#[test]
+fn ordinary_migration_cli_refuses_invalid_control_before_mutation() {
+    let temp = Temp::new();
+    let path = temp.database();
+    let before = fs::read(&path).unwrap();
+    for tail in [
+        vec!["--timeout-ms"],
+        vec!["--timeout-ms", "0"],
+        vec!["--timeout-ms", "3600001"],
+        vec!["--timeout-ms", "-1"],
+        vec!["--timeout-ms", "10", "--timeout-ms", "20"],
+        vec!["--timeout-ms=10"],
+        vec!["--unknown"],
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("store-migrate")
+            .arg(&path)
+            .args(&tail)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{tail:?}");
+        assert!(output.stdout.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn ordinary_migration_deadline_preserves_database_held_by_another_writer() {
+    let temp = Temp::new();
+    let path = temp.database();
+    // Closing another source descriptor after BEGIN would release our POSIX lock.
+    let before = fs::read(&path).unwrap();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+    for budget in ["1", "10", "11", "40"] {
+        for _ in 0..3 {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+                .arg("store-migrate")
+                .arg(&path)
+                .args(["2", "--timeout-ms", budget])
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(1));
+            assert!(output.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("deadline exceeded"),
+                "budget={budget}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    // Keep the competing lock until ALL child invocations have stopped.
+    db.execute_batch("ROLLBACK;").unwrap();
+    drop(db);
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn ordinary_migration_signals_stop_without_receipt_or_source_mutation() {
+    use nix::{
+        sys::signal::{Signal, kill},
+        unistd::Pid,
+    };
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    for signal in [Signal::SIGINT, Signal::SIGTERM] {
+        let temp = Temp::new();
+        let path = temp.database();
+        // Preserve the actual holder's lock while the ordinary CLI runs.
+        let before = fs::read(&path).unwrap();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("store-migrate")
+            .arg(&path)
+            .arg("2")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let limit = Instant::now() + Duration::from_secs(5);
+        let mask = 1_u64 << (signal as u32 - 1);
+        let registered = loop {
+            let status =
+                fs::read_to_string(format!("/proc/{}/status", child.id())).unwrap_or_default();
+            let caught = status
+                .lines()
+                .find_map(|line| line.strip_prefix("SigCgt:"))
+                .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
+                .unwrap_or(0);
+            if caught & mask != 0 {
+                break true;
+            }
+            if child.try_wait().unwrap().is_some() || Instant::now() >= limit {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        if !registered {
+            let _ = child.kill();
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "ordinary signal adapter not reached: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        // Startup readiness and cancellation latency are separate bounds. A
+        // loaded builder must not consume the time allowed for the actual stop.
+        let stop_limit = Instant::now() + Duration::from_secs(2);
+        kill(Pid::from_raw(i32::try_from(child.id()).unwrap()), signal).unwrap();
+        while child.try_wait().unwrap().is_none() && Instant::now() < stop_limit {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        if child.try_wait().unwrap().is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("owned migration child did not stop");
+        }
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("cancelled before commit"));
+        assert!(output.stdout.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        db.execute_batch("ROLLBACK;").unwrap();
+        drop(db);
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+        assert_eq!(
+            migrate_node_store_v1(&path, Some(2))
+                .unwrap()
+                .before_version,
+            0
+        );
+    }
+}
+
+#[test]
+fn ordinary_cli_refuses_drifted_schema_before_upgrade_or_replay() {
+    for mutation in [
+        "DROP INDEX idx_papers_status;",
+        "CREATE TRIGGER unregistered_migration_effect AFTER INSERT ON schema_migrations BEGIN UPDATE papers SET title='unexpected mutation'; END;",
+        "UPDATE store_metadata SET value='99' WHERE key='schema_version';",
+        "ALTER TABLE papers ADD COLUMN unexpected_column TEXT;",
+    ] {
+        for target in [2, 3] {
+            let temp = Temp::new();
+            let path = temp.database();
+            migrate_node_store_v1(&path, Some(2)).unwrap();
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch("INSERT INTO papers(slug,title,canonical_dir) VALUES ('retained','original result','/local/result');").unwrap();
+            db.execute_batch(mutation).unwrap();
+            drop(db);
+            let before = fs::read(&path).unwrap();
+            for _ in 0..2 {
+                let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+                    .arg("store-migrate")
+                    .arg(&path)
+                    .arg(target.to_string())
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    output.status.code(),
+                    Some(1),
+                    "drift={mutation}, target={target}; stdout={} stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    output.stdout.is_empty(),
+                    "no migration success receipt for drifted state"
+                );
+                assert!(String::from_utf8_lossy(&output.stderr).contains("history is invalid"));
+                assert_eq!(
+                    fs::read(&path).unwrap(),
+                    before,
+                    "refusal must retain source bytes"
+                );
+                for suffix in ["-wal", "-shm", "-journal"] {
+                    assert!(fs::symlink_metadata(format!("{}{suffix}", path.display())).is_err());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn unexpected_unversioned_schema_never_commits_a_migration_receipt() {
+    let temp = Temp::new();
+    let path = temp.database();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE unrelated_results(value TEXT); INSERT INTO unrelated_results VALUES('retain me');").unwrap();
+    drop(db);
+    let before = fs::read(&path).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .arg("store-migrate")
+        .arg(&path)
+        .arg("3")
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        before,
+        "all DDL must roll back, not adopt a foreign store"
+    );
+}
+
+#[test]
+fn all_migration_prefixes_share_the_readonly_schema_owner_and_preserve_headers() {
+    use hepta_readonly_control::node_schema::validate_node_migration_structure_v1;
+    let temp = Temp::new();
+    let path = temp.database();
+    for version in 1..=25 {
+        let result = migrate_node_store_v1(&path, Some(version)).unwrap();
+        assert_eq!(result.target_version, version);
+        let before = fs::read(&path).unwrap();
+        let db =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        validate_node_migration_structure_v1(&db, version).unwrap();
+        let header: i64 = db
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            header, 1,
+            "structural verification must preserve caller header metadata"
+        );
+        drop(db);
+        let replay = migrate_node_store_v1(&path, Some(version)).unwrap();
+        assert!(replay.applied_versions.is_empty());
+        assert_eq!(replay.database_sha256, result.database_sha256);
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}

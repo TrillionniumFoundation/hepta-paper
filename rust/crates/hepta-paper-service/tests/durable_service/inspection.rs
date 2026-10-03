@@ -1,4 +1,5 @@
 use super::*;
+use hepta_codex_protocol::Sha256Digest;
 use hepta_control_plane::{ControlPlaneError, ControlPlaneRunFailurePhaseV1, select_plan_v1};
 use sha2::{Digest, Sha256};
 use std::{
@@ -10,28 +11,30 @@ fn process_configuration(temp: &Temp) -> ServiceRunV1 {
     let cwd = temp.0.join("inspection-worker");
     fs::create_dir(&cwd).unwrap();
     fs::set_permissions(&cwd, fs::Permissions::from_mode(0o700)).unwrap();
-    // Pin a private copy, without changing the shared Cargo executable's mode.
-    let executable = cwd.join("pinned-worker");
-    fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    // Use a dedicated bounded worker instead of copying the monolithic debug
+    // test binary. The product's 256 MiB executable ceiling remains exercised
+    // rather than being weakened when unrelated linked test code grows.
+    let executable = cwd.join("pinned-worker.py");
+    fs::write(
+        &executable,
+        b"#!/usr/bin/python3\nfrom pathlib import Path\nimport os\np = Path('invocations')\nwith p.open('ab') as stream:\n    stream.write(b'invoked\\n')\n    stream.flush()\n    os.fsync(stream.fileno())\nraise SystemExit(23)\n",
+    )
+    .unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o500)).unwrap();
-    let executable_hash = format!(
+    let executable_hash: Sha256Digest = format!(
         "sha256:{}",
         hex::encode(Sha256::digest(fs::read(&executable).unwrap()))
     )
     .parse()
     .unwrap();
     let binding = WorkerBindingV1::Process {
-        executable,
-        executable_hash,
-        arguments: vec![
-            "--exact".into(),
-            "inspection::marker_worker".into(),
-            "--ignored".into(),
-        ],
-        code_files: BTreeMap::new(),
+        executable: executable.clone(),
+        executable_hash: executable_hash.clone(),
+        arguments: vec![],
+        code_files: BTreeMap::from([(executable, executable_hash)]),
         working_directory: cwd,
         timeout_ms: 10_000,
-        implementation_language: "rust".into(),
+        implementation_language: "python".into(),
         network_declared: false,
     };
     let mut config = configuration_with_worker(temp, binding);
@@ -40,26 +43,6 @@ fn process_configuration(temp: &Temp) -> ServiceRunV1 {
     second.decision_group = "second-group".into();
     config.frontier.candidates.push(second);
     config
-}
-
-#[test]
-#[ignore = "private actual worker spawned by the inspection regression"]
-fn marker_worker() {
-    let cwd = std::env::current_dir().unwrap();
-    assert_eq!(
-        cwd.file_name().and_then(|s| s.to_str()),
-        Some("inspection-worker")
-    );
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(cwd.join("invocations"))
-        .unwrap();
-    file.write_all(b"invoked\n").unwrap();
-    file.sync_all().unwrap();
-    // A real worker process exits after its durable test effect. It never emits
-    // a prepared result, so the service must retain the uncertainty diagnosis.
-    std::process::exit(23);
 }
 
 fn assert_inspection(error: &ServiceError, config: &ServiceRunV1) {

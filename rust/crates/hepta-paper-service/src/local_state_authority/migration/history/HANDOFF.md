@@ -43,9 +43,9 @@ independently authenticate those facts or a running service's current state.
 rowid; JSON TEXT remains byte-for-byte intact before parsing. Only NULL, INTEGER
 and valid UTF-8 TEXT are admitted. Individual TEXT cells are at most 1 MiB,
 aggregate raw cell payload at most 64 MiB, and row limits are 1 metadata, 10 heads,
-1 initial transition, 64 rebinds, 10,000 mutations and 1 backup. Exceeding a limit
-refuses the entire observation; it never yields a truncated successful history.
-Every backup row is refused, so collecting one suffices to detect its presence.
+1 initial transition, 64 rebinds, 10,000 mutations and 4,096 backups. Exceeding a
+limit refuses the entire observation; it never yields a truncated successful
+history. Backup JSON TEXT and rowids remain part of the same exact logical hash.
 
 These are first-version compatibility bounds. In particular the mutation wire
 contract allows changesets larger than this inspector's 1 MiB persisted-cell
@@ -96,9 +96,21 @@ hash, no heads and no schema/rebind/mutation/backup history. Its report explicit
 says `uninitialized_no_signed_history`; the public-key pin supplies the selected
 verification identity but cannot create a historical signature that never existed.
 
-All backup rows remain unsupported because the incumbent could genuinely sign
-a false uninterrupted-fencing claim. Valid signatures alone cannot repair that
-history. The first-version refusal does not discard, relabel or rewrite it.
+A nonempty backup history is admitted only by the separate bounded
+`backup_history` verifier. Every row must be a complete reserve/finalize pair,
+strictly parsed, signed by the selected key, bound to the exact authority/key,
+scope, ten sorted instance IDs, inventory and snapshot hashes, and finalized
+inside its signed lease. Reservation IDs must be unique and rowids increasing.
+The signed `expiresAt - issuedAt` duration must equal the reserve request's
+`maximumLeaseMs` exactly, while that request remains within the configured bound;
+a valid signature cannot substitute a different shorter or longer lease.
+In addition, the complete mutation table must be empty and the reconstructed
+terminal global sequence must be zero; every signed backup must bind that exact
+terminal hash. These independent SQL/history facts make the historical
+`allRegisteredMutationsFenced*` booleans unnecessary. The report therefore sets
+`historicalFenceClaimsUsedAsAuthority=false`. Pending backups, changed signatures,
+wrong heads, backup/mutation coexistence, malformed JSON and resource overflow
+remain hard refusals; no row is discarded, relabelled or re-signed.
 
 ## Report and errors
 
@@ -116,8 +128,9 @@ Actual Node 22.23.1 fixtures generate initial/rebound journals and signed
 multirole mutation chains, including late finalization and an aborted tail.
 Whole-owner tests remove the fixture private key before loading the verifier,
 then authenticate with separately pinned public inputs. They cover pending
-operations, wrong/changed pins and trust, terminal tampering, backup refusal,
-unchanged source bytes and real DELETE/WAL cross-process writer exclusion after
+operations, wrong/changed pins and trust, terminal tampering, complete signed
+backup admission, pending/tampered backup refusal, unchanged source bytes and
+real DELETE/WAL cross-process writer exclusion after
 both success and refusal. Submodule tests include genuinely signed but
 non-incumbent hash derivations, broken chains, SQL-key transplantation, malformed
 JSON, equivalent numeric encodings and resource-limit rejection.
@@ -137,3 +150,5 @@ archive/publication, uncertain-commit recovery, actual old-process stop/restart
 exclusion and native installed-service handoff remain absent. See
 [`JOURNAL_MIGRATION_DESIGN.md`](../../JOURNAL_MIGRATION_DESIGN.md). The normal native
 runtime continues refusing populated Node version-0 journals.
+
+The closed source profiles include the current six-table journal and the exact initial five-table journal without `authority_schema_rebind`; no other missing object is admitted.

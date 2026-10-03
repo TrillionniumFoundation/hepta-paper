@@ -1,9 +1,8 @@
-//! Read-only preflight for the incumbent `npm test` verification surface.
-//!
-//! This boundary inventories checked-in Node test sources and the Rust
-//! workspace without starting Node, npm, a subprocess, or an external action.
-//! Inventory parity is evidence for planning only; it is never accepted as
-//! execution parity or a Node-retirement decision.
+//! Native development verification through the existing bounded process owner.
+//! Default execution runs strict Rust formatting, lint, workspace tests and docs.
+//! Explicit Node differential execution is development evidence, never release,
+//! submission, installed qualification, or route compatibility authority.
+//! The separate preflight inventories sources without executing commands.
 
 #![forbid(unsafe_code)]
 
@@ -11,30 +10,58 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
-    fs,
-    os::unix::fs::MetadataExt,
+    fs::{self, OpenOptions},
+    io::Read,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
+
+mod execution;
+pub use execution::execute_full_suite_verification_v1;
 
 const MAX_REFERENCE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_WALK_ENTRIES: usize = 200_000;
 const SHA256_PREFIX: &str = "sha256:";
 
 pub const FULL_SUITE_VERIFICATION_USAGE: &str = r#"{
-  "version": 1,
+  "version": 2,
   "kind": "FullSuiteVerificationUsage",
-  "usage": "hepta-paper-rust verify-full --workspace-root ABSOLUTE_PATH [--require-parity] [--json]",
-  "effects": "read-only",
+  "usage": "hepta-paper-rust verify-full [--workspace-root ABSOLUTE_PATH] [--preflight] [--cargo ABSOLUTE_PATH] [--require-parity --node ABSOLUTE_PATH --npm-cli ABSOLUTE_PATH] [--expected-head SHA --expected-tree SHA] [--timeout-ms INTEGER] [--json]",
+  "effects": "native-development-build-and-tests; optional-Node-development-differential",
   "semanticNotReadyExitCode": 2,
-  "rustBoundary": "static Node test-manifest/source inventory and Rust workspace provenance only; Node/npm execution and parity acceptance remain fail-closed"
+  "rustBoundary": "actual bounded Rust suite execution; Node differential remains explicit and suite success never grants release/submission/retirement authority"
 }"#;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct FullSuiteVerificationOptions {
     pub workspace_root: Option<PathBuf>,
     pub require_parity: bool,
     pub json: bool,
     pub help: bool,
+    pub preflight: bool,
+    pub cargo: Option<PathBuf>,
+    pub node: Option<PathBuf>,
+    pub npm_cli: Option<PathBuf>,
+    pub expected_head: Option<String>,
+    pub expected_tree: Option<String>,
+    pub timeout_ms: u64,
+}
+impl Default for FullSuiteVerificationOptions {
+    fn default() -> Self {
+        Self {
+            workspace_root: None,
+            require_parity: false,
+            json: false,
+            help: false,
+            preflight: false,
+            cargo: None,
+            node: None,
+            npm_cli: None,
+            expected_head: None,
+            expected_tree: None,
+            timeout_ms: 1_200_000,
+        }
+    }
 }
 
 fn option_value(args: &[String], index: &mut usize, name: &str) -> Result<String, String> {
@@ -65,6 +92,44 @@ pub fn parse_full_suite_verification_arguments(
             "--help" => options.help = true,
             "--json" => options.json = true,
             "--require-parity" => options.require_parity = true,
+            "--preflight" => options.preflight = true,
+            "--cargo" | "--node" | "--npm-cli" => {
+                let value = PathBuf::from(option_value(args, &mut index, flag)?);
+                if !value.is_absolute() {
+                    return Err(format!("full_suite_verification_{flag}_must_be_absolute"));
+                }
+                match flag {
+                    "--cargo" => options.cargo = Some(value),
+                    "--node" => options.node = Some(value),
+                    _ => options.npm_cli = Some(value),
+                }
+                continue;
+            }
+            "--expected-head" | "--expected-tree" => {
+                let value = option_value(args, &mut index, flag)?;
+                if value.len() != 40
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                {
+                    return Err("full_suite_verification_subject_invalid".into());
+                }
+                if flag == "--expected-head" {
+                    options.expected_head = Some(value);
+                } else {
+                    options.expected_tree = Some(value);
+                }
+                continue;
+            }
+            "--timeout-ms" => {
+                options.timeout_ms = option_value(args, &mut index, "timeout_ms")?
+                    .parse()
+                    .map_err(|_| "full_suite_verification_timeout_invalid".to_owned())?;
+                if !(1..=21_600_000).contains(&options.timeout_ms) {
+                    return Err("full_suite_verification_timeout_invalid".into());
+                }
+                continue;
+            }
             "--workspace-root" => {
                 options.workspace_root = Some(PathBuf::from(option_value(
                     args,
@@ -84,9 +149,20 @@ pub fn parse_full_suite_verification_arguments(
     if options.help {
         return Ok(options);
     }
-    let Some(root) = options.workspace_root.as_ref() else {
-        return Err("full_suite_verification_workspace_root_required".to_owned());
-    };
+    if options.expected_head.is_some() != options.expected_tree.is_some() {
+        return Err("full_suite_verification_subject_pair_required".into());
+    }
+    if (options.node.is_some() || options.npm_cli.is_some()) && !options.require_parity {
+        return Err("full_suite_verification_node_differential_not_requested".into());
+    }
+    if options.workspace_root.is_none() {
+        options.workspace_root =
+            Some(crate::native_workspace::current_native_command_workspace_root_v1(None)?);
+    }
+    let root = options
+        .workspace_root
+        .as_ref()
+        .ok_or_else(|| "full_suite_verification_workspace_root_required".to_owned())?;
     if !root.is_absolute() {
         return Err("full_suite_verification_workspace_root_must_be_absolute".to_owned());
     }
@@ -109,8 +185,30 @@ fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
     if metadata.len() > MAX_REFERENCE_BYTES {
         return Err("full_suite_verification_reference_too_large".to_owned());
     }
-    let bytes =
-        fs::read(path).map_err(|_| "full_suite_verification_reference_read_failed".to_owned())?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|_| "full_suite_verification_reference_read_failed".to_owned())?;
+    let held = file
+        .metadata()
+        .map_err(|_| "full_suite_verification_reference_changed".to_owned())?;
+    if !held.is_file()
+        || held.dev() != metadata.dev()
+        || held.ino() != metadata.ino()
+        || held.len() != metadata.len()
+        || held.mtime() != metadata.mtime()
+        || held.mtime_nsec() != metadata.mtime_nsec()
+        || held.ctime() != metadata.ctime()
+        || held.ctime_nsec() != metadata.ctime_nsec()
+    {
+        return Err("full_suite_verification_reference_changed".into());
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(MAX_REFERENCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "full_suite_verification_reference_read_failed".to_owned())?;
     let after = fs::symlink_metadata(path)
         .map_err(|_| "full_suite_verification_reference_changed".to_owned())?;
     if after.dev() != metadata.dev()
@@ -120,6 +218,9 @@ fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
         || after.len() != metadata.len()
         || after.mtime() != metadata.mtime()
         || after.mtime_nsec() != metadata.mtime_nsec()
+        || after.ctime() != metadata.ctime()
+        || after.ctime_nsec() != metadata.ctime_nsec()
+        || bytes.len() as u64 != metadata.len()
     {
         return Err("full_suite_verification_reference_changed".to_owned());
     }
@@ -255,15 +356,8 @@ fn workspace_members(cargo_toml: &[u8]) -> Vec<String> {
     members
 }
 
-pub fn full_suite_verification_help_json_v1() -> Value {
-    json!({
-        "version": 1,
-        "kind": "FullSuiteVerificationUsage",
-        "usage": "hepta-paper-rust verify-full --workspace-root ABSOLUTE_PATH [--require-parity] [--json]",
-        "effects": "read-only",
-        "semanticNotReadyExitCode": 2,
-        "rustBoundary": "static Node test-manifest/source inventory and Rust workspace provenance only; Node/npm execution and parity acceptance remain fail-closed"
-    })
+pub fn full_suite_verification_help_json_v1() -> Result<Value, serde_json::Error> {
+    serde_json::from_str(FULL_SUITE_VERIFICATION_USAGE)
 }
 
 pub fn inspect_full_suite_verification_v1(
@@ -369,7 +463,7 @@ mod tests {
 
     #[test]
     fn parser_requires_absolute_workspace_root_and_rejects_unknown_flags() {
-        assert!(parse_full_suite_verification_arguments(&[]).is_err());
+        assert!(parse_full_suite_verification_arguments(&[]).is_ok());
         assert!(
             parse_full_suite_verification_arguments(&[
                 "--workspace-root".into(),

@@ -132,6 +132,12 @@ fn update_length_prefixed(hasher: &mut Sha256, value: &[u8]) {
 /// Compatibility encoding or digest failure.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum CompatibilityError {
+    /// A consumer's tighter encoding allocation budget was exhausted.
+    #[error("production JSON exceeds the selected encoding budget")]
+    EncodingBudget,
+    /// Encoding or measurement observed the caller's cancellation signal.
+    #[error("production JSON encoding cancelled")]
+    EncodingCancelled,
     /// Raw input or encoded output exceeds the resource bound.
     #[error("production JSON exceeds the 16 MiB size limit")]
     SizeLimit,

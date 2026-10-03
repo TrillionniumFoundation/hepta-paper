@@ -212,3 +212,129 @@ and collect real image attestations for the active production plugin scope.
 Absence of those assets cannot be closed by synthetic test output or by dropping
 R from the builtin scope. This source candidate is not a claim of completed
 production acceptance or total Node replacement.
+
+
+## Ordinary advanced numerical V1 CPU status
+
+The ordinary operator/advanced-numerical-plugin entry has a native readonly
+V1 CPU status implementation. Default status, help, strict forwarding grammar,
+require-runner-ready, relative configuration from physical workspace ROOT and
+status-ignored request/output flags follow the incumbent registry semantics.
+It loads actual configuration, bundle and trust files, reuses existing Ed25519
+verification, checks entrypoint bytes and runs real bounded bubblewrap/prlimit
+probes. This narrow native product path does not delegate to Node; Node remains
+the independent development differential.
+
+The same original AtomicBool and absolute 120-second deadline cover observation,
+probes and serialization. Fixed present-file parent/root observations reuse
+SourceObservation without changing its kernel. Actual missing edges preserve
+the original full parent namespace guard. All scopes share the original 1 GiB
+and 16384-entry observation budget; the thin fixed graph caps roots at 1024.
+The V1 graph reads at most three documents (4/4/1 MiB), one 4 MiB entrypoint
+and three 16 MiB tools. Final 4 MiB wire resources reserve the newline before
+encoding. Retained identities/raw contents are rechecked after serialization
+and after the signature time/revocation recheck. No observation is a lease.
+
+Private qualified Node 22.23.1 whole-output cases cover actual unqualified CPU
+status and missing/revoked/tampered inputs. Synthetic keys are development
+materials; they grant no installed scientific, release, submission or
+activation acceptance. V2 qualification, GPU and run remain unfinished.
+The V1 data domain additionally refuses aliases, unsupported/nonUnicode probe
+environments, unsupported trust/descriptor types and unpaired UTF16 typed data.
+Run is refused before I/O. Earlier probes using a 22.23.3 Node child remain
+observations, not Node 22.23.1 qualification. Earlier unexplained input_changed
+failures remain unexplained; the owned sibling test proves the scope mechanism
+without attributing those older failures.
+
+
+## Ordinary advanced numerical V2 CPU qualification status
+
+The existing ordinary operator/advanced-numerical-plugin status caller now
+loads the V2 CPU configuration and all five actual pinned dependency documents.
+The native implementation verifies the bound qualification statement, reference,
+replay, numeric oracle, uncertainty and scientific review receipt contracts;
+it recomputes their hashes and reuses the existing Ed25519 verifier. Five
+independent authority roles, subjects, normalized organizations and public keys,
+current signature windows and revoked keys are checked. Node is the independent
+development differential; this native status caller does not execute Node.
+
+The same original AtomicBool and absolute 120-second deadline remain through
+file observation, signature verification, sandbox probes and wire encoding.
+Retained source identities and current qualification are checked after the
+4 MiB newline-reserved serialization. The shared original observation bounds
+and fixed parent scope remain unchanged. At most six documents are loaded;
+the new cryptographic composition first charges the existing shared 1 MiB
+borrowed record budget, with at most 256 trust keys and 16 signatures per input.
+Canonical UTC timestamps, representable typed JSON, fixed statement/receipt
+schemas and the existing bounded string/depth/value domain are the V2 limit.
+Unsupported data is refused; this is not arbitrary Date.parse compatibility.
+
+Private check7 has eight actual zero-exit stages: two new qualification Rust
+owners (21 complete original Node values/errors), six V1 Rust owners, one
+portal signature owner, four journal qualification owners, and four ordinary
+Node owners. The normal owners compare 20 complete raw stdout/exit pairs,
+including V2 ready status, require-runner-ready, ignored status flags, pin
+failure, organization independence, revocation and receipt corruption. All
+4148 private source records and nine qualified tools have identical full raw
+metadata before/after; strict all-target and production clippy also pass.
+The packet is based on the current Root preimages, not a new H/M qualification.
+
+Synthetic signatures prove local document integrity only. They do not establish
+installed scientific, external publication/submission, activation, live account
+or hardware acceptance. GPU descriptor/configuration and actual run execution
+remain unfinished in this packet; prior refused cases and prior failed checks
+remain preserved. The canonical route remains partial.
+
+
+## Ordinary advanced numerical GPU status descriptor and qualification
+
+The native status caller now inspects the fixed GPU descriptor, V2 GPU
+configuration and actual five-role qualification documents. It recomputes the
+original GPU runtime authority hash from all 15 runtime fields, binds the exact
+container image digest, requested GPU selector and forbidden CPU fallback, and
+retains the original configuration/error precedence. The declared shared-device
+isolation and non-enforced VRAM scope are preserved in full. This is local
+configuration/document inspection: it does not execute Docker, allocate a GPU,
+prove device capacity, or establish scientific or publication authority.
+
+GPU check2 has eight actual zero-exit stages, 19 non-ignored test bodies, 21
+complete original CPU and 21 complete original GPU qualification values/errors,
+and 29 complete raw normal stdout/exit pairs. Original descriptor JSON field
+order is parsed from actual Node bytes before hash verification. Both service
+all-target and seven-flag production clippy pass. The private source 4148 records
+and nine qualified tools have identical full raw metadata before/after.
+
+The same AtomicBool, absolute 120-second deadline, held file identities, bounded
+record/parser/serializer limits and post-wire currentness remain. The packet is
+a six-path minimal delta on the separately frozen CPU V2 stage2 prerequisite;
+current Root observations are recorded separately and are not those prerequisite
+preimages. It provides source-only evidence, not current-head, merge, installed
+host, actual GPU/run, live account, or whole-route acceptance. Prior descriptor
+fixture failure and actual Node run/BOM refusal remain retained.
+
+
+## Actual CPU runtime closure input correction
+
+The original numerical CPU runner supplied `signed-plugin-descriptor` as a BOM
+package-closure basis, while the original V2 BOM contract rejects that value.
+The worker engine now derives an explicit content manifest only after its
+existing owners have materialized and verified the actual executable and exact
+source/work snapshots. The manifest binds those observed hashes and records the
+signed package-closure declaration separately. It observes zero system packages
+and does not claim a complete system package closure, bitwise rebuild, scientific
+qualification, activation, publication or submission authority.
+
+A real ordinary Node CPU run through the existing bwrap/prlimit sandbox generated
+a verified result; a fresh same-request retry refused the pre-existing result and
+retained its full bytes/inode/mode/timestamps. The two new test bodies and all
+eleven original runner bodies passed, with all four changed Node files passing
+qualified ESLint. The original BOM rejection, two real namespace EAGAIN attempts
+and Rust request-contract coercion failure are retained separately. The positive
+local signed fixture uses maximumProcesses=8192 under the existing descriptor
+schema; it is not evidence for every process-limit value or real account/hardware
+qualification. Native CPU execution is still a separate unfinished composition.
+
+The frozen packet has three new Node files and one minimal engine patch. It
+retains actual complete output and guards all source inputs and qualified tools.
+The independent private source observations do not qualify current canonical
+head, prospective merge, installed host or the complete operator route.

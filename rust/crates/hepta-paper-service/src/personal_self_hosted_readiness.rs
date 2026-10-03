@@ -22,6 +22,7 @@ use std::{
     io::Read,
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::atomic::Ordering,
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
@@ -75,6 +76,8 @@ pub enum PersonalSelfHostedReadinessError {
     Path,
     #[error("personal self-hosted readiness clock is invalid")]
     Clock,
+    #[error("personal readiness observation was cancelled or expired")]
+    Control,
     #[error("personal self-hosted readiness hash failed")]
     Hash,
     #[error("personal self-hosted readiness filesystem operation failed")]
@@ -120,11 +123,36 @@ fn sqlite_immutable_uri(path: &Path) -> String {
 /// is insufficient when SQLite has a WAL or when the backup normalizes page
 /// state, so the snapshot is created in a private temporary directory and
 /// removed before the caller publishes its report.
-fn consistent_database_hash(db_path: &Path) -> Result<String, PersonalSelfHostedReadinessError> {
+fn consistent_database_hash(
+    db_path: &Path,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
+) -> Result<String, PersonalSelfHostedReadinessError> {
+    checkpoint(control)?;
+    const MAX_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
     let source_before =
         fs::symlink_metadata(db_path).map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
-    let source_header =
-        fs::read(db_path).map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
+    if !source_before.is_file()
+        || source_before.nlink() != 1
+        || source_before.len() > MAX_DATABASE_BYTES
+    {
+        return Err(PersonalSelfHostedReadinessError::Filesystem);
+    }
+    let mut held = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
+        .open(db_path)
+        .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
+    if !same_metadata(
+        &source_before,
+        &held
+            .metadata()
+            .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?,
+    ) {
+        return Err(PersonalSelfHostedReadinessError::Filesystem);
+    }
+    let mut header = [0u8; 100];
+    held.read_exact(&mut header)
+        .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?
@@ -137,6 +165,7 @@ fn consistent_database_hash(db_path: &Path) -> Result<String, PersonalSelfHosted
         .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
     let snapshot = root.join("snapshot.sqlite");
     let result = (|| {
+        checkpoint(control)?;
         let source = Connection::open_with_flags(
             sqlite_immutable_uri(db_path),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
@@ -147,30 +176,91 @@ fn consistent_database_hash(db_path: &Path) -> Result<String, PersonalSelfHosted
         {
             let backup = rusqlite::backup::Backup::new(&source, &mut target)
                 .map_err(|_| PersonalSelfHostedReadinessError::Database)?;
-            backup
-                .run_to_completion(128, std::time::Duration::ZERO, None)
-                .map_err(|_| PersonalSelfHostedReadinessError::Database)?;
+            loop {
+                checkpoint(control)?;
+                match backup
+                    .step(128)
+                    .map_err(|_| PersonalSelfHostedReadinessError::Database)?
+                {
+                    rusqlite::backup::StepResult::Done => break,
+                    rusqlite::backup::StepResult::More => (),
+                    _ => return Err(PersonalSelfHostedReadinessError::Database),
+                }
+            }
         }
         drop(target);
         drop(source);
-        let source_after = fs::symlink_metadata(db_path)
-            .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
-        if !same_metadata(&source_before, &source_after) {
+        checkpoint(control)?;
+        if !same_metadata(
+            &source_before,
+            &held
+                .metadata()
+                .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?,
+        ) || !same_metadata(
+            &source_before,
+            &fs::symlink_metadata(db_path)
+                .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?,
+        ) {
             return Err(PersonalSelfHostedReadinessError::Filesystem);
         }
-        let mut bytes =
-            fs::read(&snapshot).map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
-        // SQLite stores the library build number in the page-one header. The
-        // incumbent Node backup preserves the source stamp while the bundled
-        // Rust SQLite library rewrites it during backup. Preserve those four
-        // header bytes in the temporary hash image so an identical logical
-        // snapshot has the same cross-runtime digest.
-        if source_header.len() >= 100 && bytes.len() >= 100 {
-            bytes[96..100].copy_from_slice(&source_header[96..100]);
+        let mut captured = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
+            .open(&snapshot)
+            .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
+        let before = captured
+            .metadata()
+            .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
+        if !before.is_file() || before.nlink() != 1 || before.len() > MAX_DATABASE_BYTES {
+            return Err(PersonalSelfHostedReadinessError::Filesystem);
         }
-        Ok(sha256(&bytes))
+        let mut digest = Sha256::new();
+        let mut count = 0u64;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            checkpoint(control)?;
+            let capacity = (before.len() - count).min(buffer.len() as u64) as usize;
+            if capacity == 0 {
+                break;
+            }
+            let read = captured
+                .read(&mut buffer[..capacity])
+                .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?;
+            if read == 0 {
+                break;
+            }
+            // Preserve the exact original Node page-one library stamp, without
+            // buffering a complete database in memory.
+            for index in 96..100 {
+                if count <= index && index < count + read as u64 {
+                    buffer[(index - count) as usize] = header[index as usize];
+                }
+            }
+            digest.update(&buffer[..read]);
+            count += read as u64;
+        }
+        if count != before.len()
+            || !same_metadata(
+                &before,
+                &captured
+                    .metadata()
+                    .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?,
+            )
+            || !same_metadata(
+                &before,
+                &fs::symlink_metadata(&snapshot)
+                    .map_err(|_| PersonalSelfHostedReadinessError::Filesystem)?,
+            )
+        {
+            return Err(PersonalSelfHostedReadinessError::Filesystem);
+        }
+        checkpoint(control)?;
+        Ok(format!("sha256:{:x}", digest.finalize()))
     })();
-    let _ = fs::remove_dir_all(&root);
+    let cleanup = fs::remove_dir_all(&root);
+    if cleanup.is_err() {
+        return Err(PersonalSelfHostedReadinessError::Filesystem);
+    }
     result
 }
 
@@ -417,8 +507,35 @@ fn inspect_runtime_boundary(workspace_root: &Path, runtime_root: &Path) -> Value
 fn inspect_provenance(
     workspace_root: &Path,
     observed_at: &str,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
 ) -> Result<(Option<Value>, Value), PersonalSelfHostedReadinessError> {
-    match operational_status::current_operational_code_provenance_v1(workspace_root) {
+    checkpoint(control)?;
+    let result = match control {
+        Some(control) => {
+            // Incumbent provenance canonicalizes its root before any Git
+            // query. Preserve actual syscall errors for the ordinary report;
+            // do not turn an absent root into a generic source-read failure.
+            fs::canonicalize(workspace_root)
+                .map_err(|error| {
+                    error.raw_os_error().map_or_else(
+                        || "code_provenance_entry_read_failed".to_owned(),
+                        |code| format!("{:?}", nix::errno::Errno::from_raw(code)),
+                    )
+                })
+                .and_then(|_| {
+                    operational_status::current_operational_code_provenance_with_deadline_v1(
+                        workspace_root,
+                        &control.cancelled,
+                        control.deadline,
+                    )
+                    .map_err(|error| error.to_string())
+                })
+        }
+        None => operational_status::current_operational_code_provenance_v1(workspace_root)
+            .map_err(|error| error.to_string()),
+    };
+    checkpoint(control)?;
+    match result {
         Ok(provenance) => {
             let clean = provenance["treeDirty"] == false
                 && provenance["indexStateHash"] == EMPTY_INDEX_HASH;
@@ -454,17 +571,33 @@ fn inspect_provenance(
     }
 }
 
+fn observed_receipt_path(
+    path: &Path,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
+) -> Option<PathBuf> {
+    match control {
+        Some(control) => crate::native_workspace::resolve_native_workspace_root_v1(
+            &control.worker_root,
+            path,
+            None,
+        )
+        .ok(),
+        None => Some(path.to_owned()),
+    }
+}
+
 fn inspect_formal(
     runtime_root: &Path,
     environment: &BTreeMap<String, String>,
     provenance: Option<&Value>,
     observed_at: &str,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
 ) -> Result<Value, PersonalSelfHostedReadinessError> {
     let path = environment
         .get("HEPTA_FORMAL_OPERATIONAL_RECEIPT")
         .map(PathBuf::from)
         .unwrap_or_else(|| runtime_root.join("formal-operational/formal-operational-receipt.json"));
-    let value = read_private_json(&path);
+    let value = observed_receipt_path(&path, control).and_then(|actual| read_private_json(&actual));
     let projection =
         personal_self_hosted_formal::inspect_formal_receipt(value.as_ref(), provenance);
     let details = json!({
@@ -774,7 +907,10 @@ fn inspect_backup_and_restore(
     (None, None, blockers)
 }
 
-fn inspect_database(runtime_root: &Path) -> (bool, Value, bool, bool, bool) {
+fn inspect_database(
+    runtime_root: &Path,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
+) -> (bool, Value, bool, bool, bool) {
     let db_path = runtime_root.join(DATABASE_RELATIVE_PATH);
     // The Node inspector validates the runtime directory before touching the
     // native store.  Preserve that catch boundary so a missing or unsafe root
@@ -833,12 +969,28 @@ fn inspect_database(runtime_root: &Path) -> (bool, Value, bool, bool, bool) {
     let mut leases = json!({"jobs":0,"campaigns":0,"submissions":0});
     let mut current_hash = None;
     if safe_file {
-        match consistent_database_hash(&db_path) {
+        match consistent_database_hash(&db_path, control) {
             Ok(hash) => current_hash = Some(hash),
             Err(_) => blockers.push("personal_database_snapshot_failed".to_owned()),
         }
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI;
-        if let Ok(connection) = Connection::open_with_flags(sqlite_immutable_uri(&db_path), flags) {
+        let opened = Connection::open_with_flags(sqlite_immutable_uri(&db_path), flags).and_then(
+            |connection| {
+                if let Some(control) = control {
+                    let cancelled = std::sync::Arc::clone(&control.cancelled);
+                    let deadline = control.deadline;
+                    connection.progress_handler(
+                        1000,
+                        Some(move || {
+                            cancelled.load(Ordering::Acquire)
+                                || std::time::Instant::now() >= deadline
+                        }),
+                    )?;
+                }
+                Ok(connection)
+            },
+        );
+        if let Ok(connection) = opened {
             quick_check = connection
                 .query_row("PRAGMA quick_check;", [], |row| row.get::<_, String>(0))
                 .map(Value::String)
@@ -1031,13 +1183,16 @@ fn inspect_cpu(
     provenance: Option<&Value>,
     observed_at: &str,
     observed_ms: i64,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
 ) -> Result<Value, PersonalSelfHostedReadinessError> {
     let path = environment
         .get("HEPTA_PERSONAL_CPU_RECEIPT")
         .or_else(|| environment.get("HEPTA_PERSONAL_GPU_RECEIPT"))
         .map(PathBuf::from)
         .unwrap_or_else(|| runtime_root.join("gpu-personal/personal-gpu-operational-receipt.json"));
-    let (receipt, wire_valid) = read_private_gpu_json(&path);
+    let (receipt, wire_valid) = observed_receipt_path(&path, control)
+        .map(|actual| read_private_gpu_json(&actual))
+        .unwrap_or((None, false));
     let created_ms = receipt
         .as_ref()
         .and_then(|v| v.get("createdAtEpochMs"))
@@ -1115,6 +1270,7 @@ fn inspect_gpu(
     observed_at: &str,
     observed_ms: i64,
     enabled: bool,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
 ) -> Value {
     let path = environment
         .get("HEPTA_PERSONAL_GPU_RECEIPT")
@@ -1127,7 +1283,9 @@ fn inspect_gpu(
             "observedAt":observed_at,"disabledReason":environment.get("HEPTA_PERSONAL_GPU_DISABLED_REASON").cloned().unwrap_or_else(|| "GPU capability is not enabled; CPU readiness is evaluated separately from the process-isolated CPU oracle receipt.".into()),"receiptPath":path,
         });
     }
-    let (receipt, wire_valid) = read_private_gpu_json(&path);
+    let (receipt, wire_valid) = observed_receipt_path(&path, control)
+        .map(|actual| read_private_gpu_json(&actual))
+        .unwrap_or((None, false));
     let created_ms = receipt
         .as_ref()
         .and_then(|v| v.get("createdAtEpochMs"))
@@ -1275,9 +1433,39 @@ pub fn personal_self_hosted_readiness_help_json_v1() -> Value {
 pub fn inspect_personal_self_hosted_readiness_v1(
     options: &PersonalSelfHostedReadinessOptions,
 ) -> Result<Value, PersonalSelfHostedReadinessError> {
-    let observed_ms = now_millis(&options.observed_at)?;
+    inspect_personal_readiness_inner(options, None)
+}
+
+pub(crate) fn inspect_personal_self_hosted_readiness_with_control_v1(
+    options: &PersonalSelfHostedReadinessOptions,
+    control: &crate::personal_self_hosted_cli::PersonalReadinessControlV1,
+) -> Result<Value, PersonalSelfHostedReadinessError> {
+    inspect_personal_readiness_inner(options, Some(control))
+}
+fn checkpoint(
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
+) -> Result<(), PersonalSelfHostedReadinessError> {
+    if let Some(control) = control {
+        control
+            .checkpoint()
+            .map_err(|_| PersonalSelfHostedReadinessError::Control)?;
+    }
+    Ok(())
+}
+fn inspect_personal_readiness_inner(
+    options: &PersonalSelfHostedReadinessOptions,
+    control: Option<&crate::personal_self_hosted_cli::PersonalReadinessControlV1>,
+) -> Result<Value, PersonalSelfHostedReadinessError> {
+    checkpoint(control)?;
+    let observed_ms = if control.is_some() {
+        crate::store_status::passive_node_date_parse_millis_v1(&options.observed_at)
+            .ok_or(PersonalSelfHostedReadinessError::Clock)?
+    } else {
+        now_millis(&options.observed_at)?
+    };
     let (provenance, provenance_evidence) =
-        inspect_provenance(&options.workspace_root, &options.observed_at)?;
+        inspect_provenance(&options.workspace_root, &options.observed_at, control)?;
+    checkpoint(control)?;
     let mut controls = BTreeMap::new();
     controls.insert("exact-code-provenance", provenance_evidence);
     controls.insert(
@@ -1287,6 +1475,7 @@ pub fn inspect_personal_self_hosted_readiness_v1(
             &options.environment,
             provenance.as_ref(),
             &options.observed_at,
+            control,
         )?,
     );
     let runtime_meta = fs::symlink_metadata(&options.runtime_root).ok();
@@ -1294,12 +1483,22 @@ pub fn inspect_personal_self_hosted_readiness_v1(
         .as_ref()
         .is_some_and(|_| private_directory(&options.runtime_root));
     let boundary = inspect_runtime_boundary(&options.workspace_root, &options.runtime_root);
-    let source_ready = inspect_source_security(&options.workspace_root);
+    checkpoint(control)?;
+    let source_observation = match control {
+        Some(control) => crate::personal_self_hosted_source::inspect_source_security_with_control(
+            &options.workspace_root,
+            &control.cancelled,
+            control.deadline,
+        ),
+        None => Some(inspect_source_security(&options.workspace_root)),
+    };
+    let source_ready = source_observation == Some(true);
+    checkpoint(control)?;
     let credential_details = json!({
         "privateKeyMaterialAbsent":source_ready,
         "secretLeakScanPassed":source_ready,
         "runtimeOwnerOnly":runtime_owner_only,
-        "sourceScanStatus":if source_ready {"tracked_secret_scan_ready"} else {"tracked_secret_scan_blocked"},
+        "sourceScanStatus":match source_observation {Some(true)=>"tracked_secret_scan_ready",Some(false)=>"tracked_secret_scan_blocked",None=>"unavailable"},
         "runtimeMode":runtime_meta.as_ref().map(|v|Value::from(v.mode() & 0o7777)).unwrap_or(Value::Null),
         "runtimeUid":runtime_meta.as_ref().map(|v|Value::from(MetadataExt::uid(v))).unwrap_or(Value::Null),
         "runtimePhysicallyDecoupled":boundary["physicallyDecoupled"].clone(),
@@ -1313,7 +1512,8 @@ pub fn inspect_personal_self_hosted_readiness_v1(
             blocked_evidence(credential_details, &options.observed_at)?
         },
     );
-    let (_db_ready, db, _a, _b, _has_hash) = inspect_database(&options.runtime_root);
+    let (_db_ready, db, _a, _b, _has_hash) = inspect_database(&options.runtime_root, control);
+    checkpoint(control)?;
     let db_ready = db["ready"] == true;
     let db_details = json!({"inventoryReady":db_ready,"databaseCount":1,"databaseReadyCount":if db_ready {1} else {0},"schemaVersion":db["schemaVersion"].clone(),"minimumSchemaVersion":MIN_SCHEMA_VERSION,"quickCheck":db["quickCheck"].clone(),"foreignKeyViolationCount":db["foreignKeyViolationCount"].clone(),"blockers":db["blockers"].clone()});
     controls.insert(
@@ -1347,12 +1547,14 @@ pub fn inspect_personal_self_hosted_readiness_v1(
             blocked_evidence(anti_details, &options.observed_at)?
         },
     );
+    checkpoint(control)?;
     let cpu = inspect_cpu(
         &options.runtime_root,
         &options.environment,
         provenance.as_ref(),
         &options.observed_at,
         observed_ms,
+        control,
     )?;
     let gpu = inspect_gpu(
         &options.runtime_root,
@@ -1361,6 +1563,7 @@ pub fn inspect_personal_self_hosted_readiness_v1(
         &options.observed_at,
         observed_ms,
         options.gpu_enabled,
+        control,
     );
     let capabilities = if options.gpu_enabled {
         vec!["cpu", "gpu"]
@@ -1377,6 +1580,7 @@ pub fn inspect_personal_self_hosted_readiness_v1(
             blocked_evidence(scientific_details.clone(), &options.observed_at)?
         },
     );
+    checkpoint(control)?;
     let scientific = json!({"enabledCapabilities":capabilities,"cpu":{"status":cpu["status"].clone(),"deterministicReplay":cpu["deterministicReplay"].clone(),"errorBudgetVerified":cpu["errorBudgetVerified"].clone(),"modelDataCheckpointIrBound":cpu["modelDataCheckpointIrBound"].clone(),"evidenceHash":cpu["evidenceHash"].clone(),"observedAt":cpu["observedAt"].clone()},"gpu":gpu});
     let mut control_results = Map::new();
     let mut blockers = Vec::new();
@@ -1415,6 +1619,7 @@ pub fn inspect_personal_self_hosted_readiness_v1(
         "personalSelfHostedProductionReady":blockers.is_empty(),"productionScope":"single-user-private-local-only","distributionReady":false,"externalQualificationRequired":false,"externalActionsPerformed":false,"observedAt":options.observed_at,
         "notApplicableControls":not_applicable,"controlResults":Value::Object(control_results),"optionalDiagnostics":{"local-slo-alert-policy":{"status":if runtime_owner_only && db_ready {"locally_observed"} else {"attention"},"blocking":false,"automatic":true,"runtimeOwnerOnly":runtime_owner_only,"databaseReady":db_ready,"missingDataAlertsExercised":false,"note":"Optional local health diagnostic; no hand-authored receipt is required."}},"scientificCapabilities":scientific,"blockers":blockers,
     });
+    checkpoint(control)?;
     let mut report = payload.clone();
     report["personalSelfHostedProductionReadinessHash"] = Value::String(hash_record(
         "PersonalSelfHostedProductionReadiness",

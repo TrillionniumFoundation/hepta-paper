@@ -73,9 +73,9 @@ struct InstallationContext {
 /// Retains the root maintenance lock and all ten exclusive database transactions.
 /// It is neither externally finalized nor an active runtime capability.
 pub struct InstalledSchemaMaintenanceV1 {
-    context: InstallationContext,
     databases: Vec<LockedSchemaDatabase>,
     expected: Vec<ExpectedDatabase>,
+    context: InstallationContext,
 }
 impl InstalledSchemaMaintenanceV1 {
     pub fn records(&self) -> &Value {
@@ -247,11 +247,13 @@ fn health(database: &Connection, expected_schema: &Value) -> Result<()> {
     )
 }
 fn prepare_expected(
-    context: &InstallationContext,
+    lock: &SchemaMaintenanceLock,
+    journal: &Value,
+    reservation: &VerifiedMutationReceiptV1,
     options: &SchemaInstallationOptionsV1<'_>,
 ) -> Result<Vec<ExpectedDatabase>> {
-    let repo = InstallationPreimages::open(&context.lock, &context.journal["plan"], false)?;
-    let plan = &context.journal["plan"];
+    let repo = InstallationPreimages::open(lock, &journal["plan"], false)?;
+    let plan = &journal["plan"];
     let mut result = Vec::new();
     let mut inspections = Vec::new();
     let mut total_bytes = 0u64;
@@ -277,7 +279,7 @@ fn prepare_expected(
             Some(text(plan, "plannedAt")?),
         )?;
         apply_schema_transition_statements_v1(&mut after, &target)?;
-        metadata::install(&after, plan, row, context.reservation.value())?;
+        metadata::install(&after, plan, row, reservation.value())?;
         health(&after, &row["expectedPostSchemaHash"])?;
         total_bytes = total_bytes
             .checked_add(page_bytes(&after)?)
@@ -299,7 +301,7 @@ fn prepare_expected(
         };
         let record = metadata::record(
             plan,
-            context.reservation.value(),
+            reservation.value(),
             row,
             post.as_ref()
                 .and_then(|v| v.value()["pristineStateHash"].as_str()),
@@ -327,8 +329,19 @@ fn execute<T: MutationAuthorityTransportV1>(
     options: SchemaInstallationOptionsV1<'_>,
     checkpoint: &mut dyn SchemaInstallationCheckpointV1,
 ) -> Result<InstalledSchemaMaintenanceV1> {
+    // Once a finalization intent exists, installation is no longer the owning
+    // phase. Recovery must select that exact request, never re-enter DDL/DML.
+    ensure(
+        context.journal.get("finalizationProgress").is_none(),
+        "autonomous_research_online_schema_transition_finalization_recovery_required",
+    )?;
     guard(&mut context, &[], authority, clock)?;
-    let expected = prepare_expected(&context, &options)?;
+    let expected = prepare_expected(
+        &context.lock,
+        &context.journal,
+        &context.reservation,
+        &options,
+    )?;
     guard(&mut context, &[], authority, clock)?;
     let rows = context.journal["plan"]["instances"]
         .as_array()
@@ -484,6 +497,13 @@ pub fn resume_schema_installation_v1<T: MutationAuthorityTransportV1>(
     clock: &mut dyn MutationClockV1,
     checkpoint: &mut dyn SchemaInstallationCheckpointV1,
 ) -> Result<InstalledSchemaMaintenanceV1> {
+    // Match normalization recovery: an absent/malformed independent pin is
+    // not a selected recovery operation. Reject before observing sources,
+    // competing for the real maintenance lock, or sampling a caller clock.
+    ensure(
+        crate::sqlite_mutation_coordinator::sha(&json!(options.expected_plan_hash)),
+        "autonomous_research_online_schema_transition_installation_plan_pin_invalid",
+    )?;
     let inventory =
         inspect_state_database_inventory_v1(options.runtime_root, options.state_database_manifest)?;
     let first = inventory["instances"]
@@ -543,6 +563,103 @@ pub fn resume_schema_installation_v1<T: MutationAuthorityTransportV1>(
         margin: options.installation.commit_safety_margin_ms,
     };
     execute(context, authority, clock, options.installation, checkpoint)
+}
+
+/// Verify complete logical post-state from the original signed normalized
+/// preimages. Schema hashes and serialized installation flags alone are not
+/// evidence that business rows were preserved.
+pub(super) fn verify_finalization_post_state(
+    lock: &SchemaMaintenanceLock,
+    journal: &Value,
+    reservation: &VerifiedMutationReceiptV1,
+    inventory: &crate::state_database_inventory::ObservedStateDatabaseInventoryV1,
+) -> Result<()> {
+    let expected = prepare_expected(
+        lock,
+        journal,
+        reservation,
+        &SchemaInstallationOptionsV1::default(),
+    )?;
+    let records: Vec<_> = expected
+        .iter()
+        .map(|database| database.record.clone())
+        .collect();
+    ensure(
+        journal["installations"] == json!(records),
+        "autonomous_research_online_schema_transition_finalization_installations_invalid",
+    )?;
+    let rows = journal["plan"]["instances"]
+        .as_array()
+        .ok_or_else(invalid)?;
+    for (row, expected) in rows.iter().zip(&expected) {
+        inventory.with_database_snapshot(text(row, "databaseInstanceId")?, |path| {
+            let actual = Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            )?;
+            actual.busy_timeout(std::time::Duration::ZERO)?;
+            actual.pragma_update(None, "trusted_schema", false)?;
+            actual.execute_batch("BEGIN DEFERRED")?;
+            state::compare_installation_state_v1(&expected.after, &actual)
+        })?;
+        expected.preimage.assert_current()?;
+    }
+    inventory.assert_current()?;
+    lock.assert_current()
+}
+
+pub(super) struct FinalizationHandoff {
+    pub journal: Value,
+    pub journal_hash: String,
+    pub reservation: VerifiedMutationReceiptV1,
+    pub post_state: super::finalization::SchemaTransitionPostStateV1,
+    // Keep the same maintenance owner while closing installation transactions
+    // and observing their committed post-state. It is released last.
+    pub lock: SchemaMaintenanceLock,
+}
+impl InstalledSchemaMaintenanceV1 {
+    pub(super) fn into_finalization<T: MutationAuthorityTransportV1>(
+        mut self,
+        authority: &PinnedMutationAuthorityV1<T>,
+        clock: &mut dyn MutationClockV1,
+    ) -> Result<FinalizationHandoff> {
+        // Both v1 and pristine v2 install/finalize under the source authority.
+        // V2 stops at a separately persisted target-configuration observation;
+        // allowing finalization here does not claim that restart has occurred.
+        ensure(
+            [json!(1), json!(2)].contains(&self.plan()["version"]),
+            "autonomous_research_online_schema_transition_installation_invalid",
+        )?;
+        self.assert_current(authority, clock)?;
+        let Self {
+            context,
+            databases,
+            expected,
+        } = self;
+        drop(databases);
+        drop(expected);
+        let post_state = super::finalization::observe_schema_transition_post_state_v1(
+            context.lock.runtime_root()?,
+            &context.manifest,
+            &context.journal["plan"],
+            &context.journal["installations"],
+            None,
+        )?;
+        verify_finalization_post_state(
+            &context.lock,
+            &context.journal,
+            &context.reservation,
+            post_state.held_inventory(),
+        )?;
+        Ok(FinalizationHandoff {
+            journal: context.journal,
+            journal_hash: context.journal_hash,
+            reservation: context.reservation,
+            post_state,
+            lock: context.lock,
+        })
+    }
 }
 
 #[cfg(test)]

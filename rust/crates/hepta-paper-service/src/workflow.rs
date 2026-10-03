@@ -5,8 +5,8 @@
 //! workers are trusted local code, not a security sandbox or live-model grant.
 
 use crate::{
-    NativeJobV1, ObjectStoreV1, ServiceError, ServiceRunV1, WorkerBindingV1,
-    run_service_with_clock_and_cancellation_v1,
+    NativeJobV1, ObjectStoreV1, ResearchWorkflowProfileV1, ServiceError, ServiceRunV1,
+    WorkerBindingV1, run_service_with_clock_and_cancellation_v1,
 };
 use hepta_campaign_writer::{
     CampaignSnapshotV1, CampaignStateV1, CampaignWriterPolicyV1, CampaignWriterStoreV1,
@@ -37,6 +37,7 @@ use std::{
 };
 use thiserror::Error;
 
+mod provider_calls;
 mod recovery;
 pub(crate) use recovery::{prepared_recovery_facts_at, recovery_facts_at};
 mod amendment;
@@ -60,9 +61,38 @@ const MAX_STEPS: usize = 128;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalWorkflowV1 {
     pub version: u16,
+    /// Optional versioned lifecycle ceiling. Omitted fields preserve every old
+    /// V1 definition/hash; a present ceiling remains part of the immutable
+    /// definition across every ordinary, flat and research operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_call_budget: Option<WorkflowProviderCallBudgetV1>,
+    /// Optional durable research-only identity. The record is not authority;
+    /// every advancing invocation must present the matching opaque V3 value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub research_profile: Option<ResearchWorkflowProfileV1>,
     /// Initial local service configuration with an empty frontier.
     pub template: ServiceRunV1,
     pub steps: Vec<WorkflowStepV1>,
+}
+
+/// Non-authorizing maximum lifecycle provider reservations, not simultaneous
+/// planner capacity. The existing workflow history owns all counting facts.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowProviderCallBudgetV1 {
+    pub version: u16,
+    pub maximum_calls: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowProviderCallUsageV1 {
+    pub version: u16,
+    pub maximum_calls: u64,
+    pub committed_calls: u64,
+    /// Includes one frozen pending step, even if its response is unknown.
+    /// Reading/querying that step never creates another reservation.
+    pub reserved_calls: u64,
 }
 
 /// Input bindings use artifact order in the canonical PreparedResult, not worker
@@ -143,6 +173,8 @@ pub struct WorkflowProgressV1 {
     pub committed_steps: usize,
     pub total_steps: usize,
     pub budget_remaining_microusd: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_call_usage: Option<WorkflowProviderCallUsageV1>,
     pub artifacts_by_step: BTreeMap<String, Vec<Sha256Digest>>,
     pub pending_step: bool,
     pub gate_rejected: bool,
@@ -170,6 +202,10 @@ pub enum WorkflowError {
     Reconciliation,
     #[error("workflow routing gate rejected")]
     GateRejected,
+    #[error("workflow research qualification missing, stale, or mismatched")]
+    Qualification,
+    #[error("workflow lifecycle provider call budget exhausted")]
+    ProviderCallBudgetExhausted,
     #[error("workflow service execution failed")]
     Service(#[from] ServiceError),
 }
@@ -208,6 +244,13 @@ impl LocalWorkflowV1 {
     pub fn validate(&self) -> Result<(), WorkflowError> {
         let t = &self.template;
         if self.version != 1
+            || self
+                .provider_call_budget
+                .is_some_and(|budget| budget.version != 1 || budget.maximum_calls == 0)
+            || self
+                .research_profile
+                .as_ref()
+                .is_some_and(|profile| !profile.is_well_formed())
             || t.version != 1
             || t.production_activation
             || t.hard_policy.external_actions_authorized
@@ -248,7 +291,11 @@ impl LocalWorkflowV1 {
                 || seen.contains(&step.id)
                 || step.bindings.len() > 32
                 || step.resources.external_actions != 0
-                || step.resources.provider_calls != 0
+                || step.resources.provider_calls
+                    != u64::from(matches!(
+                        t.workers.get(&step.module_id),
+                        Some(WorkerBindingV1::BrokerExecute { .. })
+                    ))
                 || step.resources.central_writer_turns != 0
             {
                 return Err(WorkflowError::Definition);
@@ -261,6 +308,12 @@ impl LocalWorkflowV1 {
             }
             match t.workers.get(&step.module_id) {
                 Some(WorkerBindingV1::Native) => (),
+                Some(
+                    WorkerBindingV1::BrokerPrepared { source }
+                    | WorkerBindingV1::BrokerExecute { source },
+                ) if source.matches_capability(&step.capability_id) => {
+                    source.validate().map_err(|_| WorkflowError::Definition)?;
+                }
                 Some(WorkerBindingV1::Process {
                     network_declared: false,
                     ..
@@ -514,6 +567,9 @@ fn payload(
             NativeJobV1::ArtifactInventory { .. } | NativeJobV1::InspectNodeDatabase { .. },
         ) => (),
         (WorkerBindingV1::Process { .. }, NativeJobV1::Process { .. }) => (),
+        (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
+        | (WorkerBindingV1::BrokerExecute { source }, NativeJobV1::BrokerExecute { input })
+            if source.matches_capability(&step.capability_id) && input.version == 1 => {}
         _ => return Err(WorkflowError::Definition),
     }
     Ok(job)
@@ -566,7 +622,11 @@ fn configuration(
             utility_micros: 1,
             cost_microusd: step.cost_microusd,
             uncertainty_ppm: 0,
-            evidence_tier: QualificationTierV1::Source,
+            evidence_tier: if definition.research_profile.is_some() {
+                QualificationTierV1::TargetHost
+            } else {
+                QualificationTierV1::Source
+            },
             payload_hash: format!("sha256:{}", hex::encode(Sha256::digest(bytes(&job)?)))
                 .parse()
                 .map_err(|_| WorkflowError::Definition)?,
@@ -620,6 +680,53 @@ struct History {
     repair_end: Option<usize>,
     active_definition: LocalWorkflowV1,
     changes: Vec<amendment::AppliedLocalWorkflowChangeV1>,
+}
+
+fn recover_committed_broker_acknowledgements(
+    root: &Path,
+    owner: u32,
+    history: &History,
+    objects: &ObjectStoreV1,
+    clock: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    cancelled: &AtomicBool,
+) -> Result<(), WorkflowError> {
+    if history.results.len() != history.receipts.len() {
+        return Err(WorkflowError::History);
+    }
+    for (index, (result, receipt)) in history.results.iter().zip(&history.receipts).enumerate() {
+        let saved: ServiceRunV1 =
+            serde_json::from_slice(&read_record(&plan_path(root, index), owner)?)
+                .map_err(|_| WorkflowError::History)?;
+        let [candidate] = saved.frontier.candidates.as_slice() else {
+            return Err(WorkflowError::History);
+        };
+        if saved.state_directory != root
+            || candidate.module_id != result.module_id
+            || candidate
+                .candidate_hash()
+                .map_err(|_| WorkflowError::History)?
+                != result.candidate_hash
+        {
+            return Err(WorkflowError::History);
+        }
+        let source = match saved.workers.get(&candidate.module_id) {
+            Some(WorkerBindingV1::BrokerPrepared { source })
+            | Some(WorkerBindingV1::BrokerExecute { source }) => source,
+            Some(WorkerBindingV1::Native | WorkerBindingV1::Process { .. }) => continue,
+            None => return Err(WorkflowError::History),
+        };
+        let Some(target) = crate::broker_prepared::broker_commit_target_from_persisted_result(
+            objects, source, result,
+        )?
+        else {
+            continue;
+        };
+        crate::broker_prepared::acknowledge_committed_result(
+            root, &target, receipt, clock, cancelled,
+        )
+        .map_err(|_| ServiceError::PostCommitAcknowledgement)?;
+    }
+    Ok(())
 }
 fn history(
     definition: &LocalWorkflowV1,
@@ -786,14 +893,15 @@ fn progress(
     definition: &LocalWorkflowV1,
     definition_hash: Sha256Digest,
     history: &History,
-) -> WorkflowProgressV1 {
-    WorkflowProgressV1 {
+) -> Result<WorkflowProgressV1, WorkflowError> {
+    Ok(WorkflowProgressV1 {
         definition_hash,
         campaign_state: history.campaign.state,
         campaign_revision: history.campaign.revision,
         committed_steps: history.results.len(),
         total_steps: definition.steps.len(),
         budget_remaining_microusd: history.campaign.budget_remaining_microusd,
+        provider_call_usage: provider_calls::usage(definition, history)?,
         artifacts_by_step: definition
             .steps
             .iter()
@@ -810,7 +918,7 @@ fn progress(
         production_activation: false,
         scientific_acceptance: false,
         node_retirement_verified: false,
-    }
+    })
 }
 fn set_state(
     definition: &LocalWorkflowV1,
@@ -842,6 +950,99 @@ fn set_state(
         )
         .map_err(|_| WorkflowError::Conflict)?;
     Ok(())
+}
+
+/// Cancel one node in the local sequential workflow without weakening the
+/// existing campaign writer. Committed steps are terminal and replay as no-ops.
+/// Any uncommitted step owns the complete remaining suffix, so cancelling it
+/// terminally fences future admission while retaining pending/prepared evidence.
+pub fn cancel_local_workflow_node_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    step_id: &str,
+    expected_revision: u64,
+    now: u64,
+) -> Result<WorkflowProgressV1, WorkflowError> {
+    cancel_local_workflow_node_with_clock_v1(
+        root,
+        expected_definition,
+        step_id,
+        expected_revision,
+        &mut || Ok(now),
+    )
+}
+
+pub fn cancel_local_workflow_node_with_clock_v1(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    step_id: &str,
+    expected_revision: u64,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+) -> Result<WorkflowProgressV1, WorkflowError> {
+    if !identifier(step_id) {
+        return Err(WorkflowError::Definition);
+    }
+    let owner = private_root(root)?;
+    let _guard = lock(root, owner)?;
+    let original: LocalWorkflowV1 =
+        serde_json::from_slice(&read_record(&root.join("workflow.json"), owner)?)
+            .map_err(|_| WorkflowError::Definition)?;
+    original.validate()?;
+    if original.template.state_directory != root {
+        return Err(WorkflowError::Definition);
+    }
+    private_root(&root.join("objects"))?;
+    private_root(&root.join("attempts"))?;
+    let objects = ObjectStoreV1::open(root)?;
+    let observed = history(&original, owner, &objects)?;
+    let definition = observed.active_definition.clone();
+    if &hash(&definition)? != expected_definition {
+        return Err(WorkflowError::Definition);
+    }
+    let index = definition
+        .steps
+        .iter()
+        .position(|step| step.id == step_id)
+        .ok_or(WorkflowError::Definition)?;
+
+    // Node returns already-terminal nodes unchanged. The local workflow has a
+    // committed terminal prefix, so no clock or revision check is needed here.
+    if index < observed.results.len() {
+        return progress(&definition, expected_definition.clone(), &observed);
+    }
+
+    let mut last = observed.clock_floor;
+    let mut clock = || {
+        let now = observe()?;
+        if now < last || now >= definition.template.writer_lease.expires_at_unix_ms {
+            return Err(ControlPlaneError::PersistenceInvalid);
+        }
+        last = now;
+        Ok(now)
+    };
+    clock().map_err(|_| WorkflowError::Conflict)?;
+    let current = observed.campaign.state;
+    let duplicate = current == CampaignStateV1::Cancelled
+        && expected_revision.checked_add(1) == Some(observed.campaign.revision);
+    if !duplicate {
+        if observed.campaign.revision != expected_revision
+            || matches!(
+                current,
+                CampaignStateV1::Cancelled | CampaignStateV1::Completed
+            )
+        {
+            return Err(WorkflowError::Conflict);
+        }
+        set_state(
+            &definition,
+            owner,
+            expected_revision,
+            CampaignStateV1::Cancelled,
+            &mut clock,
+        )?;
+    }
+    let observed = history(&original, owner, &objects)?;
+    progress(&definition, expected_definition.clone(), &observed)
 }
 
 /// Execute a bounded local operation. Cooperative callers share a nonblocking
@@ -884,6 +1085,35 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
     observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<WorkflowProgressV1, WorkflowError> {
+    operate_local_workflow_with_service_runner_v1(
+        root,
+        expected_definition,
+        action,
+        observe,
+        cancelled,
+        None,
+        |config, clock, cancelled| {
+            run_service_with_clock_and_cancellation_v1(config, clock, cancelled).map(|_| ())
+        },
+    )
+}
+
+pub(crate) fn operate_local_workflow_with_service_runner_v1<F>(
+    root: &Path,
+    expected_definition: &Sha256Digest,
+    action: WorkflowActionV1,
+    observe: &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+    research_profile: Option<&ResearchWorkflowProfileV1>,
+    mut service_runner: F,
+) -> Result<WorkflowProgressV1, WorkflowError>
+where
+    F: FnMut(
+        ServiceRunV1,
+        &mut dyn FnMut() -> Result<u64, ControlPlaneError>,
+        Arc<AtomicBool>,
+    ) -> Result<(), ServiceError>,
+{
     let owner = private_root(root)?;
     let _guard = lock(root, owner)?;
     let definition: LocalWorkflowV1 =
@@ -902,6 +1132,13 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
     let definition = observed.active_definition.clone();
     if &hash(&definition)? != expected_definition {
         return Err(WorkflowError::Definition);
+    }
+    if matches!(action, WorkflowActionV1::Advance { .. }) {
+        match (&definition.research_profile, research_profile) {
+            (None, None) => {}
+            (Some(expected), Some(actual)) if expected == actual => {}
+            _ => return Err(WorkflowError::Qualification),
+        }
     }
     let mut last = observed.clock_floor;
     let mut clock = || {
@@ -927,6 +1164,13 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
             if through_steps == 0 || through_steps > definition.steps.len() {
                 return Err(WorkflowError::Definition);
             }
+            // A sequencer commit can outlive an ACK response. Reconcile every
+            // committed broker fact before gate handling or later-step admission.
+            // This path reads the frozen plan and CAS evidence, never dispatches
+            // a provider, and writes only the existing post-commit ACK marker.
+            recover_committed_broker_acknowledgements(
+                root, owner, &observed, &objects, &mut clock, &cancelled,
+            )?;
             if observed.rejected
                 && observed
                     .repair_end
@@ -940,6 +1184,10 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
                 }
                 let now = clock().map_err(|_| WorkflowError::Conflict)?;
                 let index = observed.results.len();
+                // First admission and all recovery paths share this owner and
+                // lock. A query-only retry revisits the same pending index;
+                // it is not another lifecycle provider reservation.
+                provider_calls::admit(&definition, &observed, index)?;
                 let path = plan_path(root, index);
                 let job = payload(&definition, index, &observed.results, &objects)?;
                 objects.put(&bytes(&job)?)?;
@@ -973,11 +1221,7 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
                     write_record(&path, &bytes(&config)?)?;
                 }
                 config.observed_at_unix_ms = now;
-                run_service_with_clock_and_cancellation_v1(
-                    config,
-                    &mut clock,
-                    Arc::clone(&cancelled),
-                )?;
+                service_runner(config, &mut clock, Arc::clone(&cancelled))?;
                 observed = history(&original, owner, &objects)?;
                 if observed.results.len() != index + 1 {
                     return Err(WorkflowError::History);
@@ -1034,9 +1278,5 @@ pub fn operate_local_workflow_with_clock_and_cancellation_v1(
         }
     }
     let observed = history(&original, owner, &objects)?;
-    Ok(progress(
-        &definition,
-        expected_definition.clone(),
-        &observed,
-    ))
+    progress(&definition, expected_definition.clone(), &observed)
 }

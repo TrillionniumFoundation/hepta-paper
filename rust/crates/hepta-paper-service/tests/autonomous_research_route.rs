@@ -1,3 +1,5 @@
+#[path = "autonomous_research_route/campaign.rs"]
+mod campaign;
 use serde_json::Value;
 use std::process::Command;
 

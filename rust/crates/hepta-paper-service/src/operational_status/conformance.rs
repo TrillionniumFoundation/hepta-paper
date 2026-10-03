@@ -5,9 +5,7 @@ use super::{
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::{self, OpenOptions},
-    io::Read,
-    os::unix::fs::OpenOptionsExt,
+    fs,
     path::{Component, Path, PathBuf},
 };
 
@@ -26,7 +24,7 @@ const PROVENANCE_KEYS: &[&str] = &[
     "evidenceEnvironment",
     "evidenceClass",
 ];
-fn provenance_valid(value: &Value) -> bool {
+pub(super) fn provenance_valid(value: &Value) -> bool {
     exact_keys(value, PROVENANCE_KEYS)
         && value["version"] == 2
         && value["kind"] == "CodeProvenance"
@@ -68,7 +66,20 @@ fn exact_provenance(document: &Value, current: &Value, commit: &str) -> bool {
         && record_hash("CapabilityVerificationCodeProvenance", bound)
             .is_ok_and(|digest| document["codeProvenanceHash"] == digest)
 }
-fn production_subject(root: &Path) -> Result<Value> {
+fn production_subject(
+    root: &Path,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<Value> {
+    observation.checkpoint()?;
+    let named_root = if observation.observes_node_imports() {
+        Some((
+            root.to_owned(),
+            fs::symlink_metadata(root)
+                .map_err(|_| error("capability_production_asset_root_invalid"))?,
+        ))
+    } else {
+        None
+    };
     let root =
         fs::canonicalize(root).map_err(|_| error("capability_production_asset_root_invalid"))?;
     let relative = "submission/AoM/A_Theory_of__Expectations/main.tex";
@@ -78,6 +89,9 @@ fn production_subject(root: &Path) -> Result<Value> {
         fs::symlink_metadata(&cursor)
             .map_err(|_| error("capability_production_asset_root_invalid"))?,
     )];
+    if let Some(named) = named_root {
+        identities.insert(0, named);
+    }
     for part in Path::new(relative).components() {
         cursor.push(part);
         let meta = fs::symlink_metadata(&cursor)
@@ -91,38 +105,8 @@ fn production_subject(root: &Path) -> Result<Value> {
         }
         identities.push((cursor.clone(), meta));
     }
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
-        .open(&cursor)
-        .map_err(|_| error("capability_production_source_not_regular"))?;
-    let expected = &identities
-        .last()
-        .ok_or_else(|| error("capability_production_source_not_regular"))?
-        .1;
-    if !files::same(
-        expected,
-        &file
-            .metadata()
-            .map_err(|_| error("capability_production_source_not_regular"))?,
-    ) {
-        return Err(error("capability_production_source_unstable"));
-    }
-    let mut bytes = Vec::new();
-    (&mut file)
-        .take(128 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| error("capability_production_source_not_regular"))?;
-    if bytes.len() as u64 != expected.len()
-        || !files::same(
-            expected,
-            &file
-                .metadata()
-                .map_err(|_| error("capability_production_source_not_regular"))?,
-        )
-    {
-        return Err(error("capability_production_source_unstable"));
-    }
+    let bytes = observation.read_file(&cursor, 128 * 1024 * 1024)?;
+    files::retain_source_identity(&cursor, &identities, observation)?;
     for (path, meta) in identities {
         if !files::same(
             &meta,
@@ -288,21 +272,28 @@ pub(super) fn load(
     provenance: &Value,
     catalog: &[(&str, &str)],
     targets: &BTreeMap<String, Value>,
+    observation: &mut super::bounded::Observation<'_>,
 ) -> Result<BTreeMap<String, (String, String)>> {
+    observation.checkpoint()?;
     if !provenance_valid(provenance) || provenance["treeDirty"] != false {
         return Err(error("conformance_clean_head_required"));
     }
-    let subject = production_subject(asset)?;
+    let subject = production_subject(asset, observation)?;
     let commit = provenance["commit"]
         .as_str()
         .ok_or_else(|| error("conformance_code_provenance_invalid"))?;
-    let trust = files::read(root, &root.join("owner-acceptance/OWNER_TRUST_STORE.json"))?;
-    let manifest = files::read(
+    let trust = files::read_with_observation(
+        root,
+        &root.join("owner-acceptance/OWNER_TRUST_STORE.json"),
+        observation,
+    )?;
+    let manifest = files::read_with_observation(
         root,
         &root.join(format!(
             "conformance-proof/CAPABILITY_CONFORMANCE_REPLAY_MANIFEST_{}.json",
             &commit[..12]
         )),
+        observation,
     )?;
     let doc = &manifest.document;
     let entries = doc["verified"]
@@ -332,6 +323,7 @@ pub(super) fn load(
     let mut verified = BTreeMap::new();
     let mut accepted = Vec::new();
     for entry in entries {
+        observation.checkpoint()?;
         let capability = entry["capabilityId"]
             .as_str()
             .ok_or_else(|| error("conformance_manifest_entry_invalid"))?;
@@ -343,8 +335,16 @@ pub(super) fn load(
                 "conformance_manifest_capability_duplicate_or_unknown",
             ));
         }
-        let receipt = files::read(root, &artifact(root, &entry["receiptPath"])?)?;
-        let evidence = files::read(root, &artifact(root, &entry["evidencePath"])?)?;
+        let receipt = files::read_with_observation(
+            root,
+            &artifact(root, &entry["receiptPath"])?,
+            observation,
+        )?;
+        let evidence = files::read_with_observation(
+            root,
+            &artifact(root, &entry["evidencePath"])?,
+            observation,
+        )?;
         let r = &receipt.document;
         let e = &evidence.document;
         let assurance = receipt_assurance(
@@ -393,7 +393,7 @@ pub(super) fn load(
         accepted.push(receipt);
         accepted.push(evidence);
     }
-    if verified.len() != catalog.len() || production_subject(asset)? != subject {
+    if verified.len() != catalog.len() || production_subject(asset, observation)? != subject {
         return Err(error("conformance_manifest_entry_invalid"));
     }
     // Stronger snapshot retention than the Node v2 conformance loader: receipt
@@ -403,5 +403,6 @@ pub(super) fn load(
     for snapshot in accepted {
         snapshot.assert_current()?;
     }
+    observation.checkpoint()?;
     Ok(verified)
 }

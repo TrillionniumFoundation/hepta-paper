@@ -7,7 +7,7 @@ This native execution stage follows the observed source plan and signed maintena
 The behavioral source is `paper-adapters/automation/autonomous-research-online-schema-transition-journal-normalization.mjs`, with the real schema-source projection, fixed DDL, inventory and Ed25519 contract already ported in the preceding slices. The added public module is `online_schema_execution::maintenance::normalization`:
 
 - `normalize_schema_maintenance_v1` consumes a genuine `QuiescedSchemaMaintenanceV1`; there is no public constructor, deserializer, Boolean permission or arbitrary JSON authority argument.
-- `resume_schema_normalization_v1` accepts an expected transition ID and the actual manifest, writer manifest, pinned authority and clock. The stored journal is untrusted data until all cryptographic, physical and fixed-schema comparisons succeed.
+- `resume_schema_normalization_v1` requires an expected transition ID and independently retained original plan hash, together with the actual manifest, writer manifest, pinned authority and clock. `ResumeSchemaNormalizationOptionsV1::expected_plan_hash` has no optional/default fallback. The stored journal is untrusted data until all cryptographic, physical and fixed-schema comparisons succeed.
 - `NormalizedSchemaMaintenanceV1` retains the maintenance token, root-inode flock, exact journal bytes hash and actual records. Its `assert_current` rechecks both journal and full source evidence and performs the final lease check after file I/O. No SQLite connection is exposed.
 - `SchemaNormalizationCheckpointV1` is an observation/fault checkpoint interface. Its callbacks receive only a point and an instance ID. Return values cannot grant permission or skip verification. An error does not claim rollback of an already completed SQLite checkpoint.
 
@@ -33,7 +33,16 @@ The native progress file is `autonomous-research/online-schema-transition/NORMAL
 
 A new normalization attempt cannot overwrite an existing journal. It must use the explicit recovery entry point. After each database, including after a checkpoint callback and immediately before progress publication, the actual digest and absence of sidecars are rechecked, the full authority/scope guard is repeated, and progress is atomically compared-and-replaced against the previous byte hash. A competing or changed journal fails closed.
 
-After a process crash, recovery takes the real root lock, verifies the signed reservation and current lease, checks the original plan hash and transition ID, rebuilds a real local plan from actual files and the supplied fixed manifests, verifies all immutable subject/schema/pristine/instance/root fields, and requires its reconstructed reserve request to equal the journal request. Current normalized projections must exactly match the original reservation. It then re-observes every database; a completed flag cannot skip a check. Before returning a completed normalization token, every database must physically have the exact normalized digest and no WAL/SHM; merely having a valid future normalization projection is insufficient. An already checkpointed or already normalized file can complete recovery when its real reserved projection matches, even if the process exited before progress publication. If the target schema is already installed, recovery accepts only the current target schema hash, exact registered path/instance/schema contract, pinned file identity and absent sidecars, and emits Node-compatible `alreadyInstalled` records.
+After a process crash, an invalid plan pin is refused before source observation, root-lock enrollment or clock sampling. Recovery takes the real root lock, compares the journal with the independently retained original plan hash and transition ID before reading the clock, verifies the signed reservation and current lease, rebuilds a real local plan from actual files and the supplied fixed manifests, verifies all immutable subject/schema/pristine/instance/root fields, and requires its reconstructed reserve request to equal the journal request. Current normalized projections must exactly match the original reservation. It then re-observes every database; a completed flag cannot skip a check. Before returning a completed normalization token, every database must physically have the exact normalized digest and no WAL/SHM; merely having a valid future normalization projection is insufficient. An already checkpointed or already normalized file can complete recovery when its real reserved projection matches, even if the process exited before progress publication. If the target schema is already installed, recovery accepts only the current target schema hash, exact registered path/instance/schema contract, pinned file identity and absent sidecars, and emits Node-compatible `alreadyInstalled` records.
+
+The stable transition ID is not the complete plan identity: the authority reserve
+request excludes `plannedAt` and `planHash`. Rehashing a substituted plan can keep
+the transition ID and all original signatures valid. Recovery therefore requires
+the same independent original plan pin already required by installation recovery.
+A pin copied from the journal under inspection is not independent. Refusal keeps
+the conflicting journal and database bytes; it does not replan or request another
+reservation. The pin is an identity constraint, not new execution or publication
+authority. Restoring the original journal permits the normal recovery path.
 
 An expired reservation cannot authorize a recovery write. Re-reservation after expiry, finalization and transition to a new normalization cycle require the later schema execution protocol. This slice deliberately preserves the current journal rather than overwriting it with an unrelated operation.
 
@@ -45,22 +54,33 @@ Pinned Node 22.23.1 uses SQLite 3.51.3; current bundled native SQLite is 3.53.2.
 
 Node's v2 `validGenesis` compares generated genesis rows using `JSON.stringify`, which makes object member order observable even when the signed canonical JSON values are unchanged. The native authority API receives `serde_json::Value` and checks those signed semantic values; it does not reproduce that incidental member-order rejection after a Rust Value reserialization. The differential oracle preserves its genuine originally issued Node response object, checks that its complete signed payload and signature exactly match the native input, and invokes the unchanged Node verifier and normalization function with that original object. It does not forge a receipt, modify a source function body or freeze an output snapshot. Exact parity for rejecting alternate genesis member order remains a separate representation gap; successful normalization comparisons do not close it.
 
-## Validation status
+## Executable verification
 
-Focused tests are under `tests/schema_normalization_parity.rs` and the physical helper's `normalization_support/tests.rs`. The oracle invokes the original Node normalization function with real Ed25519 verification and actual temporary ten-database fixtures. It generates private signing keys only in memory; no private key bytes are persisted or logged.
+The [canonical route ledger](../migration/NODE_RUST_GAP_CLOSURE.md) maps the
+normalization, installation and physical-source owners to executable test symbols.
+The existing `native-state-provisioning-source` bundle in
+`docs/system/evidence/rust-functional-source-closure-v1.json` binds this recovery
+owner and its original-plan-pin regressions. Exact commit/tree results belong in
+the existing exact-head and deterministic prospective-merge execution receipts,
+not duplicated historical timings or temporary paths in this contract.
 
-The current tests cover actual original-output comparison, exclusive root lock retention, genuine child-process exit after checkpoint and before progress publication, current-lease refusal on resume, reconstruction from signed stored evidence, malformed signature/request/plan/root refusal, effective WAL data preservation and genuine normalized file SHA. Separate physical tests exercise a second process holding a SQLite writer lock and replacement of stale SHM between its final shared-name snapshot and quarantine.
+`tests/schema_normalization_parity.rs` invokes the original Node normalization
+function with real Ed25519 verification and temporary ten-database fixtures. The
+suite covers both transition versions, original-output comparison, exclusive root
+locks, process death after checkpoint and before progress publication, current
+lease refusal, effective WAL data, exact normalized bytes, signature/request/root
+and plan substitution, state drift and cross-engine refusal before writes.
 
-Validation completed in the isolated native service package:
+The rehashed-plan regression retains the transition ID and valid original
+reservation but alters unsigned `plannedAt`. Recovery must reject that different
+complete plan, preserve all ten databases and the conflicting journal, and then
+resume the restored original journal using the independent pin. Invalid-pin
+coverage requires refusal before source and clock observation. Installation's
+existing child-process recovery receives the original plan hash from its parent,
+not the journal being recovered. Physical-source tests retain actual competing
+SQLite writers, replaced stale SHM and WAL appearance during quarantine.
 
-- Full integration baseline: 8 passed, 0 failed, 223.94 seconds in the current workspace. This includes the already-installed recovery differential, six substantive scenario groups and the separate child-process entry point. It covers actual wall-clock completion under a real signed lease, both real crash locations, both Node versions of the transition, signed Number spelling, adversarial current-state changes and cross-engine refusal before writes.
-- The final small SHM checkpoint hardening repeats authority/clock/WAL checks after the callback and restores rather than deletes if WAL appears after quarantine. Its exact delta is `/tmp/hepta-normalization-final-guard.diff`; the full-seven baseline hashes are recorded in `/tmp/hepta-normalization-seven-test-baseline.json`. After that delta, the affected physical suite passed 4/4 in 6.49 seconds (`/tmp/hepta-normalization-final-physical.log`), including the child entry point and three real race/locking scenarios. The prior seven-group run is not represented as an unperformed full run of this final delta.
-- Final production Clippy passed in 17.39 seconds with `RUSTFLAGS=-Dunsafe-code` and `-D warnings -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic` (`/tmp/hepta-normalization-final-strict.log`). All service library/test targets passed Clippy `-D warnings` in 20.38 seconds (`/tmp/hepta-normalization-all-test-clippy.log`). Oracle ESLint passed under its final `.mjs` filename.
-- `/tmp/hepta-schema-normalization-stable-files.json` records exact current bytes, promotion paths, minimal parent wiring and validation boundaries. Main-workspace integration and its full regression gate remain owned by the root task.
-
-Exact integration symbols: `actual_process_crash_after_checkpoint_and_before_publication_resumes_signed_bytes`, `actual_ten_database_normalization_records_match_node_and_keep_exclusive_lock`, `actual_wall_clock_signed_lease_completes_ten_database_wal_normalization`, `already_installed_normalization_recovery_matches_node`, `cached_scope_rechecks_namespace_inode_sidecars_and_final_lease`, `pristine_rebind_normalization_preserves_verified_genesis_and_matches_node`, and `signed_node_engine_wal_reservation_is_rejected_before_native_source_writes`.
-
-Exact physical symbols: `real_other_process_write_lock_cannot_wait_past_maintenance_lease`, `replaced_stale_shm_is_restored_without_deleting_foreign_inode`, and `wal_appearing_at_quarantine_checkpoint_preserves_original_shm`.
+These local fixtures do not establish independent installed-service acceptance.
 
 ## Remaining execution work
 

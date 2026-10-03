@@ -13,6 +13,7 @@ const choices={
   'pending-schema':['schema_history','reserved-initial'],
   'pending-rebind':['schema_history','reserved-rebind'],
   'unactivated-rebind':['schema_history','finalized-rebind'],
+  'pending-backup':['schema_history','pending-backup'],
 };
 if(scenario==='completed-backup') {
   const fixture=await createSchemaHistoryFixture({repository,root});

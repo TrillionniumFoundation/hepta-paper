@@ -15,7 +15,7 @@ use zbus::{
 mod kernel_identity;
 #[cfg(test)]
 mod tests;
-mod wire;
+pub(crate) mod wire;
 
 const BUS_PATH: &str = "/run/dbus/system_bus_socket";
 const BUS_NAME: &str = "org.freedesktop.DBus";
@@ -40,12 +40,12 @@ impl ObservedSocketPeerManagerAssociationV1 {
     }
 }
 
-struct BootObservation {
+pub(crate) struct BootObservation {
     file: File,
     identity: String,
 }
 impl BootObservation {
-    fn load() -> Result<Self> {
+    pub(crate) fn load() -> Result<Self> {
         let file = File::open("/proc/sys/kernel/random/boot_id")
             .map_err(|_| fail("local_state_authority_manager_boot_unavailable"))?;
         let identity = Self::read(&file)?;
@@ -71,11 +71,14 @@ impl BootObservation {
         String::from_utf8(bytes[..36].to_vec())
             .map_err(|_| fail("local_state_authority_manager_boot_unavailable"))
     }
-    fn assert_current(&self) -> Result<()> {
+    pub(crate) fn assert_current(&self) -> Result<()> {
         if Self::read(&self.file)? != self.identity {
             return Err(fail("local_state_authority_manager_boot_changed"));
         }
         Ok(())
+    }
+    pub(crate) fn identity(&self) -> &str {
+        &self.identity
     }
 }
 
@@ -128,7 +131,7 @@ pub(super) fn observe(
     })
 }
 
-async fn bounded<T>(
+pub(crate) async fn bounded<T>(
     deadline: Instant,
     future: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
@@ -193,7 +196,7 @@ fn exchange_manager(stream: UnixStream, pidfd: BorrowedFd<'_>, deadline: Instant
     result
 }
 
-async fn call<B: serde::Serialize + zbus::zvariant::DynamicType>(
+pub(crate) async fn call<B: serde::Serialize + zbus::zvariant::DynamicType>(
     connection: &Connection,
     destination: &str,
     path: &str,
@@ -224,7 +227,7 @@ fn validate_reply(message: &Message, destination: &str) -> Result<()> {
     Ok(())
 }
 
-async fn owner(connection: &Connection, deadline: Instant) -> Result<String> {
+pub(crate) async fn owner(connection: &Connection, deadline: Instant) -> Result<String> {
     let message = call(
         connection,
         BUS_NAME,
@@ -244,7 +247,11 @@ async fn owner(connection: &Connection, deadline: Instant) -> Result<String> {
     Ok(name)
 }
 
-async fn principal(connection: &Connection, owner: &str, deadline: Instant) -> Result<()> {
+pub(crate) async fn principal(
+    connection: &Connection,
+    owner: &str,
+    deadline: Instant,
+) -> Result<()> {
     for (method, expected) in [
         ("GetConnectionUnixUser", 0_u32),
         ("GetConnectionUnixProcessID", 1_u32),
@@ -311,7 +318,7 @@ async fn association(
     })
 }
 
-async fn property<T: TryFrom<OwnedValue>>(
+pub(crate) async fn property<T: TryFrom<OwnedValue>>(
     connection: &Connection,
     owner: &str,
     path: &str,
@@ -503,4 +510,53 @@ async fn protocol(
         "unitId":original.unit,"invocationId":hex::encode(original.invocation),
         "unitProperties":properties,"serviceProperties":service}),
     )
+}
+
+/// Literal authenticated system-bus socket for installed internal maintenance.
+/// No environment-selected bus, caller-data principal, or installation authority.
+pub(crate) fn open_installed_manager_socket(deadline: Instant) -> Result<UnixStream> {
+    let options = LocalStateAuthorityClientOptionsV1 {
+        socket_path: BUS_PATH.into(),
+        timeout_ms: MAXIMUM_OBSERVATION_MS,
+        maximum_message_bytes: MAXIMUM_REPLY_BYTES,
+    };
+    let stream = open_socket(&options, deadline)?;
+    let credentials = getsockopt(&stream, sockopt::PeerCredentials)
+        .map_err(|_| fail("local_state_authority_manager_bus_peer_invalid"))?;
+    if credentials.uid() != 0 || credentials.pid() <= 0 {
+        return Err(fail("local_state_authority_manager_bus_peer_invalid"));
+    }
+    Ok(stream)
+}
+
+pub(crate) fn installed_manager_error() -> LocalStateAuthorityClientError {
+    fail("autonomous_research_installed_schema_manager_invalid_or_changed")
+}
+
+/// Retain PID 1's kernel identity directly from its fixed private socket. This
+/// connection is closed immediately; only the non-reusable pidfd is returned.
+pub(crate) fn installed_manager_pidfd(deadline: Instant) -> Result<std::os::fd::OwnedFd> {
+    let options = LocalStateAuthorityClientOptionsV1 {
+        socket_path: "/run/systemd/private".into(),
+        timeout_ms: MAXIMUM_OBSERVATION_MS,
+        maximum_message_bytes: MAXIMUM_REPLY_BYTES,
+    };
+    let stream = open_socket(&options, deadline)?;
+    let credentials = getsockopt(&stream, sockopt::PeerCredentials)
+        .map_err(|_| fail("local_state_authority_manager_owner_invalid"))?;
+    if credentials.uid() != 0 || credentials.pid() != 1 {
+        return Err(fail("local_state_authority_manager_owner_invalid"));
+    }
+    let pidfd = getsockopt(&stream, sockopt::PeerPidfd)
+        .map_err(|_| fail("local_state_authority_manager_owner_invalid"))?;
+    use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+    if !FdFlag::from_bits_retain(
+        fcntl(&pidfd, FcntlArg::F_GETFD)
+            .map_err(|_| fail("local_state_authority_manager_owner_invalid"))?,
+    )
+    .contains(FdFlag::FD_CLOEXEC)
+    {
+        return Err(fail("local_state_authority_manager_owner_invalid"));
+    }
+    Ok(pidfd)
 }

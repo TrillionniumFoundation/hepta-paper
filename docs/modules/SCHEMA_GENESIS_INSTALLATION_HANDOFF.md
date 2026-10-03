@@ -25,6 +25,15 @@ transactions. Its observations are not external finalization or runtime ready.
 
 ## Real preimage and recovery proof
 
+Recovery requires the original `expected_plan_hash`, retained independently from
+its mutable progress journal. An empty or malformed pin now fails before source
+inventory, root-lock acquisition, pinned-authority inspection or clock sampling.
+A well-formed pin still must match the original complete journal plan under the
+existing maintenance lock; it never substitutes for the reservation signature,
+registered scope, live lease or exact database/preimage comparison. Valid requests
+remain busy while the original owner retains its locks and resume after that owner
+releases them. No missing-pin compatibility fallback exists.
+
 Before any installation write, ten normalized source byte images are published
 no-clobber beneath the held private transition directory, using derived names
 and durable file/directory fsync. Every artifact must hash to the actual signed
@@ -60,7 +69,7 @@ namespace, source inode/permissions/ownership, root identity, current journal CA
 hash and authority/key pins are repeatedly checked. A final memory-only clock
 sample follows the last descriptor check before COMMIT. Clock regression,
 expired lease or a remaining window below the explicit minimum commit margin
-(at least 1000 ms) rejects the commit. An in-progress synchronous filesystem or
+(default 1000 ms; `1 <= margin < requiredExecutionWindowMs`) rejects the commit. An in-progress synchronous filesystem or
 SQLite commit cannot be preempted by Rust; the margin is not a guarantee against
 arbitrarily slow storage.
 
@@ -74,31 +83,36 @@ Uncommitted databases roll back on error; completed commits are never described
 as rolled back. A new process can distinguish genuine post-state from partial,
 foreign or tampered contents without relying on a published completed flag.
 
-## Validation status
+## Executable verification
 
-The final isolated candidate suite passed seven real installation/recovery tests
-(`438.88 s`, `/tmp/hepta-installation-suite.log`): v1 and pristine-v2 ten-
-database installation against complete Node records, wall-clock lease expiry,
-real child-process crash recovery, durable-commit-before-progress recovery,
-retained-lock rejection, and tamper/cross-role/expiry rejection. The exact
-SQLite state comparator passed ten tests (`0.44 s`) covering all persistent
-cells, generated values, duplicate/NULL-key rows, system bookkeeping, index
-integrity and caller transaction ownership. The signed preimage private-copy ABA
-regression passed (`/tmp/hepta-installation-preimage-aba.log`). Candidate
-source-only rustfmt, all-target Clippy, strict library Clippy (`-Dunsafe-code`,
-`-Dclippy::unwrap_used`, `-Dclippy::expect_used`, `-Dclippy::panic`) and the
-Node oracle ESLint gate all passed (`/tmp/hepta-installation-gates2.exit`,
-`/tmp/hepta-installation-candidate-fmt.log`). The same suite was rerun
-against the integrated working tree before promotion; all 17 installation and
-exact-state groups passed. The result is still a local implementation proof,
-not production activation or external authority acceptance.
+The existing `schema_installation_parity` target covers v1/pristine-v2 records
+against the original Node implementation, real wall-clock expiry, child-process
+crashes after COMMIT and before progress publication, retained-lock exclusion,
+business-state and signed-record substitution, and exact resumed state.
+`installation_recovery_requires_plan_pin_before_inventory_lock_or_clock` also
+uses the real ten-database installer with its root lock retained: malformed pins
+must reject before that lock or an absent runtime can influence the result;
+the independent correct pin retains busy/recovery semantics and all source bytes.
+The original exact-state, private-copy and physical lock tests remain required.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked --all-features \
+  -p hepta-paper-service --test schema_installation_parity \
+  --test schema_normalization_parity
+```
+
+Exact source/merge identities, timings and outcomes belong to the existing
+source-evidence receipts and PR/run evidence, not a second handwritten status
+ledger. These tests use private fixtures and do not qualify installed principals,
+real-host writer transfer or Node retirement.
 
 ## Explicit remaining boundaries
 
 External schema finalization, target authority configuration restart and final
 runtime activation are not supplied by this capability. The qualified authority
 service's fencing/linearizability remains an external trust obligation. Production
-has no Node runtime dependency; Node 22.23.1 is used only by the differential oracle.
+acceptance is separate from the native primitive's lack of a Node dependency;
+Node remains the differential oracle and may still own the actual installation.
 
 The signed normalized byte image is never rewritten to mimic a different SQLite
 engine's header. Node 3.51.3 vs native 3.53.2 WAL normalization SHA differences

@@ -108,6 +108,29 @@ export function buildTestImpactGraph({ files, readSource }) {
   });
 }
 
+// The native CLI producer also serves ordinary workspace/store frontend tests.
+// Use their actual import closure instead of a duplicated test filename list.
+export function requiresNativeRouteToolchain({ graph, tests }) {
+  if (!graph || !Array.isArray(graph.edges) || !Array.isArray(tests)) {
+    throw new Error('test_impact_native_toolchain_input_invalid');
+  }
+  const dependencies = new Map();
+  for (const { importer, dependency } of graph.edges) {
+    const entries = dependencies.get(importer) || [];
+    entries.push(dependency);
+    dependencies.set(importer, entries);
+  }
+  const pending = tests.map(repositoryPath), visited = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (visited.has(current)) continue;
+    if (current === 'docs/tools/node-rust-route-acceptance.mjs') return true;
+    visited.add(current);
+    pending.push(...(dependencies.get(current) || []));
+  }
+  return false;
+}
+
 function fullFallbackRequired(changedFiles) {
   return changedFiles.filter((file) => (
     !RUST_ISOLATED.test(file)

@@ -96,7 +96,21 @@ fn durable_batch_survives_restart_and_replay_does_not_debit_twice() {
         .expect("request")
     });
     let mut sequencer = fixture.sequencer(true, 100);
+    let before_commit = sequencer.committed_result_snapshot();
+    assert!(
+        requests
+            .iter()
+            .all(|request| !before_commit.contains_result(request.verified().result_hash()))
+    );
     let first = sequencer.commit_batch(&requests).expect("atomic commit");
+    let after_commit = sequencer.committed_result_snapshot();
+    for receipt in &first {
+        assert!(after_commit.contains_result(&receipt.result_hash));
+        assert!(
+            !before_commit.contains_result(&receipt.result_hash),
+            "retained historical view cannot turn into new admission"
+        );
+    }
     assert_eq!(
         sequencer
             .store()
@@ -109,6 +123,13 @@ fn durable_batch_survives_restart_and_replay_does_not_debit_twice() {
     drop(sequencer);
     let mut restored = fixture.sequencer(false, 100);
     assert_eq!(restored.current_state_hash(), &committed);
+    let recovered = restored.committed_result_snapshot();
+    assert!(
+        first
+            .iter()
+            .all(|receipt| recovered.contains_result(&receipt.result_hash))
+    );
+    assert!(!recovered.contains_result(&digest('f')));
     assert_eq!(restored.next_sequence(), 3);
     let replay = restored.commit_batch(&requests).expect("idempotent replay");
     assert!(replay.iter().all(|receipt| !receipt.newly_committed));
@@ -150,10 +171,20 @@ fn durable_second_item_budget_failure_rolls_back_first_item_and_event() {
         Err(ControlPlaneError::PersistenceInvalid)
     );
     assert_eq!(sequencer.receipt_count(), 0);
+    assert!(requests.iter().all(|request| {
+        !sequencer
+            .committed_result_snapshot()
+            .contains_result(request.verified().result_hash())
+    }));
     assert_eq!(sequencer.next_sequence(), 1);
     drop(sequencer);
     let mut restored = fixture.sequencer(false, 1);
     assert_eq!(restored.receipt_count(), 0);
+    assert!(requests.iter().all(|request| {
+        !restored
+            .committed_result_snapshot()
+            .contains_result(request.verified().result_hash())
+    }));
     let campaign = restored
         .store()
         .load_campaign("campaign-1")

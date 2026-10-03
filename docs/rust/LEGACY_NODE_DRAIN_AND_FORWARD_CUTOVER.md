@@ -115,7 +115,7 @@ The drain receipt closes a repository-local source gap; it does not establish
 facts owned by external systems. Production activation still requires accepted,
 current evidence for:
 
-- protected-main governance and independent review;
+- protected-branch required checks, exact-source integration and signed-reference enforcement;
 - target-host principals, services, listeners, cgroup containment, and reboot
   behavior;
 - destructive storage and corruption testing plus the required production-topology

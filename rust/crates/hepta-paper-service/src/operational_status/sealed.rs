@@ -4,7 +4,6 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
     fs::{self, Metadata, OpenOptions},
-    io::Read,
     os::{
         fd::AsRawFd,
         unix::{
@@ -13,7 +12,7 @@ use std::{
         },
     },
     path::Path,
-    process::Command,
+    sync::atomic::AtomicBool,
 };
 const SUBMODULES: &[(&str, &str)] = &[
     ("core", "core"),
@@ -26,47 +25,19 @@ const CLOSURE: &str = "deployment-closure/TOOL-CLOSURE.json";
 fn io_error(_: std::io::Error) -> super::OperationalStatusError {
     error("code_provenance_sealed_closure_read_failed")
 }
-fn git(root: &Path, operation: &str, args: &[&str]) -> Result<String> {
-    let output = Command::new("/usr/bin/git")
-        .args([
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.attributesFile=/dev/null",
-            "-c",
-        ])
-        .arg(format!("safe.directory={}", root.display()))
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .env_clear()
-        .envs([
-            ("PATH", "/usr/bin:/bin"),
-            ("HOME", "/nonexistent"),
-            ("XDG_CONFIG_HOME", "/nonexistent"),
-            ("LANG", "C"),
-            ("LC_ALL", "C"),
-            ("GIT_CONFIG_NOSYSTEM", "1"),
-            ("GIT_CONFIG_GLOBAL", "/dev/null"),
-            ("GIT_NO_REPLACE_OBJECTS", "1"),
-            ("GIT_OPTIONAL_LOCKS", "0"),
-            ("GIT_TERMINAL_PROMPT", "0"),
-            ("GIT_LFS_SKIP_SMUDGE", "1"),
-        ])
-        .output()
-        .map_err(|_| {
-            error(&format!(
-                "code_provenance_sealed_submodule_git_failed:{operation}"
-            ))
-        })?;
-    if !output.status.success() || output.stdout.len() > 16 * 1024 * 1024 {
+fn git(
+    root: &Path,
+    operation: &str,
+    args: &[&str],
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<String> {
+    let output = observation.git(root, operation, args, true)?;
+    if output.len() > 16 * 1024 * 1024 {
         return Err(error(&format!(
             "code_provenance_sealed_submodule_git_failed:{operation}"
         )));
     }
-    String::from_utf8(output.stdout).map_err(|_| {
+    String::from_utf8(output).map_err(|_| {
         error(&format!(
             "code_provenance_sealed_submodule_git_failed:{operation}"
         ))
@@ -78,10 +49,20 @@ fn object(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn git_object(root: &Path, expression: &str, operation: &str) -> Result<String> {
-    let value = git(root, operation, &["rev-parse", "--verify", expression])?
-        .trim()
-        .to_owned();
+fn git_object(
+    root: &Path,
+    expression: &str,
+    operation: &str,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<String> {
+    let value = git(
+        root,
+        operation,
+        &["rev-parse", "--verify", expression],
+        observation,
+    )?
+    .trim()
+    .to_owned();
     if !object(&value) {
         return Err(error(&format!(
             "code_provenance_sealed_submodule_object_invalid:{operation}"
@@ -89,7 +70,11 @@ fn git_object(root: &Path, expression: &str, operation: &str) -> Result<String> 
     }
     Ok(value)
 }
-fn read_closure(root: &Path) -> Result<Option<Ordered>> {
+fn read_closure(
+    root: &Path,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<Option<Ordered>> {
+    observation.checkpoint()?;
     let path = root.join(CLOSURE);
     let identity = match fs::symlink_metadata(&path) {
         Ok(value) => value,
@@ -140,19 +125,8 @@ fn read_closure(root: &Path) -> Result<Option<Ordered>> {
         }
         chain.push((cursor.clone(), meta));
     }
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
-        .open(&path)
-        .map_err(io_error)?;
-    if !files::same(&identity, &file.metadata().map_err(io_error)?) {
-        return Err(error("code_provenance_sealed_closure_file_invalid"));
-    }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(io_error)?;
-    if !files::same(&identity, &file.metadata().map_err(io_error)?)
-        || bytes.len() as u64 != identity.len()
-    {
+    let bytes = observation.read_file(&path, super::bounded::MAX_FILE_BYTES)?;
+    if bytes.len() as u64 != identity.len() {
         return Err(error("code_provenance_sealed_closure_file_invalid"));
     }
     for (path, meta) in chain {
@@ -215,32 +189,23 @@ struct TreeReport {
 fn tree_error(code: &str) -> super::OperationalStatusError {
     error(&format!("release_dependency_tree_{code}"))
 }
-fn visit(path: &Path, relative: &str, records: &mut Vec<TreeRecord>) -> Result<()> {
+fn visit(
+    path: &Path,
+    relative: &str,
+    records: &mut Vec<TreeRecord>,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<()> {
+    observation.entry()?;
+    if relative.split('/').count() > 128 {
+        return Err(error("code_provenance_directory_depth_budget_exceeded"));
+    }
     let before = fs::symlink_metadata(path).map_err(|_| tree_error("entry_read_failed"))?;
     if before.is_file() {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|_| tree_error("entry_read_failed"))?;
+        let bytes = observation.read_file(path, super::bounded::MAX_FILE_BYTES)?;
         if !files::same(
             &before,
-            &file
-                .metadata()
-                .map_err(|_| tree_error("file_identity_changed"))?,
+            &fs::symlink_metadata(path).map_err(|_| tree_error("file_changed_during_read"))?,
         ) {
-            return Err(tree_error("file_identity_changed"));
-        }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
-            .map_err(|_| tree_error("entry_read_failed"))?;
-        if !files::same(
-            &before,
-            &file
-                .metadata()
-                .map_err(|_| tree_error("file_changed_during_read"))?,
-        ) || bytes.len() as u64 != before.len()
-        {
             return Err(tree_error("file_changed_during_read"));
         }
         records.push(TreeRecord {
@@ -260,6 +225,7 @@ fn visit(path: &Path, relative: &str, records: &mut Vec<TreeRecord>) -> Result<(
     if before.is_symlink() {
         let target = fs::read_link(path).map_err(|_| tree_error("entry_read_failed"))?;
         let bytes = target.as_os_str().as_bytes();
+        observation.consume(bytes.len())?;
         if !files::same(
             &before,
             &fs::symlink_metadata(path).map_err(|_| tree_error("symlink_changed_during_read"))?,
@@ -281,7 +247,12 @@ fn visit(path: &Path, relative: &str, records: &mut Vec<TreeRecord>) -> Result<(
     }
     let descriptor = OpenOptions::new()
         .read(true)
-        .custom_flags(nix::libc::O_RDONLY | nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW)
+        .custom_flags(
+            nix::libc::O_RDONLY
+                | nix::libc::O_DIRECTORY
+                | nix::libc::O_NOFOLLOW
+                | nix::libc::O_CLOEXEC,
+        )
         .open(path)
         .map_err(|_| tree_error("entry_read_failed"))?;
     if !files::same(
@@ -301,14 +272,18 @@ fn visit(path: &Path, relative: &str, records: &mut Vec<TreeRecord>) -> Result<(
         target_hash: None,
     });
     let pinned = std::path::PathBuf::from(format!("/proc/self/fd/{}", descriptor.as_raw_fd()));
-    let mut names = fs::read_dir(&pinned)
-        .map_err(|_| tree_error("entry_read_failed"))?
-        .map(|entry| {
+    let mut names = Vec::new();
+    for entry in fs::read_dir(&pinned).map_err(|_| tree_error("entry_read_failed"))? {
+        observation.checkpoint()?;
+        if names.len() >= super::bounded::MAX_ENTRIES {
+            return Err(error("code_provenance_entry_budget_exceeded"));
+        }
+        names.push(
             entry
-                .map(|v| v.file_name())
-                .map_err(|_| tree_error("entry_read_failed"))
-        })
-        .collect::<Result<Vec<_>>>()?;
+                .map_err(|_| tree_error("entry_read_failed"))?
+                .file_name(),
+        );
+    }
     names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     for name in names {
         let name = name
@@ -325,6 +300,7 @@ fn visit(path: &Path, relative: &str, records: &mut Vec<TreeRecord>) -> Result<(
                 format!("{relative}/{name}")
             },
             records,
+            observation,
         )?;
     }
     if !files::same(
@@ -337,13 +313,17 @@ fn visit(path: &Path, relative: &str, records: &mut Vec<TreeRecord>) -> Result<(
     }
     Ok(())
 }
-fn scan(root: &Path) -> Result<(Metadata, String)> {
+fn scan(
+    root: &Path,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<(Metadata, String)> {
+    observation.checkpoint()?;
     let before = fs::symlink_metadata(root).map_err(|_| tree_error("root_directory_required"))?;
     if !before.is_dir() || before.is_symlink() {
         return Err(tree_error("root_directory_required"));
     }
     let mut records = Vec::new();
-    visit(root, ".", &mut records)?;
+    visit(root, ".", &mut records, observation)?;
     if !files::same(
         &before,
         &fs::symlink_metadata(root).map_err(|_| tree_error("root_changed_during_scan"))?,
@@ -366,9 +346,9 @@ fn scan(root: &Path) -> Result<(Metadata, String)> {
         serde_json::to_string(&report).map_err(|_| tree_error("encoding_failed"))?,
     ))
 }
-fn capture_tree(root: &Path) -> Result<String> {
-    let (first, a) = scan(root)?;
-    let (second, b) = scan(root)?;
+fn capture_tree(root: &Path, observation: &mut super::bounded::Observation<'_>) -> Result<String> {
+    let (first, a) = scan(root, observation)?;
+    let (second, b) = scan(root, observation)?;
     if !files::same(&first, &second) || a != b {
         return Err(tree_error("snapshot_unstable"));
     }
@@ -383,7 +363,14 @@ struct Observation {
     tree: String,
     content_tree_hash: String,
 }
-fn inspect_one(root: &Path, key: &str, path: &str, expected: &Ordered) -> Result<Observation> {
+fn inspect_one(
+    root: &Path,
+    key: &str,
+    path: &str,
+    expected: &Ordered,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<Observation> {
+    observation.checkpoint()?;
     let value = expected.value();
     let submodule = root.join(path);
     let stat = fs::symlink_metadata(&submodule)
@@ -405,6 +392,7 @@ fn inspect_one(root: &Path, key: &str, path: &str, expected: &Ordered) -> Result
         root,
         &format!("gitlink:{path}"),
         &["ls-tree", "-z", "HEAD", "--", path],
+        observation,
     )?;
     let (gitlink, listed) = raw
         .trim_end_matches('\0')
@@ -445,8 +433,18 @@ fn inspect_one(root: &Path, key: &str, path: &str, expected: &Ordered) -> Result
             "code_provenance_sealed_submodule_commit_mismatch:{key}"
         )));
     }
-    let commit = git_object(&submodule, "HEAD^{commit}", &format!("{key}:head"))?;
-    let tree = git_object(&submodule, "HEAD^{tree}", &format!("{key}:tree"))?;
+    let commit = git_object(
+        &submodule,
+        "HEAD^{commit}",
+        &format!("{key}:head"),
+        observation,
+    )?;
+    let tree = git_object(
+        &submodule,
+        "HEAD^{tree}",
+        &format!("{key}:tree"),
+        observation,
+    )?;
     if value["commit"] != commit {
         return Err(error(&format!(
             "code_provenance_sealed_submodule_worktree_commit_mismatch:{key}"
@@ -457,7 +455,7 @@ fn inspect_one(root: &Path, key: &str, path: &str, expected: &Ordered) -> Result
             "code_provenance_sealed_submodule_tree_mismatch:{key}"
         )));
     }
-    let actual = capture_tree(&submodule)?;
+    let actual = capture_tree(&submodule, observation)?;
     if actual != expected_tree.encode(false)? {
         return Err(error(&format!(
             "code_provenance_sealed_submodule_content_mismatch:{key}"
@@ -478,11 +476,20 @@ fn inspect_one(root: &Path, key: &str, path: &str, expected: &Ordered) -> Result
 /// Verify Git links, submodule HEAD/tree identities and hydrated filesystem
 /// bytes against a read-only deployment closure without inspecting Git status.
 pub fn inspect_operational_sealed_submodules_v1(root: &Path) -> Result<Value> {
+    let cancelled = AtomicBool::new(false);
+    let mut observation = super::bounded::Observation::new(&cancelled)?;
+    inspect_with_observation(root, &mut observation)
+}
+pub(super) fn inspect_with_observation(
+    root: &Path,
+    observation: &mut super::bounded::Observation<'_>,
+) -> Result<Value> {
+    observation.checkpoint()?;
     let root = std::path::absolute(root).map_err(io_error)?;
     if root.parent().is_none() {
         return Err(error("code_provenance_sealed_workspace_root_invalid"));
     }
-    let Some(closure) = read_closure(&root)? else {
+    let Some(closure) = read_closure(&root, observation)? else {
         #[derive(Serialize)]
         struct Payload<'a> {
             version: u8,
@@ -513,7 +520,7 @@ pub fn inspect_operational_sealed_submodules_v1(root: &Path) -> Result<Value> {
                 "code_provenance_sealed_submodule_closure_entry_invalid:{key}"
             )));
         }
-        observations.push(inspect_one(&root, key, path, expected)?);
+        observations.push(inspect_one(&root, key, path, expected, observation)?);
     }
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]

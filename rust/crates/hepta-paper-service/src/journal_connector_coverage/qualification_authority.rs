@@ -6,13 +6,13 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) struct VerifiedSignature {
+pub(crate) struct VerifiedSignature {
     pub value: Value,
     pub spki: String,
     role: String,
     subject: String,
 }
-pub(super) struct AuthorityVerification {
+pub(crate) struct AuthorityVerification {
     pub report: Value,
     pub signatures: Vec<VerifiedSignature>,
     pub blockers: Vec<String>,
@@ -24,7 +24,12 @@ fn string_or_empty(value: &Value) -> String {
         String::new()
     }
 }
-fn canonical(value: &Value, output: &mut String) -> Option<()> {
+fn canonical(
+    value: &Value,
+    output: &mut String,
+    control: Option<crate::runtime_image_reproducibility::control::OperationControl<'_>>,
+) -> Option<()> {
+    crate::runtime_image_reproducibility::control::check(control).ok()?;
     match value {
         Value::Array(values) => {
             output.push('[');
@@ -32,7 +37,7 @@ fn canonical(value: &Value, output: &mut String) -> Option<()> {
                 if index != 0 {
                     output.push(',');
                 }
-                canonical(value, output)?;
+                canonical(value, output, control)?;
             }
             output.push(']');
         }
@@ -52,7 +57,7 @@ fn canonical(value: &Value, output: &mut String) -> Option<()> {
                 }
                 output.push_str(&serde_json::to_string(key).ok()?);
                 output.push(':');
-                canonical(&values[*key], output)?;
+                canonical(&values[*key], output, control)?;
             }
             output.push('}');
         }
@@ -143,6 +148,122 @@ pub(super) fn verify_authority(
     trust: &Value,
     roles: &[&str],
 ) -> AuthorityVerification {
+    // None preserves the incumbent portal/qualification signature semantics.
+    match verify_authority_controlled(document, trust, roles, None) {
+        Ok(verified) => verified,
+        Err(code) => AuthorityVerification {
+            report: json!({"status":"authority_signatures_blocked","cryptographicSignaturesVerified":false,"blockers":[code]}),
+            signatures: Vec::new(),
+            blockers: vec![code],
+        },
+    }
+}
+pub(crate) fn verify_numerical_qualification_authority_v2(
+    document: &Value,
+    trust: &Value,
+    roles: &[&str],
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> std::result::Result<AuthorityVerification, String> {
+    const ALLOWED: &[&str] = &[
+        "advanced_numerical_plugin_authority",
+        "advanced_numerical_oracle_authority",
+        "advanced_numerical_replay_authority",
+        "advanced_numerical_scientific_reviewer",
+        "advanced_numerical_uncertainty_reviewer",
+    ];
+    if roles.is_empty()
+        || roles.len() > 4
+        || roles.iter().any(|role| !ALLOWED.contains(role))
+        || trust["keys"]
+            .as_array()
+            .is_some_and(|keys| keys.len() > 256)
+        || document["signatures"]
+            .as_array()
+            .is_some_and(|signatures| signatures.len() > 16)
+    {
+        return Err("advanced_numerical_qualification_authority_resource_limit_exceeded".into());
+    }
+    crate::native_business::local_submission_preflight::local_submission_values_budget_v1([
+        document, trust,
+    ])?;
+    verify_authority_controlled(
+        document,
+        trust,
+        roles,
+        Some(
+            crate::runtime_image_reproducibility::control::OperationControl::new(
+                cancelled, deadline,
+            ),
+        ),
+    )
+}
+/// The dataset owner selects its one fixed signing role from the normalized
+/// document version. This reuses the signature engine and grants no arbitrary
+/// authority role or publication/submission capability.
+pub(crate) fn verify_operator_dataset_authority_v1(
+    document: &Value,
+    trust: &Value,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> std::result::Result<AuthorityVerification, String> {
+    if trust["keys"]
+        .as_array()
+        .is_some_and(|keys| keys.len() > 256)
+        || document["signatures"]
+            .as_array()
+            .is_some_and(|signatures| signatures.len() > 16)
+    {
+        return Err("operator_dataset_authority_resource_limit_exceeded".into());
+    }
+    crate::native_business::local_submission_preflight::local_submission_values_budget_v1([
+        document, trust,
+    ])?;
+    let role = if document["version"].as_f64() == Some(4.0) {
+        "local_golden_dataset_operator"
+    } else {
+        "dataset_harness_operator"
+    };
+    // Node's strict numeric equality includes JSON 1.0, but excludes strings.
+    // Normalize only this adapter's trust version before using the old verifier.
+    let mut normalized_trust = trust.clone();
+    if normalized_trust["version"].as_f64() == Some(1.0) {
+        normalized_trust["version"] = Value::from(1);
+    }
+    let mut verification = verify_authority_controlled(
+        document,
+        &normalized_trust,
+        &[role],
+        Some(
+            crate::runtime_image_reproducibility::control::OperationControl::new(
+                cancelled, deadline,
+            ),
+        ),
+    )?;
+    let mut positions = Vec::new();
+    let mut duplicates = Vec::new();
+    for (index, blocker) in verification.blockers.iter().enumerate() {
+        crate::runtime_image_reproducibility::control::OperationControl::new(cancelled, deadline)
+            .check()
+            .map_err(|error| error.to_string())?;
+        if blocker.ends_with(":duplicate_trust_key_id") {
+            positions.push(index);
+            duplicates.push(blocker.clone());
+        }
+    }
+    duplicates.sort_by_cached_key(|blocker| blocker.encode_utf16().collect::<Vec<_>>());
+    for (position, blocker) in positions.into_iter().zip(duplicates) {
+        verification.blockers[position] = blocker;
+    }
+    Ok(verification)
+}
+fn verify_authority_controlled(
+    document: &Value,
+    trust: &Value,
+    roles: &[&str],
+    control: Option<crate::runtime_image_reproducibility::control::OperationControl<'_>>,
+) -> std::result::Result<AuthorityVerification, String> {
+    crate::runtime_image_reproducibility::control::check(control).map_err(|e| e.to_string())?;
     let mut blockers = Vec::new();
     if trust["version"] != 1 || trust["kind"] != "AuthorityTrustStore" {
         blockers.push("authority_trust_store_missing_or_invalid".into());
@@ -156,6 +277,7 @@ pub(super) fn verify_authority(
     let mut keys = BTreeMap::new();
     let mut duplicates = BTreeSet::new();
     for key in trust["keys"].as_array().unwrap_or(&empty) {
+        crate::runtime_image_reproducibility::control::check(control).map_err(|e| e.to_string())?;
         let id = string_or_empty(&key["keyId"]);
         if id.is_empty() {
             continue;
@@ -176,10 +298,12 @@ pub(super) fn verify_authority(
         object.remove("signatures");
     }
     let mut bytes = String::new();
-    let encoding_valid = canonical(&payload, &mut bytes).is_some();
+    let encoding_valid = canonical(&payload, &mut bytes, control).is_some();
+    crate::runtime_image_reproducibility::control::check(control).map_err(|e| e.to_string())?;
     let mut seen = BTreeSet::new();
     let mut verified = Vec::new();
     for signature in signatures {
+        crate::runtime_image_reproducibility::control::check(control).map_err(|e| e.to_string())?;
         let id = string_or_empty(&signature["keyId"]);
         let role = string_or_empty(&signature["role"]);
         let mut failed: Vec<&str> = Vec::new();
@@ -275,9 +399,10 @@ pub(super) fn verify_authority(
     }
     unique(&mut blockers);
     let report = json!({ "status": if blockers.is_empty() { "authority_signatures_verified" } else { "authority_signatures_blocked" }, "cryptographicSignaturesVerified": blockers.is_empty(), "requiredRoles": roles, "requiredSignatureCount": required_count, "verifiedSignatures": verified.iter().map(|v| &v.value).collect::<Vec<_>>(), "verifiedRoles": found_roles, "verifiedSubjectIds": subjects, "blockers": blockers });
-    AuthorityVerification {
+    crate::runtime_image_reproducibility::control::check(control).map_err(|e| e.to_string())?;
+    Ok(AuthorityVerification {
         report,
         signatures: verified,
         blockers,
-    }
+    })
 }

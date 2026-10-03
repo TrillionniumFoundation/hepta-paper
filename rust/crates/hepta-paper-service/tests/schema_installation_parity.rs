@@ -109,6 +109,17 @@ impl Fixture {
         )
         .unwrap()
     }
+    fn target_authority(&self) -> PinnedMutationAuthorityV1<Signing> {
+        PinnedMutationAuthorityV1::load(
+            Path::new(self.setup["targetConfigurationPath"].as_str().unwrap()),
+            self.setup["targetConfigurationFileHash"].as_str().unwrap(),
+            Signing {
+                root: self.root.clone(),
+                oracle: self.oracle.clone(),
+            },
+        )
+        .unwrap()
+    }
     fn options(&self) -> SchemaTransitionPlanOptionsV1<'_> {
         options(&self.setup)
     }
@@ -143,9 +154,19 @@ struct Signing {
 }
 impl MutationAuthorityTransportV1 for Signing {
     fn invoke(&mut self, request: &Value) -> Result<Value> {
-        let v=self.oracle.borrow_mut().call(json!({"operation":"reserve-maintenance","root":self.root,"request":request,"mode":"valid"}));
-        assert_eq!(v["ok"], true, "{v}");
-        assert_eq!(v["value"]["accepted"], true);
+        let operation = match request["kind"].as_str() {
+            Some("AutonomousResearchOnlineSchemaTransitionFinalizeRequest") => {
+                "finalize-maintenance"
+            }
+            Some("AutonomousResearchOnlineSchemaTransitionObserveRequest") => "observe-maintenance",
+            _ => "reserve-maintenance",
+        };
+        let v = self
+            .oracle
+            .borrow_mut()
+            .call(json!({"operation":operation,"root":self.root,"request":request,"mode":"valid"}));
+        assert_eq!(v["ok"], true, "{operation}: {v}; request={request}");
+        assert_eq!(v["value"]["accepted"], true, "{operation}: {v}");
         fn float_spelling(value: &mut Value) {
             match value {
                 Value::Number(n) if n.is_i64() || n.is_u64() => {
@@ -343,6 +364,7 @@ fn installation_crash_child() {
             state_database_manifest: &setup["stateDatabaseManifest"],
             writer_manifest: &setup["writerManifest"],
             expected_transition_id: id,
+            expected_plan_hash: input["planHash"].as_str().unwrap(),
             machine_genesis: None,
         },
         &authority,
@@ -617,7 +639,13 @@ fn actual_wall_clock_lease_installs_all_ten_databases() {
     let fixture = Fixture::new(false);
     let mut authority = fixture.authority();
     let mut clock = SystemMutationClockV1;
-    let plan = build_schema_transition_plan_v1(fixture.options(), &authority, &mut clock).unwrap();
+    // This is a positive real-I/O lifecycle test, not a 60-second performance
+    // qualification. Request the fixture authority's existing five-minute cap
+    // explicitly; production defaults, commit margins and expiry refusals do
+    // not change. Deterministic expiry regressions retain their 60-second lease.
+    let mut options = fixture.options();
+    options.requested_lease_ms = 300_000;
+    let plan = build_schema_transition_plan_v1(options, &authority, &mut clock).unwrap();
     let maintenance = reserve_schema_maintenance_v1(plan, &mut authority, &mut clock).unwrap();
     let token = normalize_schema_maintenance_v1(
         maintenance,
@@ -680,3 +708,67 @@ fn installation_lock_probe_child() {
         assert!(database.is_autocommit());
     }
 }
+
+#[test]
+fn installation_recovery_requires_plan_pin_before_inventory_lock_or_clock() {
+    let fixture = Fixture::new(false);
+    let mut authority = fixture.authority();
+    let token = normalized(&fixture, &mut authority);
+    let plan = token.plan().clone();
+    let installed = install_schema_maintenance_v1(
+        token,
+        &authority,
+        &mut || Ok(BASE),
+        SchemaInstallationOptionsV1::default(),
+        &mut NoSchemaInstallationCheckpointV1,
+    )
+    .unwrap();
+    let original_journal = fs::read(fixture.journal()).unwrap();
+    let original_databases = plan_bytes(&fixture, &plan);
+    let absent = fixture.root.join("absent-runtime");
+    for missing_runtime in [false, true] {
+        for pin in ["", "sha256:short", "sha256:GGGG", "not-a-plan"] {
+            let mut options = resume_installation(&fixture, &plan);
+            options.expected_plan_hash = pin;
+            if missing_runtime {
+                options.runtime_root = &absent;
+            }
+            let code = fail(resume_schema_installation_v1(
+                options,
+                &authority,
+                &mut || panic!("invalid selection must not sample the clock"),
+                &mut NoSchemaInstallationCheckpointV1,
+            ));
+            assert_eq!(
+                code, "autonomous_research_online_schema_transition_installation_plan_pin_invalid",
+                "malformed selection must precede a busy real root or absent source"
+            );
+        }
+    }
+    assert!(!absent.exists());
+    assert_eq!(fs::read(fixture.journal()).unwrap(), original_journal);
+    assert_eq!(plan_bytes(&fixture, &plan), original_databases);
+    assert_eq!(
+        fail(resume_schema_installation_v1(
+            resume_installation(&fixture, &plan),
+            &authority,
+            &mut || Ok(BASE),
+            &mut NoSchemaInstallationCheckpointV1,
+        )),
+        "autonomous_research_online_schema_transition_maintenance_busy"
+    );
+    drop(installed);
+    let recovered = resume_schema_installation_v1(
+        resume_installation(&fixture, &plan),
+        &authority,
+        &mut || Ok(BASE),
+        &mut NoSchemaInstallationCheckpointV1,
+    )
+    .unwrap();
+    assert_eq!(recovered.plan(), &plan);
+    drop(recovered);
+    assert_eq!(plan_bytes(&fixture, &plan), original_databases);
+}
+
+#[path = "schema_installation_parity/finalization_recovery.rs"]
+mod finalization_recovery;

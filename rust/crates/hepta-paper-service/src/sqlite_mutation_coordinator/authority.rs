@@ -79,11 +79,25 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
         expected_configuration_file_hash: &str,
         transport: T,
     ) -> Result<Self> {
-        let configuration = Snapshot::load(
+        Self::load_with_control(
+            configuration_path,
+            expected_configuration_file_hash,
+            transport,
+            None,
+        )
+    }
+    pub(crate) fn load_with_control(
+        configuration_path: &Path,
+        expected_configuration_file_hash: &str,
+        transport: T,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
+        let configuration = Snapshot::load_with_control(
             configuration_path,
             expected_configuration_file_hash,
             4 * 1024 * 1024,
             "autonomous_research_online_mutation_authority_configuration_invalid",
+            control.clone(),
         )?;
         let value = configuration
             .json("autonomous_research_online_mutation_authority_configuration_invalid")?;
@@ -92,11 +106,12 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
                 "autonomous_research_online_mutation_authority_configuration_invalid",
             ));
         }
-        let public_key_document = Snapshot::load(
+        let public_key_document = Snapshot::load_with_control(
             Path::new(text(&value, "publicKeyPath")?),
             text(&value, "publicKeySha256")?,
             64 * 1024,
             "autonomous_research_online_mutation_authority_public_key_identity_mismatch",
+            control.clone(),
         )?;
         let document = public_key_document
             .json("autonomous_research_online_mutation_authority_public_key_invalid")?;
@@ -165,6 +180,13 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
     pub(crate) fn verification_key(&self) -> &VerifyingKey {
         &self.public_key
     }
+    /// Public historical payload signature only. No receipt or maintenance
+    /// capability is minted; the versioned historical consumer must separately
+    /// validate the complete subject, grammar, times and cross-record lineage.
+    pub(crate) fn verify_historical_public_signature_v1(&self, value: &Value) -> Result<bool> {
+        self.current()?;
+        Ok(self.signature(value))
+    }
     /// Names of retained public inputs, for avoiding output collisions. These
     /// names carry no filesystem-publication or service-maintenance authority.
     pub(crate) fn retained_configuration_paths(&self) -> [&Path; 2] {
@@ -178,55 +200,35 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
         self.configuration.assert_current()?;
         self.public_key_document.assert_current()
     }
+    /// Rewrap only the untrusted transport while preserving the exact pinned
+    /// configuration/key owner. The product composition uses this to keep
+    /// migration-process and installed-socket paths on one state machine.
+    pub(crate) fn assert_transport_current_v1(
+        &self,
+        check: impl FnOnce(&T) -> Result<()>,
+    ) -> Result<()> {
+        self.current()?;
+        check(&self.transport)?;
+        self.current()
+    }
+    pub(crate) fn inspect_transport_v1<R>(&self, inspect: impl FnOnce(&T) -> R) -> R {
+        inspect(&self.transport)
+    }
+    pub(crate) fn map_transport<U: MutationAuthorityTransportV1>(
+        self,
+        map: impl FnOnce(T) -> U,
+    ) -> PinnedMutationAuthorityV1<U> {
+        PinnedMutationAuthorityV1 {
+            trust: self.trust,
+            configuration_hash: self.configuration_hash,
+            configuration: self.configuration,
+            public_key_document: self.public_key_document,
+            public_key: self.public_key,
+            transport: map(self.transport),
+        }
+    }
     fn signature(&self, receipt: &Value) -> bool {
-        let Some(encoded) = receipt["signature"].as_str() else {
-            return false;
-        };
-        // Node permits missing padding, but forbids whitespace, URL-safe alphabet,
-        // junk and more than two trailing '=' via its pre-decoding signature regex.
-        let raw = encoded.trim_end_matches('=');
-        let padding = encoded.len() - raw.len();
-        if raw.is_empty()
-            || padding > 2
-            || !raw
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
-        {
-            return false;
-        }
-        // Buffer.from(..., 'base64') ignores unused low bits of the final
-        // sextet. A 64-byte Ed25519 signature always has 86 data characters.
-        if raw.len() != 86 {
-            return false;
-        }
-        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let Some(last) = raw
-            .as_bytes()
-            .last()
-            .and_then(|last| ALPHABET.iter().position(|v| v == last))
-        else {
-            return false;
-        };
-        let mut normalized = raw.as_bytes().to_vec();
-        if let Some(slot) = normalized.last_mut() {
-            *slot = ALPHABET[last & 0b110000];
-        }
-        normalized.extend_from_slice(b"==");
-        let Ok(normalized) = std::str::from_utf8(&normalized) else {
-            return false;
-        };
-        let Ok(bytes) = Base64::decode_vec(normalized) else {
-            return false;
-        };
-        let Ok(signature) = Signature::from_slice(&bytes) else {
-            return false;
-        };
-        let Ok(payload) = online_mutation_signed_payload_v1(receipt) else {
-            return false;
-        };
-        self.public_key
-            .verify_strict(payload.as_bytes(), &signature)
-            .is_ok()
+        verify_public_payload_signature_v1(receipt, &self.public_key)
     }
     fn checked(
         &self,
@@ -423,6 +425,21 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
         }))
     }
 }
+impl
+    PinnedMutationAuthorityV1<
+        crate::local_state_authority_client::LocalStateAuthoritySocketTransportV1,
+    >
+{
+    /// Recheck the pinned verifier inputs and the original kernel socket origin
+    /// without sending a request. Actual RPCs still perform per-connection
+    /// same-origin verification and preserve unknown outcomes after any write.
+    pub(crate) fn assert_socket_current_v1(&self) -> Result<()> {
+        self.current()?;
+        self.transport.assert_origin_current_v1()?;
+        self.current()
+    }
+}
+
 impl PinnedMutationAuthorityV1<ProcessMutationAuthorityTransportV1> {
     /// Revalidate the verifier pins and this concrete process configuration and
     /// executable without invoking the external authority.
@@ -456,4 +473,59 @@ pub(crate) fn verified_for_test(value: serde_json::Value) -> VerifiedMutationRec
         value,
         verifier_identity: String::new(),
     }
+}
+
+/// Public-key-only historical payload verification; no authority token is produced.
+pub(crate) fn verify_public_payload_signature_v1(
+    receipt: &Value,
+    public_key: &VerifyingKey,
+) -> bool {
+    let Some(encoded) = receipt["signature"].as_str() else {
+        return false;
+    };
+    // Node permits missing padding, but forbids whitespace, URL-safe alphabet,
+    // junk and more than two trailing '=' via its pre-decoding signature regex.
+    let raw = encoded.trim_end_matches('=');
+    let padding = encoded.len() - raw.len();
+    if raw.is_empty()
+        || padding > 2
+        || !raw
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+    {
+        return false;
+    }
+    // Buffer.from(..., 'base64') ignores unused low bits of the final
+    // sextet. A 64-byte Ed25519 signature always has 86 data characters.
+    if raw.len() != 86 {
+        return false;
+    }
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let Some(last) = raw
+        .as_bytes()
+        .last()
+        .and_then(|last| ALPHABET.iter().position(|v| v == last))
+    else {
+        return false;
+    };
+    let mut normalized = raw.as_bytes().to_vec();
+    if let Some(slot) = normalized.last_mut() {
+        *slot = ALPHABET[last & 0b110000];
+    }
+    normalized.extend_from_slice(b"==");
+    let Ok(normalized) = std::str::from_utf8(&normalized) else {
+        return false;
+    };
+    let Ok(bytes) = Base64::decode_vec(normalized) else {
+        return false;
+    };
+    let Ok(signature) = Signature::from_slice(&bytes) else {
+        return false;
+    };
+    let Ok(payload) = online_mutation_signed_payload_v1(receipt) else {
+        return false;
+    };
+    public_key
+        .verify_strict(payload.as_bytes(), &signature)
+        .is_ok()
 }

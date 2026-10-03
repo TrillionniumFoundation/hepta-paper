@@ -163,7 +163,9 @@ fn compare(root: &Path, env: &BTreeMap<String, String>, extra: &[&str]) -> Value
     let mut original = Command::new(node());
     original.arg(repository().join("paper-core/bin/autonomous-research-supervisor-health.mjs"));
     let mut native = Command::new(env!("CARGO_BIN_EXE_hepta-autonomous-supervisor-health"));
-    for command in [&mut original, &mut native] {
+    let mut unified = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"));
+    unified.args(["autonomous-supervisor", "--action", "health"]);
+    for command in [&mut original, &mut native, &mut unified] {
         command
             .current_dir(root)
             .env_clear()
@@ -174,38 +176,46 @@ fn compare(root: &Path, env: &BTreeMap<String, String>, extra: &[&str]) -> Value
             .args(extra);
     }
     let start = now();
-    let expected = machine_intake_support::run(&mut original);
-    let before = snapshot(root);
-    let actual = machine_intake_support::run(&mut native);
-    let end = now();
+    let expected_output = machine_intake_support::run(&mut original);
     assert_eq!(
-        actual.status.code(),
-        expected.status.code(),
-        "native={} node={}",
-        String::from_utf8_lossy(&actual.stderr),
-        String::from_utf8_lossy(&expected.stderr)
-    );
-    assert_eq!(
-        actual.status.code(),
+        expected_output.status.code(),
         Some(2),
-        "actual prerequisite blockers must affect process exit"
+        "original Node command must produce its blocked report: {}",
+        String::from_utf8_lossy(&expected_output.stderr)
     );
-    let mut expected: Value = serde_json::from_slice(&expected.stdout).unwrap();
-    let mut actual: Value = serde_json::from_slice(&actual.stdout).unwrap();
-    normalize(&mut expected, start, end);
-    normalize(&mut actual, start, end);
-    assert_eq!(
-        actual, expected,
-        "complete actual CLI report including blocker order and remaining hashes"
-    );
-    assert_eq!(
-        snapshot(root),
-        before,
-        "native source bytes and metadata unchanged"
-    );
-    assert_eq!(actual["fullyAutonomousReady"], false);
-    assert!(!root.join("executed-marker").exists());
-    actual
+    let mut expected: Value = serde_json::from_slice(&expected_output.stdout).unwrap();
+    normalize(&mut expected, start, now());
+    let before = snapshot(root);
+    for command in [&mut native, &mut unified] {
+        let start = now();
+        let actual = machine_intake_support::run(command);
+        assert_eq!(
+            actual.status.code(),
+            expected_output.status.code(),
+            "native={} node={}",
+            String::from_utf8_lossy(&actual.stderr),
+            String::from_utf8_lossy(&expected_output.stderr)
+        );
+        assert_eq!(
+            actual.status.code(),
+            Some(2),
+            "actual blockers control exit"
+        );
+        let mut actual: Value = serde_json::from_slice(&actual.stdout).unwrap();
+        normalize(&mut actual, start, now());
+        assert_eq!(
+            actual, expected,
+            "complete actual CLI report and blocker order"
+        );
+        assert_eq!(
+            snapshot(root),
+            before,
+            "source bytes and metadata unchanged"
+        );
+        assert_eq!(actual["fullyAutonomousReady"], false);
+        assert!(!root.join("executed-marker").exists());
+    }
+    expected
 }
 #[test]
 fn full_cli_empty_sources_match_actual_node_without_provisioning() {

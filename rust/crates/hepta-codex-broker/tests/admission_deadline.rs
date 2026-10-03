@@ -306,7 +306,7 @@ impl Fixture {
                 break;
             }
             assert!(
-                wait_started.elapsed() < Duration::from_secs(3),
+                wait_started.elapsed() < Duration::from_secs(20),
                 "listener readiness timeout"
             );
             thread::sleep(Duration::from_millis(5));

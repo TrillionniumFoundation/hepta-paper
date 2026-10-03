@@ -203,6 +203,15 @@ fn exact_duplicate_returns_existing_without_second_nonce_or_time_drift() {
     }
 
     assert_eq!(store.operation_count().expect("operation count"), 1);
+    let listed = store
+        .list_operation_journals(1)
+        .expect("bounded operation journals");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].operation_id, request.request.operation_id);
+    assert!(matches!(
+        store.list_operation_journals(0),
+        Err(BrokerJournalError::InvalidPolicy)
+    ));
     let connection = rusqlite::Connection::open_with_flags(
         &fixture.path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY

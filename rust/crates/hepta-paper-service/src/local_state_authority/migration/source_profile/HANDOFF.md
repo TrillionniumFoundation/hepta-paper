@@ -20,19 +20,25 @@ can return `quick_check=ok` for a CHECK-violating row while
 `paper-adapters/automation/local-autonomous-research-state-authority-runtime.mjs`.
 It excludes that initializer's journal/synchronous/foreign-key PRAGMAs. A fresh
 memory-only SQLite reference supplies the expected schema metadata. Inspection
-requires `user_version=0`, the complete twelve-object catalog (including every
-autoindex), and exact table/index SQL, `table_xinfo`, `index_list`, and
-`index_xinfo` results. There are six autoindexes overall, including all three
-original mutation uniqueness indexes. Extra tables, indexes, triggers, views,
+accepts exactly two `user_version=0` profiles: the current six-table,
+twelve-object catalog, and the initial five-table, ten-object catalog without
+`authority_schema_rebind` and its autoindex. Each profile requires exact
+table/index SQL, `table_xinfo`, `index_list`, and `index_xinfo` results. The
+current profile has six autoindexes and the initial profile has five, including
+all three original mutation uniqueness indexes. A distinct schema hash and
+profile ID retain the physical schema distinction; the initial profile's absent
+rebind history becomes an empty logical table only after exact schema inspection.
+No other missing table or index is admitted. Extra tables, indexes, triggers, views,
 changed constraints/collations/defaults, mixed native objects, and native schema
 versions are rejected. `quick_check` must return exactly one `ok` row.
 
 All source statements must pass SQLite's `readonly()` check before stepping.
 Queries are restricted to `main`; names passed to table-valued PRAGMAs are bound
 parameters. The complete catalog is compared before querying any source index
-metadata. Each query accepts at most 64 rows, seven columns, 4,096 bytes per text
+metadata, requiring either complete closed profile before index enumeration.
+Each query accepts at most 64 rows, seven columns, 4,096 bytes per text
 cell, and 32 KiB of cell payload; limits are checked before copying values. Once
-the catalog matches, the six tables and six known autoindexes bound the remaining
+the catalog matches, the six fixed table slots and at most six known autoindexes bound the remaining
 query count and report size. These limits bound collected output, not SQLite's
 internal schema parsing or the time required for `quick_check` to scan a large
 database.

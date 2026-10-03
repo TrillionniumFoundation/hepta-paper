@@ -20,8 +20,15 @@ pub mod autonomous_state_partial_root_maintenance;
 pub mod autonomous_state_provision;
 pub mod autonomous_submission_dispatcher;
 pub mod autonomous_submission_dispatcher_challenge;
+pub mod batch_campaign;
+pub mod batch_cli;
+pub mod batch_local_reports;
+pub mod batch_operator;
+pub mod broker_prepared;
 pub mod campaign_policy;
 pub mod campaign_slo;
+pub mod canonical_cli;
+pub mod cli_commands;
 pub mod command_surface;
 mod control_error;
 pub mod critical_module_coverage;
@@ -40,11 +47,34 @@ pub mod local_state_authority_client;
 pub mod machine_intake;
 pub mod maintenance;
 pub mod native_business;
+pub mod native_empirical_markers;
+pub mod native_evidence_consumption;
+pub mod native_inventory;
+pub mod native_latex_theorem_syntax;
+pub mod native_research_assessment;
+pub mod native_research_canonical;
+pub mod native_research_claims;
+pub mod native_research_contract_context;
+pub mod native_research_contracts;
+pub mod native_research_empirical_assertion;
+pub mod native_research_empirical_claim;
+pub mod native_research_evidence;
+pub mod native_research_formal;
+pub mod native_research_gap_plan;
+pub mod native_research_manuscript;
+pub mod native_research_plan;
+pub mod native_research_promotion;
+mod native_research_quality;
+pub mod native_research_source;
+pub mod native_research_source_plan;
+pub mod native_research_support_surfaces;
+pub mod native_research_workflow;
 pub mod native_workspace;
 pub mod nested_runtime_cli;
 pub mod nested_runtime_qualification;
 pub mod node_migration;
 pub(crate) mod node_package_deletion_writer;
+pub mod normal_personal_gpu;
 mod objects;
 pub mod online_authority_evidence_cache;
 pub mod online_authority_inspection;
@@ -52,7 +82,17 @@ pub mod online_mutation_composition;
 pub mod online_schema_execution;
 pub mod online_schema_transition;
 pub mod operational_status;
+pub mod operator_dataset_harness;
+pub mod ordinary_advanced_numerical_plugin;
+pub mod ordinary_campaign_query;
+pub mod ordinary_nested_runtime;
+pub mod ordinary_one_shot;
+pub mod ordinary_portal_target;
+pub mod ordinary_reconcile;
+pub mod ordinary_runtime_r_source_cas;
+pub mod ordinary_state_backup_status;
 pub mod owner_status;
+pub mod personal_self_hosted_cli;
 pub mod personal_self_hosted_formal;
 pub mod personal_self_hosted_gpu;
 pub mod personal_self_hosted_readiness;
@@ -63,10 +103,15 @@ pub mod pristine_runtime_state;
 mod production;
 pub mod qualification_stored_evidence;
 pub mod release_attest;
+pub mod release_evidence;
 pub mod release_integrity_key;
+pub mod release_replay;
 pub mod release_state;
 pub mod release_trust_gate;
+pub mod release_trust_normal;
 pub mod repository_assets;
+mod research;
+mod research_profile;
 pub mod resident_prerequisites;
 pub mod retirement_matrix;
 pub mod retirement_reference;
@@ -113,7 +158,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 use thiserror::Error;
@@ -137,6 +182,12 @@ pub use production::{
     ProductionActivationStageV1, ProductionServiceReceiptV1, ProductionServiceRunV1,
     run_production_service_v1,
 };
+pub use research::{
+    ResearchServiceReceiptV1, ResearchServiceRunV1, ResearchWorkflowReceiptV1,
+    operate_research_local_workflow_with_clock_and_cancellation_v1, run_research_service_v1,
+    run_research_service_with_cancellation_v1, validate_research_service_policy_v1,
+};
+pub use research_profile::{ResearchActivationStageV1, ResearchWorkflowProfileV1};
 pub use worker::{
     NativeJobV1, ServiceExecutorV1, WorkerBindingV1, WorkerResponseV1,
     native_implementation_hash_v1,
@@ -196,6 +247,10 @@ pub enum ServiceError {
     /// Scheduling, verification or commit rejected operation.
     #[error("control-plane operation rejected")]
     Control,
+    /// The campaign commit is durable, but its broker acknowledgement has not
+    /// been confirmed. Retry may resend only the identical signed acknowledgement.
+    #[error("campaign commit is durable but broker acknowledgement requires recovery")]
+    PostCommitAcknowledgement,
     /// An invoked control-plane executor requires inspection; automatic retry is unsafe.
     ///
     /// The diagnostic is copied before the local runtime owner is dropped. It is
@@ -213,6 +268,23 @@ pub enum ServiceError {
 /// Committed plans can be replayed using their identical snapshot and prepared
 /// objects, while new plans must bind the recovered campaign state/revision.
 pub fn run_service_v1(config: ServiceRunV1) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    // A serialized observation is sufficient only for the existing local
+    // fixture/read-only contracts. An effect-capable broker backend always
+    // selects the host clock, even when called through the library or stdin.
+    if config
+        .workers
+        .values()
+        .any(|worker| matches!(worker, WorkerBindingV1::BrokerExecute { .. }))
+    {
+        return run_service_with_clock_v1(config, &mut || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+                .filter(|now| *now > 0)
+                .ok_or(hepta_control_plane::ControlPlaneError::PersistenceInvalid)
+        });
+    }
     let now = config.observed_at_unix_ms;
     run_service_with_clock_v1(config, &mut || Ok(now))
 }
@@ -234,6 +306,21 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
     observe: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    run_service_with_observed_native_deadline_v1(config, observe, cancelled, None)
+}
+/// Only trusted opaque source composition passes an absolute native deadline.
+/// No serialized request field can create or extend that control context.
+pub(crate) fn run_service_with_observed_native_deadline_v1(
+    config: ServiceRunV1,
+    observe: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+    inherited_native_deadline: Option<std::time::Instant>,
+) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    // Publish only values returned by the already-selected trusted composition
+    // clock. Broker-side auxiliary evidence must not open an independent clock
+    // path that can disagree with admission, cancellation or SQLite commit time.
+    let current_time_unix_ms = Arc::new(AtomicU64::new(0));
+    let observed_time = Arc::clone(&current_time_unix_ms);
     let mut checked_clock = || {
         if cancelled.load(Ordering::Acquire) {
             return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
@@ -242,6 +329,10 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         if cancelled.load(Ordering::Acquire) {
             return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
         }
+        if now == 0 {
+            return Err(hepta_control_plane::ControlPlaneError::PersistenceInvalid);
+        }
+        observed_time.store(now, Ordering::Release);
         Ok(now)
     };
     let clock = &mut checked_clock;
@@ -287,13 +378,32 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
                     && configuration_hash
                         == &canonical_hash_v1(worker).map_err(|_| ServiceError::Configuration)?
             }
+            (
+                hepta_module_platform::ModuleExecutionV1::InProcess {
+                    implementation_hash,
+                },
+                WorkerBindingV1::BrokerPrepared { source },
+            ) => {
+                implementation_hash
+                    == &broker_prepared::broker_prepared_implementation_hash_v1(source)?
+            }
+            (
+                hepta_module_platform::ModuleExecutionV1::InProcess {
+                    implementation_hash,
+                },
+                WorkerBindingV1::BrokerExecute { source },
+            ) => {
+                implementation_hash
+                    == &broker_prepared::broker_execution_implementation_hash_v1(source)?
+            }
             _ => false,
         };
         if !matches {
             return Err(ServiceError::Configuration);
         }
     }
-    let objects = ObjectStoreV1::open(&config.state_directory)?;
+    let state_directory = config.state_directory.clone();
+    let objects = ObjectStoreV1::open(&state_directory)?;
     // Outlive both executor and SQLite sequencer, irrespective of their field drop order.
     let _state_access = objects.clone();
     let owner = fs::metadata(&config.state_directory)
@@ -311,6 +421,8 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
     if observed_at < config.observed_at_unix_ms {
         return Err(ServiceError::Persistence);
     }
+    let writer_generation = config.writer_lease.generation;
+    let writer_lease_expires_at_unix_ms = config.writer_lease.expires_at_unix_ms;
     let writer = store
         .acquire_writer(config.writer_lease, observed_at)
         .map_err(|_| ServiceError::Persistence)?;
@@ -341,6 +453,7 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         observed_at,
     )
     .map_err(|_| ServiceError::Persistence)?;
+    let committed_results = sequencer.committed_result_snapshot();
     // Persistent sequencer independently validates plan replay and current state.
     let tenant = config.snapshot.campaign_id.clone();
     let allocator = ResourceAllocatorV1::new(
@@ -356,8 +469,18 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         objects.maximum_object_bytes(),
     )
     .map_err(|_| ServiceError::Artifact)?;
-    let executor =
-        ServiceExecutorV1::new(objects, config.workers)?.with_cancellation(Arc::clone(&cancelled));
+    let executor = ServiceExecutorV1::new(objects, config.workers)?
+        .with_broker_context(broker_prepared::BrokerConsumerContextV1 {
+            campaign_id: config.snapshot.campaign_id.clone(),
+            campaign_revision: config.snapshot.campaign_revision,
+            lease_generation: writer_generation,
+            committed_results,
+            current_time_unix_ms,
+            writer_lease_expires_at_unix_ms,
+        })
+        .with_cancellation(Arc::clone(&cancelled))
+        .with_inherited_native_deadline(inherited_native_deadline);
+    let broker_commit_targets = executor.broker_commit_targets();
     let mut control = ControlPlaneV1::new(
         registry,
         config.hard_policy.registry_policy_hash.clone(),
@@ -370,9 +493,38 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
         BoundedEventLogV1::new(100_000, 100_000).map_err(|_| ServiceError::Control)?,
     )
     .map_err(|_| ServiceError::Control)?;
-    control
+    let receipt = control
         .run_with_clock(&config.snapshot, &config.frontier, &tenant, clock)
-        .map_err(|error| control_error::map_control_run_error(error, control.inspection_required()))
+        .map_err(|error| {
+            control_error::map_control_run_error(error, control.inspection_required())
+        })?;
+    let targets = broker_commit_targets
+        .lock()
+        .map_err(|_| ServiceError::PostCommitAcknowledgement)?
+        .clone();
+    if !targets.is_empty() {
+        for commit_receipt in &receipt.commit_receipts {
+            if let Some(target) = targets.get(&commit_receipt.result_hash) {
+                broker_prepared::acknowledge_committed_result(
+                    &state_directory,
+                    target,
+                    commit_receipt,
+                    clock,
+                    &cancelled,
+                )
+                .map_err(|_| ServiceError::PostCommitAcknowledgement)?;
+            }
+        }
+        if targets.keys().any(|result_hash| {
+            !receipt
+                .commit_receipts
+                .iter()
+                .any(|r| &r.result_hash == result_hash)
+        }) {
+            return Err(ServiceError::PostCommitAcknowledgement);
+        }
+    }
+    Ok(receipt)
 }
 
 /// Hash the full run configuration, for external binding and review.
@@ -400,3 +552,5 @@ pub mod topic_producer_status;
 
 /// Preserved bounded computational contracts; current command routes are unchanged.
 pub mod native_parity_bounded_v1;
+
+pub mod ordinary_readonly_frontend;

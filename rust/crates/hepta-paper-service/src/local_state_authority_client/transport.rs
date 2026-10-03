@@ -76,6 +76,29 @@ impl LocalStateAuthoritySocketTransportV1 {
         };
         Ok((first, second))
     }
+
+    /// Create another channel bound to the exact same kernel-observed listener.
+    /// No new baseline is observed and no request is sent. This is crate-private
+    /// so product composition, rather than a caller, owns channel fan-out.
+    pub(crate) fn same_origin_channel_v1(&self) -> Self {
+        Self {
+            options: self.options.clone(),
+            origin: Arc::clone(&self.origin),
+        }
+    }
+
+    /// Recheck the retained socket namespace and original peer liveness without
+    /// issuing an authority RPC or opening D-Bus. Safe for retained SQLite-owner
+    /// currentness checks; every actual RPC performs the stronger per-connection
+    /// same-origin checks again.
+    pub(crate) fn assert_origin_current_v1(&self) -> CoordinatorResult<()> {
+        let check = || -> Result<()> {
+            configuration(&self.options)?;
+            let deadline = Instant::now() + Duration::from_millis(self.options.timeout_ms);
+            self.origin.assert_alive(deadline)
+        };
+        check().map_err(|cause| annotated(cause, 0))
+    }
 }
 
 impl MutationAuthorityTransportV1 for LocalStateAuthoritySocketTransportV1 {

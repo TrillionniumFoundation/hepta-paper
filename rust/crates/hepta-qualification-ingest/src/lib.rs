@@ -3,14 +3,19 @@
 #[cfg(not(unix))]
 compile_error!("hepta-qualification-ingest requires Unix file identity semantics");
 
+extern crate self as hepta_qualification_ingest;
+
 mod closure;
 mod package_payload;
+pub mod qualification_closure;
 
 pub use closure::{
     ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,
     ExternalQualificationRuntimeFactsV1, QualificationClosureError, QualificationClosureProfile,
-    VerifiedExternalQualificationClosureV1, verify_external_qualification_closure_v1,
-    verify_external_qualification_closure_v2,
+    QualifiedCodexRoleRuntimeIdentityV2, VerifiedExternalQualificationClosureV1,
+    VerifiedResearchQualificationV3, verify_external_qualification_closure_v1,
+    verify_external_qualification_closure_v2, verify_research_qualification_v3,
+    verify_research_qualification_v4,
 };
 
 pub use package_payload::{
@@ -81,6 +86,25 @@ impl QualificationPackageIdV1 {
         Self::ExtCodexRole001,
         Self::ExtCutoverSoak001,
         Self::ExtAuthoritySet001,
+    ];
+
+    /// Fixed restricted-research set. No publication/submission authority set
+    /// is required or accepted; host/storage/key/role/cutover safety remains.
+    pub const RESEARCH_REQUIRED: [Self; 5] = [
+        Self::ExtHostCgroup001,
+        Self::ExtHostStorage001,
+        Self::ExtKeyOwner001,
+        Self::ExtCodexRole001,
+        Self::ExtCutoverSoak001,
+    ];
+
+    /// Restricted research V4 retains signed containment, storage recovery,
+    /// capability-key and isolated role evidence without a writer transfer.
+    pub const RESEARCH_V4_REQUIRED: [Self; 4] = [
+        Self::ExtHostCgroup001,
+        Self::ExtHostStorage001,
+        Self::ExtKeyOwner001,
+        Self::ExtCodexRole001,
     ];
 
     /// Canonical externally visible package identifier.

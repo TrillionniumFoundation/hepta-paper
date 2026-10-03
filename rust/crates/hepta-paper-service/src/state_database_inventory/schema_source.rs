@@ -1,6 +1,7 @@
 //! Internal file observations for migration planning. A pre-transition database
 //! need not satisfy the live-inventory schema and cannot become a ready inventory.
 mod copy;
+pub(crate) use super::files::MAX_FILE_BYTES as MAX_SCHEMA_SOURCE_FILE_BYTES;
 use super::{files, *};
 use crate::online_schema_transition::target_schema::{
     SchemaTransitionTargetV1, project_schema_transition_target_v1,

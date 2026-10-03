@@ -11,6 +11,8 @@ use std::collections::BTreeSet;
 
 const SOURCE_SCHEMA: &str = include_str!("source_schema.sql");
 const DOMAIN: &str = "HeptaLocalStateAuthorityNodeJournalSourceSchemaV1";
+const CURRENT_PROFILE: &str = "node_journal_v1_with_schema_rebind";
+const INITIAL_PROFILE: &str = "node_journal_v1_initial_without_schema_rebind";
 const MAX_ROWS: usize = 64;
 const MAX_COLUMNS: usize = 7;
 const MAX_CELL_BYTES: usize = 4096;
@@ -29,6 +31,8 @@ const TABLES: [&str; 6] = [
 pub(super) struct SourceProfile {
     schema: Value,
     schema_hash: String,
+    profile_id: &'static str,
+    schema_rebind_present: bool,
 }
 impl SourceProfile {
     pub(super) fn schema(&self) -> &Value {
@@ -37,9 +41,15 @@ impl SourceProfile {
     pub(super) fn schema_hash(&self) -> &str {
         &self.schema_hash
     }
+    pub(super) fn profile_id(&self) -> &str {
+        self.profile_id
+    }
+    pub(super) fn schema_rebind_present(&self) -> bool {
+        self.schema_rebind_present
+    }
 }
 
-/// Inspect exactly the six-table, user_version=0 Node journal schema.
+/// Inspect either closed five/six-table, user_version=0 Node journal schema.
 ///
 /// A bare BEGIN DEFERRED is insufficient: main must already hold a snapshot or
 /// writer transaction. The function never changes transaction or connection
@@ -59,13 +69,22 @@ pub(super) fn inspect_source_schema(db: &Connection) -> Result<SourceProfile> {
     if integer(db, "PRAGMA main.user_version")? != 0 {
         return Err(error("local_authority_source_schema_version_invalid"));
     }
-    let reference = Connection::open_in_memory()?;
-    reference.execute_batch(SOURCE_SCHEMA)?;
-    let expected = observe_structure(&reference, None)?;
-    let actual = observe_structure(db, Some(&expected["catalog"]))?;
-    if actual != expected {
+    let current_reference = Connection::open_in_memory()?;
+    current_reference.execute_batch(SOURCE_SCHEMA)?;
+    let current = observe_structure(&current_reference, None)?;
+    let initial_reference = Connection::open_in_memory()?;
+    initial_reference.execute_batch(SOURCE_SCHEMA)?;
+    initial_reference.execute_batch("DROP TABLE authority_schema_rebind")?;
+    let initial = observe_structure(&initial_reference, None)?;
+    let accepted_catalogs = [&current["catalog"], &initial["catalog"]];
+    let actual = observe_structure(db, Some(&accepted_catalogs))?;
+    let (profile_id, schema_rebind_present) = if actual == current {
+        (CURRENT_PROFILE, true)
+    } else if actual == initial {
+        (INITIAL_PROFILE, false)
+    } else {
         return Err(error("local_authority_source_schema_mismatch"));
-    }
+    };
     if rows(db, "PRAGMA main.quick_check", [])? != vec![json!(["ok"])] {
         return Err(error("local_authority_source_schema_integrity_invalid"));
     }
@@ -76,6 +95,49 @@ pub(super) fn inspect_source_schema(db: &Connection) -> Result<SourceProfile> {
     Ok(SourceProfile {
         schema: actual,
         schema_hash,
+        profile_id,
+        schema_rebind_present,
+    })
+}
+
+/// Separate installed observation of an already native journal. The closed
+/// full catalog and actual singleton key identity are checked; this never
+/// widens the public legacy source inspector or produces activation authority.
+pub(super) fn inspect_native_schema(db: &Connection, key_hash: &str) -> Result<SourceProfile> {
+    let before = held_main_state(db)?;
+    let changes = db.total_changes();
+    if integer(db, "PRAGMA ignore_check_constraints")? != 0
+        || integer(db, "PRAGMA writable_schema")? != 0
+        || integer(db, "PRAGMA main.user_version")? != 1
+    {
+        return Err(error("local_authority_native_snapshot_invalid"));
+    }
+    crate::local_state_authority::storage::assert_schema(db)?;
+    let reference = Connection::open_in_memory()?;
+    reference.execute_batch(include_str!("../schema.sql"))?;
+    reference.pragma_update(None, "user_version", 1)?;
+    let expected = observe_structure(&reference, None)?;
+    let actual = observe_structure(db, Some(&[&expected["catalog"]]))?;
+    if actual != expected
+        || rows(db, "PRAGMA main.quick_check", [])? != vec![json!(["ok"])]
+        || rows(
+            db,
+            "SELECT singleton,key_hash FROM main.authority_native_identity ORDER BY singleton",
+            [],
+        )? != vec![json!([1, key_hash])]
+        || held_main_state(db)? != before
+        || db.total_changes() != changes
+    {
+        return Err(error("local_authority_native_snapshot_invalid"));
+    }
+    Ok(SourceProfile {
+        schema_hash: hash(
+            "HeptaLocalStateAuthorityNativeJournalSourceSchemaV1",
+            &actual,
+        )?,
+        schema: actual,
+        profile_id: "native_authority_journal_v1",
+        schema_rebind_present: true,
     })
 }
 
@@ -89,7 +151,7 @@ fn held_main_state(db: &Connection) -> Result<TransactionState> {
     Ok(state)
 }
 
-fn observe_structure(db: &Connection, expected_catalog: Option<&Value>) -> Result<Value> {
+fn observe_structure(db: &Connection, expected_catalogs: Option<&[&Value]>) -> Result<Value> {
     let catalog = rows(
         db,
         "SELECT type,name,tbl_name,rootpage,sql FROM main.sqlite_schema ORDER BY type COLLATE BINARY,name COLLATE BINARY",
@@ -110,11 +172,11 @@ fn observe_structure(db: &Connection, expected_catalog: Option<&Value>) -> Resul
         schema.push(json!([row[0], row[1], row[2], row[4]]));
     }
     let schema = Value::Array(schema);
-    if expected_catalog.is_some_and(|expected| expected != &schema) {
+    if expected_catalogs.is_some_and(|expected| !expected.contains(&&schema)) {
         return Err(error("local_authority_source_schema_mismatch"));
     }
-    // Only after the entire catalog matches do we inspect the fixed six tables
-    // and their six known autoindexes. Together with rows() limits this closes
+    // Only after the entire catalog matches one closed profile do we inspect
+    // the fixed table slots and at most six known autoindexes. This closes
     // the query count and total observation size, including malformed sources.
     let mut tables = Vec::new();
     for name in TABLES {

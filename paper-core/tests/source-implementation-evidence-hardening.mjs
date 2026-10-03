@@ -5,6 +5,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { declaresTestOwner, validateCommand } from '../bin/verify-source-implementation-evidence.mjs';
+import { stripRustInertText, rustSymbolMatches, rustSymbolCfgGated } from '../src/source-evidence-rust-symbols.mjs';
+import { captureCommittedSourceSubject, git } from '../src/source-evidence-git-inputs.mjs';
+import { verifyProspectiveMerge } from '../../docs/tools/prepare-prospective-merge.mjs';
+
+export { stripRustInertText };
 
 const EVIDENCE = 'docs/system/evidence/repository-source-implementation-v1.json';
 const FUNCTIONAL_EVIDENCE = 'docs/system/evidence/rust-functional-source-closure-v1.json';
@@ -33,10 +39,6 @@ function run(program, args, options = {}) {
   if (result.error) fail('spawn_failed', `${program}: ${result.error.message}`);
   if (result.status !== 0) fail('command_failed', `${program} ${args.join(' ')}\n${result.stdout}\n${result.stderr}`);
   return result.stdout;
-}
-
-function git(root, args) {
-  return run('git', ['-C', root, ...args]).trim();
 }
 
 function sha256File(file) {
@@ -81,7 +83,7 @@ function assertClosedCheckout(root) {
 }
 
 function readJsonAt(root, ref, relative) {
-  return JSON.parse(run('git', ['-C', root, 'show', `${ref}:${relative}`]));
+  return JSON.parse(git(root, ['show', `${ref}:${relative}`]));
 }
 
 function canonical(value) {
@@ -253,136 +255,73 @@ function assertRegistryDelta(base, target, evidenceRecords) {
   const stageCapabilities = base.capabilities;
   const targetCapabilities = target.capabilities;
   const expectedCapabilities = structuredClone(stageCapabilities);
-  if (targetWork?.items?.['GAP-GOV-003']?.state === 'retired') {
-    for (const capability of Object.values(expectedCapabilities.capabilities ?? {})) {
-      if (Array.isArray(capability.externalBlockerIds)) {
-        capability.externalBlockerIds = capability.externalBlockerIds.filter((id) => id !== 'GAP-GOV-003');
-      }
+  // Owner-retired human-approval/staffing prerequisites are not external
+  // operational authorities. Once retired in machine truth, they must not remain
+  // active capability blockers. No other blocker, authority or capability field
+  // is permitted to change through this policy exception.
+  const retiredGovernanceBlockers = new Set(
+    ['GAP-GOV-003', 'QUAL-005', 'MOD-007']
+      .filter((id) => targetWork?.items?.[id]?.state === 'retired'),
+  );
+  for (const capability of Object.values(expectedCapabilities.capabilities ?? {})) {
+    if (Array.isArray(capability.externalBlockerIds)) {
+      capability.externalBlockerIds = capability.externalBlockerIds
+        .filter((id) => !retiredGovernanceBlockers.has(id));
     }
   }
   if (!equal(expectedCapabilities, targetCapabilities)) fail('candidate_registry_drift', CAPABILITIES);
-}
-
-function blankRange(chars, start, end) {
-  for (let i = start; i < end; i += 1) if (chars[i] !== '\n' && chars[i] !== '\r') chars[i] = ' ';
-}
-
-export function stripRustInertText(source) {
-  const chars = [...source];
-  let i = 0;
-  while (i < chars.length) {
-    if (chars[i] === '/' && chars[i + 1] === '/') {
-      const start = i;
-      i += 2;
-      while (i < chars.length && chars[i] !== '\n') i += 1;
-      blankRange(chars, start, i);
-      continue;
-    }
-    if (chars[i] === '/' && chars[i + 1] === '*') {
-      const start = i;
-      i += 2;
-      let depth = 1;
-      while (i < chars.length && depth > 0) {
-        if (chars[i] === '/' && chars[i + 1] === '*') { depth += 1; i += 2; continue; }
-        if (chars[i] === '*' && chars[i + 1] === '/') { depth -= 1; i += 2; continue; }
-        i += 1;
-      }
-      if (depth !== 0) fail('unterminated_block_comment');
-      blankRange(chars, start, i);
-      continue;
-    }
-    const rawStart = source.slice(i).match(/^(?:br|r)(#*)"/u);
-    if (rawStart) {
-      const start = i;
-      const hashes = rawStart[1];
-      i += rawStart[0].length;
-      const close = `"${hashes}`;
-      const end = source.indexOf(close, i);
-      if (end < 0) fail('unterminated_raw_string');
-      i = end + close.length;
-      blankRange(chars, start, i);
-      continue;
-    }
-    if (chars[i] === '"' || (chars[i] === 'b' && chars[i + 1] === '"')) {
-      const start = i;
-      if (chars[i] === 'b') i += 1;
-      i += 1;
-      while (i < chars.length) {
-        if (chars[i] === '\\') { i += 2; continue; }
-        if (chars[i] === '"') { i += 1; break; }
-        i += 1;
-      }
-      blankRange(chars, start, i);
-      continue;
-    }
-    if (chars[i] === '\'' || (chars[i] === 'b' && chars[i + 1] === '\'')) {
-      const start = i;
-      if (chars[i] === 'b') i += 1;
-      i += 1;
-      while (i < chars.length) {
-        if (chars[i] === '\\') { i += 2; continue; }
-        if (chars[i] === '\'') { i += 1; break; }
-        if (chars[i] === '\n') break;
-        i += 1;
-      }
-      blankRange(chars, start, i);
-      continue;
-    }
-    i += 1;
-  }
-  return chars.join('');
-}
-
-function escapeRegex(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function rustSymbolRegex(symbol) {
-  const name = escapeRegex(symbol.name);
-  if (symbol.kind === 'test') return new RegExp(`#\\s*\\[\\s*test\\s*\\]\\s*(?:#\\s*\\[[^\\]]+\\]\\s*)*(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`, 'gu');
-  if (symbol.kind === 'function') return new RegExp(`(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\s*\\(`, 'gu');
-  if (symbol.kind === 'type') return new RegExp(`(?:struct|enum|trait|type)\\s+${name}\\b`, 'gu');
-  return new RegExp(`(?:const|static)\\s+${name}\\b`, 'gu');
 }
 
 function assertRustSymbolOwnership(root, entry) {
   const source = fs.readFileSync(path.join(root, entry.path), 'utf8');
   const live = stripRustInertText(source);
   for (const symbol of entry.symbols) {
-    const matches = [...live.matchAll(rustSymbolRegex(symbol))];
+    const matches = rustSymbolMatches(live, symbol);
     if (matches.length !== 1) fail('rust_symbol_not_unique_live', `${entry.path}:${symbol.kind}:${symbol.name}:${matches.length}`);
-    const index = matches[0].index ?? 0;
-    const localPrefix = live.slice(Math.max(0, index - 320), index);
-    const attrs = localPrefix.match(/(?:#\s*\[[^\]]+\]\s*)+$/u)?.[0] ?? '';
-    if (/\bcfg(?:_attr)?\s*\(/u.test(attrs)) fail('rust_symbol_cfg_gated', `${entry.path}:${symbol.name}`);
+    if (rustSymbolCfgGated(live, matches[0])) fail('rust_symbol_cfg_gated', `${entry.path}:${symbol.name}`);
   }
 }
 
-function parseCargoTestBinding(command) {
-  const args = command.args ?? [];
-  if (args[0] !== 'test') fail('cargo_command_not_test');
-  const packageIndex = args.indexOf('-p');
-  if (packageIndex < 0 || !args[packageIndex + 1]) fail('cargo_package_selector_missing');
-  const separatorIndex = args.indexOf('--');
-  const commandEnd = separatorIndex < 0 ? args.length : separatorIndex;
-  const testTargetIndex = args.indexOf('--test');
-  let selectorIndex = packageIndex + 2;
-  const discoveryPrefix = ['test', '--locked', '-p', args[packageIndex + 1]];
-  if (testTargetIndex >= 0 && testTargetIndex < commandEnd) {
-    const target = args[testTargetIndex + 1];
-    if (!target || testTargetIndex + 2 >= commandEnd) fail('cargo_integration_test_selector_missing');
-    discoveryPrefix.push('--test', target);
-    selectorIndex = testTargetIndex + 2;
+function cargoDiscoveryIndex(stdout, label) {
+  const tests = new Set();
+  const ansiColor = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'gu');
+  for (const raw of stdout.replace(ansiColor, '').split(/\r?\n/u)) {
+    const row = raw.trim();
+    if (!row.endsWith(': test')) continue;
+    const selector = row.slice(0, -': test'.length);
+    if (!selector || tests.has(selector)) fail('cargo_discovery_inventory_invalid', label);
+    tests.add(selector);
   }
-  const selector = args[selectorIndex];
-  if (!selector || selector.startsWith('-') || selectorIndex >= commandEnd) fail('cargo_test_selector_missing');
-  return { selector, discoveryPrefix };
+  if (tests.size === 0) fail('cargo_discovery_inventory_empty', label);
+  return tests;
 }
 
-function assertCargoBinding(root, bundleId, bundle, command, runtime) {
+function currentCargoTargetTests(root, runtime, discoveryPrefix, timeout, inventories) {
+  // Reuse only this process's actual compiled-target observation. No inventory
+  // is read from disk or reused across commits, tools, roots, or invocations.
+  const key = JSON.stringify([root, runtime.cargo.path, runtime.cargo.sha256, discoveryPrefix]);
+  if (!inventories.has(key)) {
+    const stdout = run(runtime.cargo.path, [...discoveryPrefix, '--', '--list'], {
+      cwd: path.join(root, 'rust'),
+      timeout,
+    });
+    inventories.set(key, cargoDiscoveryIndex(stdout, discoveryPrefix.join(' ')));
+  }
+  return inventories.get(key);
+}
+
+function assertCargoBinding(root, bundleId, bundle, command, runtime, inventories) {
   if (command.program !== 'cargo') return;
-  const { selector, discoveryPrefix } = parseCargoTestBinding(command);
-  const targetEntries = bundle.files.filter((entry) => command.expectedTargets.includes(entry.path) && entry.role === 'test');
+  const testPaths = new Set(bundle.files
+    .filter(declaresTestOwner)
+    .map((entry) => entry.path));
+  const { selector, discoveryPrefix } = validateCommand(
+    command,
+    `bundle.${bundleId}`,
+    testPaths,
+  ).ownerBinding;
+  const targetEntries = bundle.files.filter((entry) => command.expectedTargets.includes(entry.path)
+    && declaresTestOwner(entry));
   if (targetEntries.length !== command.expectedTargets.length || targetEntries.length < 1) fail('cargo_target_cardinality', bundleId);
   const symbolName = selector.split('::').at(-1);
   const owners = [];
@@ -395,25 +334,47 @@ function assertCargoBinding(root, bundleId, bundle, command, runtime) {
   if (owners.length !== 1) fail('cargo_selector_declared_owner_cardinality', `${selector}:${owners.length}`);
   const { entry, symbol } = owners[0];
   const source = stripRustInertText(fs.readFileSync(path.join(root, entry.path), 'utf8'));
-  const matches = [...source.matchAll(rustSymbolRegex(symbol))];
+  const matches = rustSymbolMatches(source, symbol);
   if (matches.length !== 1) fail('cargo_declared_test_not_unique_live', `${entry.path}:${symbol.name}:${matches.length}`);
 
-  const discoveryArgs = [...discoveryPrefix, selector, '--', '--exact', '--list'];
-  const stdout = run(runtime.cargo.path, discoveryArgs, { cwd: path.join(root, 'rust'), timeout: command.timeoutSeconds * 1000 });
-  const discovered = stdout.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.endsWith(': test'));
-  if (discovered.length !== 1 || discovered[0] !== `${selector}: test`) {
-    fail('cargo_discovery_binding_failed', `${selector}:${JSON.stringify(discovered)}`);
+  // Discovery may be the first Cargo command in a clean prospective-merge target.
+  // Keep the exact selector ownership proof, but give cold dependency + test-harness
+  // compilation enough time instead of inheriting a historical 300s per-test
+  // execution budget. The enclosing workflow still has its independent job
+  // deadline, so this does not turn a hung discovery into an unbounded pass.
+  const discoveryTimeoutMs = Math.max(command.timeoutSeconds * 1000, 600_000);
+  const discovered = currentCargoTargetTests(root, runtime, discoveryPrefix, discoveryTimeoutMs, inventories);
+  if (!discovered.has(selector)) {
+    fail('cargo_discovery_binding_failed', `${selector}:absent_from_actual_target_inventory`);
   }
 }
 
-function validateEvidenceSemantics(root, evidence, runtime) {
+function validateEvidenceSemantics(root, evidence, runtime, inventories) {
   for (const [bundleId, bundle] of Object.entries(evidence.bundles ?? {})) {
     for (const entry of bundle.files ?? []) if (entry.language === 'rust') assertRustSymbolOwnership(root, entry);
-    for (const command of bundle.verificationCommands ?? []) assertCargoBinding(root, bundleId, bundle, command, runtime);
+    for (const command of bundle.verificationCommands ?? []) assertCargoBinding(root, bundleId, bundle, command, runtime, inventories);
   }
 }
 
 function selfTest() {
+  assert.deepEqual([...cargoDiscoveryIndex('module::first: test\nmodule::second: test\n2 tests, 0 benchmarks\n', 'ordinary')], ['module::first', 'module::second']);
+  assert.deepEqual([...cargoDiscoveryIndex('\u001b[32mmodule::first: test\u001b[0m\r\n', 'ansi')], ['module::first']);
+  assert.throws(() => cargoDiscoveryIndex('0 tests, 0 benchmarks\n', 'zero'), /cargo_discovery_inventory_empty/u);
+  assert.throws(() => cargoDiscoveryIndex('module::first: test\nmodule::first: test\n', 'duplicate'), /cargo_discovery_inventory_invalid/u);
+  assert.equal(cargoDiscoveryIndex('module::first: test\n', 'missing').has('module::absent'), false);
+  const inventories = new Map();
+  const fakeRuntime = { cargo: { path: '/qualified/cargo', sha256: 'sha256:original' } };
+  const prefix = ['test', '--locked', '-p', 'crate-a', '--lib'];
+  const existingKey = JSON.stringify(['/source', fakeRuntime.cargo.path, fakeRuntime.cargo.sha256, prefix]);
+  const observedTests = new Set(['module::first']);
+  inventories.set(existingKey, observedTests);
+  assert.equal(currentCargoTargetTests('/source', fakeRuntime, prefix, 30, inventories), observedTests);
+  assert.equal(inventories.has(JSON.stringify(['/other-source', fakeRuntime.cargo.path, fakeRuntime.cargo.sha256, prefix])), false);
+  assert.equal(inventories.has(JSON.stringify(['/source', fakeRuntime.cargo.path, 'sha256:changed', prefix])), false);
+  assert.equal(inventories.has(JSON.stringify(['/source', fakeRuntime.cargo.path, fakeRuntime.cargo.sha256, [...prefix.slice(0, -1), '--test', 'other-target']])), false);
+  const generic = stripRustInertText('pub fn generic_owner<T: Clone>(value: T) -> T { value }');
+  assert.equal(rustSymbolMatches(generic, { kind: 'function', name: 'generic_owner' }).length, 1,
+    'a real generic function is a source owner, not a missing textual shape');
   const live = 'fn real() {}\n#[test]\nfn live_test() {}\n';
   const inert = '// fn fake() {}\nconst S: &str = "fn hidden() {}";\nr#"#[test] fn raw_fake() {}"#;\n/* fn blocked() {} */\n';
   const stripped = stripRustInertText(`${live}${inert}`);
@@ -422,9 +383,44 @@ function selfTest() {
     if (new RegExp(`fn\\s+${name}\\s*\\(`, 'u').test(stripped)) fail('selftest_inert_visible', name);
   }
   const cfg = stripRustInertText('#[cfg(feature = "never")]\nfn gated() {}\n');
-  const match = [...cfg.matchAll(rustSymbolRegex({ kind: 'function', name: 'gated' }))][0];
-  const attrs = cfg.slice(Math.max(0, match.index - 320), match.index).match(/(?:#\s*\[[^\]]+\]\s*)+$/u)?.[0] ?? '';
-  if (!/\bcfg(?:_attr)?\s*\(/u.test(attrs)) fail('selftest_cfg_not_detected');
+  const match = rustSymbolMatches(cfg, { kind: 'function', name: 'gated' })[0];
+  if (!rustSymbolCfgGated(cfg, match)) fail('selftest_cfg_not_detected');
+  const genericSymbol = { kind: 'function', name: 'generic_owner' };
+  for (const source of [
+    'pub fn generic_owner<T: Clone>(value: T) -> T { value }',
+    "pub(crate) fn generic_owner<'a, T: for<'b> Fn(&'b str) -> Vec<u8>>(value: &'a T) {}",
+    'fn generic_owner<const N: usize>(value: [u8; N]) -> [u8; N] { value }',
+    'fn generic_owner<T: Trait<{1 > 0}>>() {}',
+    'fn generic_owner<T: Fn() -> Vec<(u8, u8)>>(_: T) {}',
+    String.raw`const U: &str = "🦀"; const R: &str = r###" " fn raw_decoy<T>() {} " "###; fn generic_owner<'α>(x: &'α str) {}`,
+    String.raw`const C: char = '\''; const B: u8 = b'>'; fn generic_owner<T>() {}`,
+  ]) {
+    const tokens = stripRustInertText(source);
+    assert.equal(rustSymbolMatches(tokens, genericSymbol).length, 1, source);
+    assert.equal(rustSymbolMatches(tokens, { kind: 'function', name: 'raw_decoy' }).length, 0);
+    assert.equal(tokens.length, source.length, 'source positions must retain UTF-16 offsets');
+  }
+  for (const source of [
+    '// fn generic_owner<T>() {}',
+    '/* nested /* fn generic_owner<T>() {} */ comment */',
+    String.raw`const X: &str = "fn generic_owner<T>() {}";`,
+    String.raw`const X: &str = r###" " fn generic_owner<T>() {} " "###;`,
+    'fn generic_owner<T', 'fn generic_owner<T>;', 'fn generic_owner<(T]>() {}',
+    'fn generic_owner_extra<T>() {}',
+  ]) assert.equal(rustSymbolMatches(stripRustInertText(source), genericSymbol).length, 0, source);
+  assert.equal(rustSymbolMatches('fn generic_owner<T>() {} fn generic_owner<U>() {}', genericSymbol).length, 2);
+  for (const source of [
+    '#[cfg(feature = "absent")]\npub fn generic_owner<T>() {}',
+    `#[cfg_attr(any(), cfg(any()))]${' '.repeat(1024)}pub fn generic_owner<T>() {}`,
+    '#[cfg(any())]\npub unsafe extern "C" fn generic_owner<T>() {}',
+  ]) {
+    const tokens = stripRustInertText(source);
+    const [found] = rustSymbolMatches(tokens, genericSymbol);
+    assert.ok(found); assert.equal(rustSymbolCfgGated(tokens, found), true);
+  }
+  const annotatedTest = stripRustInertText('#[test]\n#[cfg(any())]\nfn guarded_test() {}');
+  const [testMatch] = rustSymbolMatches(annotatedTest, { kind: 'test', name: 'guarded_test' });
+  assert.ok(testMatch); assert.equal(rustSymbolCfgGated(annotatedTest, testMatch), true);
   const base = {
     work: { items: { 'TEST-001': {
       state: 'source_implemented', evidenceTier: 'source', moduleId: 'module.example',
@@ -465,30 +461,62 @@ function selfTest() {
   const unrelated = structuredClone(base);
   unrelated.work.items['OTHER-001'] = structuredClone(base.work.items['TEST-001']);
   assert.throws(() => assertRegistryDelta(base, unrelated, records), /candidate_registry_drift/u);
-  assert.deepEqual(
-    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', 'module::case', '--', '--exact'] }),
-    { selector: 'module::case', discoveryPrefix: ['test', '--locked', '-p', 'crate-a'] },
-  );
-  assert.deepEqual(
-    parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', 'case_a', '--', '--exact'] }),
-    { selector: 'case_a', discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a'] },
-  );
-  assert.throws(
-    () => parseCargoTestBinding({ args: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a', '--', '--exact'] }),
-    /cargo_integration_test_selector_missing/u,
-  );
+  assert.deepEqual(validateCommand({
+    args: ['test', '--locked', '-p', 'crate-a', '--lib', 'module::case', '--', '--exact', '--nocapture'],
+    expectedExitCode: 0,
+    expectedTargets: ['rust/crates/crate-a/src/module/tests.rs'],
+    program: 'cargo',
+    timeoutSeconds: 30,
+    workdir: 'rust',
+  }, 'library', new Set(['rust/crates/crate-a/src/module/tests.rs'])).ownerBinding, {
+    discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--lib'],
+    packageName: 'crate-a',
+    selector: 'module::case',
+    targetKind: 'library',
+    testTarget: null,
+  });
+  assert.deepEqual(validateCommand({
+    args: [
+      'test', '--locked', '-p', 'crate-a', '--test', 'integration_a',
+      'case_a', '--', '--exact', '--nocapture',
+    ],
+    expectedExitCode: 0,
+    expectedTargets: ['rust/crates/crate-a/tests/integration_a/nested.rs'],
+    program: 'cargo',
+    timeoutSeconds: 30,
+    workdir: 'rust',
+  }, 'integration', new Set(['rust/crates/crate-a/tests/integration_a/nested.rs'])).ownerBinding, {
+    discoveryPrefix: ['test', '--locked', '-p', 'crate-a', '--test', 'integration_a'],
+    packageName: 'crate-a',
+    selector: 'case_a',
+    targetKind: 'integration',
+    testTarget: 'integration_a',
+  });
+  assert.throws(() => validateCommand({
+    args: ['test', '--locked', '-p', 'crate-a', 'module::case', '--', '--exact', '--nocapture'],
+    expectedExitCode: 0,
+    expectedTargets: ['rust/crates/crate-a/src/module/tests.rs'],
+    program: 'cargo',
+    timeoutSeconds: 30,
+    workdir: 'rust',
+  }, 'unscoped', new Set(['rust/crates/crate-a/src/module/tests.rs'])), /cargo_command_not_allowlisted/u);
   const policyBase = structuredClone(base);
-  policyBase.work.items['GAP-GOV-003'] = {
-    state: 'blocked_external', evidenceTier: 'external_authority', moduleId: 'module.example',
-  };
-  policyBase.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-GOV-003', 'GAP-HOST-001'];
+  for (const id of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) {
+    policyBase.work.items[id] = {
+      state: 'blocked_external', evidenceTier: 'external_authority', moduleId: 'module.example',
+    };
+  }
+  policyBase.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = [
+    'GAP-GOV-003', 'QUAL-005', 'MOD-007', 'GAP-HOST-001',
+  ];
   const retired = structuredClone(policyBase);
-  retired.work.items['GAP-GOV-003'].state = 'retired';
+  for (const id of ['GAP-GOV-003', 'QUAL-005', 'MOD-007']) retired.work.items[id].state = 'retired';
   retired.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = ['GAP-HOST-001'];
   assert.doesNotThrow(() => assertRegistryDelta(policyBase, retired, records));
   for (const change of [
     (candidate) => { candidate.work.items['GAP-GOV-003'].state = 'source_qualified'; },
-    (candidate) => { candidate.work.items['GAP-GOV-003'].evidenceTier = 'source'; },
+    (candidate) => { candidate.work.items['QUAL-005'].evidenceTier = 'source'; },
+    (candidate) => { candidate.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds.push('MOD-007'); },
     (candidate) => { candidate.capabilities.capabilities['CAP-EXAMPLE'].externalBlockerIds = []; },
     (candidate) => { candidate.modules.modules['module.example'].activation = 'authoritative'; },
     (candidate) => { candidate.work.items['TEST-001'].state = 'retired'; },
@@ -524,6 +552,16 @@ const root = git(process.cwd(), ['rev-parse', '--show-toplevel']);
 assertClosedCheckout(root);
 const targetHead = git(root, ['rev-parse', options.target]);
 const prBase = git(root, ['rev-parse', options.base]);
+const sourceSubject = captureCommittedSourceSubject(root);
+if (!sourceSubject.committedClean) {
+  fail('hardening_source_subject_mismatch', targetHead);
+}
+let sourceSubjectKind = 'exact-head';
+if (sourceSubject.commit !== targetHead) {
+  const observedMerge = verifyProspectiveMerge({ root, base: prBase, target: targetHead, commit: sourceSubject.commit });
+  if (observedMerge.tree !== sourceSubject.tree) fail('hardening_source_subject_mismatch', targetHead);
+  sourceSubjectKind = 'prospective-merge';
+}
 assertAncestor(root, prBase, targetHead, 'pr-base-to-target');
 assertAncestor(root, MAIN_BASE, APPROVED_PRODUCT, 'main-base-to-approved-product');
 assertAncestor(root, APPROVED_PRODUCT, MIG002_STAGE, 'approved-product-to-mig002-stage');
@@ -531,11 +569,14 @@ assertAncestor(root, MIG002_STAGE, targetHead, 'mig002-stage-to-target');
 const runtime = runtimeAttestation();
 assertMig002Transition(root);
 assertAncestor(root, MIG002_STAGE, prBase, 'mig002-stage-to-pr-base');
-assertCandidateRegistryEvolution(root, prBase, targetHead);
+assertCandidateRegistryEvolution(root, prBase, sourceSubject.commit);
+const cargoInventories = new Map();
 for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {
-  validateEvidenceSemantics(root, readJsonAt(root, targetHead, manifestPath), runtime);
+  validateEvidenceSemantics(root, readJsonAt(root, sourceSubject.commit, manifestPath), runtime, cargoInventories);
 }
 assertClosedCheckout(root);
+if (!equal(captureCommittedSourceSubject(root), sourceSubject)) fail('hardening_source_subject_changed');
+if (!equal(runtimeAttestation(), runtime)) fail('hardening_runtime_changed');
 const receipt = {
   schemaVersion: 1,
   kind: 'RepositorySourceEvidenceHardeningReceipt',
@@ -543,9 +584,11 @@ const receipt = {
   target: targetHead,
   immutableStages: { mainBase: MAIN_BASE, approvedProduct: APPROVED_PRODUCT, mig002Stage: MIG002_STAGE },
   sourceEvidenceManifests: SOURCE_EVIDENCE_MANIFESTS,
+  sourceSubject,
+  sourceSubjectKind,
   runtime,
   registryTransition: 'exact:MIG-002 historical transition;actual-PR-base multi-manifest evidence-declared forward-only design/source delta;authority stable',
-  sourceSemantics: 'comment-string-aware-unique-symbol-plus-cargo-discovery-binding',
+  sourceSemantics: 'comment-string-aware-unique-symbol-plus-current-process-cargo-target-inventory-binding',
   checkoutPolicy: 'no-untracked-and-no-ignored-repository-inputs',
   productionAuthorized: false,
   writerCutoverAuthorized: false,

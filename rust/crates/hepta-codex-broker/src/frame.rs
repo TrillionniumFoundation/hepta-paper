@@ -7,9 +7,13 @@ use std::{
 
 use hepta_codex_protocol::{CodexExecutionRequestV1, Sha256Digest};
 use sha2::{Digest, Sha256};
+
+use crate::CommitBoundPreparedResultAcknowledgementV2;
 use thiserror::Error;
 
 const FRAME_MAGIC: [u8; 8] = *b"HEPTACX1";
+const RESULT_QUERY_MAGIC: [u8; 8] = *b"HEPTAQX1";
+const COMMIT_ACKNOWLEDGEMENT_MAGIC: [u8; 8] = *b"HEPTAAX2";
 const FRAME_HEADER_BYTES: usize = 16;
 const HARD_MAXIMUM_PAYLOAD_BYTES: usize = 1024 * 1024;
 
@@ -85,17 +89,58 @@ pub struct DecodedRequestFrameV1 {
     pub payload_hash: Sha256Digest,
 }
 
-/// Reads one complete request frame and rejects truncation, excess size, and invalid contracts.
+/// A validated commit-bound acknowledgement plus the exact framed bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodedCommitAcknowledgementFrameV2 {
+    pub acknowledgement: CommitBoundPreparedResultAcknowledgementV2,
+    pub payload: Vec<u8>,
+    pub payload_hash: Sha256Digest,
+}
+
+pub(crate) enum DecodedServerFrameV1 {
+    Execution(DecodedRequestFrameV1),
+    ResultQuery(DecodedRequestFrameV1),
+    CommitAcknowledgement(DecodedCommitAcknowledgementFrameV2),
+}
+
+/// Reads one complete execution request. Other frame kinds cannot enter execution admission.
 pub fn read_request_frame<R: Read>(
     reader: &mut R,
     policy: BrokerFramePolicyV1,
 ) -> Result<DecodedRequestFrameV1, BrokerFrameError> {
+    match read_server_frame(reader, policy)? {
+        DecodedServerFrameV1::Execution(frame) => Ok(frame),
+        DecodedServerFrameV1::ResultQuery(_) | DecodedServerFrameV1::CommitAcknowledgement(_) => {
+            Err(BrokerFrameError::InvalidMagic)
+        }
+    }
+}
+
+/// Reads one complete version-two commit-bound acknowledgement frame.
+pub fn read_commit_bound_acknowledgement_frame<R: Read>(
+    reader: &mut R,
+    policy: BrokerFramePolicyV1,
+) -> Result<DecodedCommitAcknowledgementFrameV2, BrokerFrameError> {
+    match read_server_frame(reader, policy)? {
+        DecodedServerFrameV1::CommitAcknowledgement(frame) => Ok(frame),
+        DecodedServerFrameV1::Execution(_) | DecodedServerFrameV1::ResultQuery(_) => {
+            Err(BrokerFrameError::InvalidMagic)
+        }
+    }
+}
+
+pub(crate) fn read_server_frame<R: Read>(
+    reader: &mut R,
+    policy: BrokerFramePolicyV1,
+) -> Result<DecodedServerFrameV1, BrokerFrameError> {
     let policy = policy.validate()?;
     let mut header = [0_u8; FRAME_HEADER_BYTES];
     reader
         .read_exact(&mut header)
         .map_err(|error| BrokerFrameError::Read(error.kind()))?;
-    if header[..8] != FRAME_MAGIC {
+    let route = &header[..8];
+    if route != FRAME_MAGIC && route != RESULT_QUERY_MAGIC && route != COMMIT_ACKNOWLEDGEMENT_MAGIC
+    {
         return Err(BrokerFrameError::InvalidMagic);
     }
     let payload_length = u64::from_be_bytes(
@@ -121,6 +166,27 @@ pub fn read_request_frame<R: Read>(
     reader
         .read_exact(&mut payload)
         .map_err(|error| BrokerFrameError::Read(error.kind()))?;
+    let payload_hash = sha256_digest(&payload)?;
+    if route == COMMIT_ACKNOWLEDGEMENT_MAGIC {
+        let acknowledgement: CommitBoundPreparedResultAcknowledgementV2 =
+            serde_json::from_slice(&payload)
+                .map_err(|error| BrokerFrameError::InvalidJson(error.to_string()))?;
+        acknowledgement
+            .validate_shape()
+            .map_err(|error| BrokerFrameError::InvalidAcknowledgement(error.to_string()))?;
+        let canonical_payload = serde_json::to_vec(&acknowledgement)
+            .map_err(|error| BrokerFrameError::InvalidJson(error.to_string()))?;
+        if canonical_payload != payload {
+            return Err(BrokerFrameError::NonCanonicalJson);
+        }
+        return Ok(DecodedServerFrameV1::CommitAcknowledgement(
+            DecodedCommitAcknowledgementFrameV2 {
+                acknowledgement,
+                payload,
+                payload_hash,
+            },
+        ));
+    }
     let request: CodexExecutionRequestV1 = serde_json::from_slice(&payload)
         .map_err(|error| BrokerFrameError::InvalidJson(error.to_string()))?;
     request
@@ -131,12 +197,16 @@ pub fn read_request_frame<R: Read>(
     if canonical_payload != payload {
         return Err(BrokerFrameError::NonCanonicalJson);
     }
-    let payload_hash = sha256_digest(&payload)?;
-    Ok(DecodedRequestFrameV1 {
+    let frame = DecodedRequestFrameV1 {
         request,
         payload,
         payload_hash,
-    })
+    };
+    if route == RESULT_QUERY_MAGIC {
+        Ok(DecodedServerFrameV1::ResultQuery(frame))
+    } else {
+        Ok(DecodedServerFrameV1::Execution(frame))
+    }
 }
 
 /// Writes exactly one length-prefixed request frame.
@@ -145,12 +215,55 @@ pub fn write_request_frame<W: Write>(
     request: &CodexExecutionRequestV1,
     policy: BrokerFramePolicyV1,
 ) -> Result<Sha256Digest, BrokerFrameError> {
-    let policy = policy.validate()?;
+    write_framed_request(writer, request, policy, &FRAME_MAGIC)
+}
+
+/// Requests bytes of an existing operation. Carries the original signed request;
+/// it never permits reservation, re-dispatch or automatic capability renewal.
+pub fn write_result_query_frame<W: Write>(
+    writer: &mut W,
+    request: &CodexExecutionRequestV1,
+    policy: BrokerFramePolicyV1,
+) -> Result<Sha256Digest, BrokerFrameError> {
+    write_framed_request(writer, request, policy, &RESULT_QUERY_MAGIC)
+}
+
+/// Sends one canonical version-two commit-bound acknowledgement. This frame can
+/// close only an existing prepared operation; it cannot reserve or dispatch work.
+pub fn write_commit_bound_acknowledgement_frame<W: Write>(
+    writer: &mut W,
+    acknowledgement: &CommitBoundPreparedResultAcknowledgementV2,
+    policy: BrokerFramePolicyV1,
+) -> Result<Sha256Digest, BrokerFrameError> {
+    acknowledgement
+        .validate_shape()
+        .map_err(|error| BrokerFrameError::InvalidAcknowledgement(error.to_string()))?;
+    let payload = serde_json::to_vec(acknowledgement)
+        .map_err(|error| BrokerFrameError::InvalidJson(error.to_string()))?;
+    write_framed_payload(writer, &payload, policy, &COMMIT_ACKNOWLEDGEMENT_MAGIC)
+}
+
+fn write_framed_request<W: Write>(
+    writer: &mut W,
+    request: &CodexExecutionRequestV1,
+    policy: BrokerFramePolicyV1,
+    magic: &[u8; 8],
+) -> Result<Sha256Digest, BrokerFrameError> {
     request
         .validate()
         .map_err(|error| BrokerFrameError::InvalidRequest(error.to_string()))?;
     let payload = serde_json::to_vec(request)
         .map_err(|error| BrokerFrameError::InvalidJson(error.to_string()))?;
+    write_framed_payload(writer, &payload, policy, magic)
+}
+
+fn write_framed_payload<W: Write>(
+    writer: &mut W,
+    payload: &[u8],
+    policy: BrokerFramePolicyV1,
+    magic: &[u8; 8],
+) -> Result<Sha256Digest, BrokerFrameError> {
+    let policy = policy.validate()?;
     if payload.is_empty() {
         return Err(BrokerFrameError::EmptyPayload);
     }
@@ -163,12 +276,12 @@ pub fn write_request_frame<W: Write>(
     let length =
         u64::try_from(payload.len()).map_err(|_| BrokerFrameError::InvalidLengthEncoding)?;
     writer
-        .write_all(&FRAME_MAGIC)
+        .write_all(magic)
         .and_then(|()| writer.write_all(&length.to_be_bytes()))
-        .and_then(|()| writer.write_all(&payload))
+        .and_then(|()| writer.write_all(payload))
         .and_then(|()| writer.flush())
         .map_err(|error| BrokerFrameError::Write(error.kind()))?;
-    sha256_digest(&payload)
+    sha256_digest(payload)
 }
 
 fn sha256_digest(bytes: &[u8]) -> Result<Sha256Digest, BrokerFrameError> {
@@ -197,6 +310,8 @@ pub enum BrokerFrameError {
     NonCanonicalJson,
     #[error("broker request is invalid: {0}")]
     InvalidRequest(String),
+    #[error("broker commit-bound acknowledgement is invalid: {0}")]
+    InvalidAcknowledgement(String),
     #[error("broker frame read failed: {0:?}")]
     Read(io::ErrorKind),
     #[error("broker frame write failed: {0:?}")]
@@ -219,6 +334,32 @@ mod tests {
     fn digest(byte: char) -> Sha256Digest {
         Sha256Digest::from_str(&format!("sha256:{}", byte.to_string().repeat(64)))
             .expect("test digest")
+    }
+
+    fn acknowledgement() -> CommitBoundPreparedResultAcknowledgementV2 {
+        CommitBoundPreparedResultAcknowledgementV2 {
+            version: 2,
+            authority_domain_id: "campaign-writer".into(),
+            trust_store_generation: 1,
+            operation_id: "operation-1".into(),
+            request_hash: digest('1'),
+            prepared_receipt_hash: digest('2'),
+            campaign_id: "campaign-1".into(),
+            node_id: "node-1".into(),
+            attempt_id: "attempt-1".into(),
+            campaign_revision: 1,
+            lease_generation: 1,
+            plan_hash: digest('3'),
+            sequence: 1,
+            result_hash: digest('4'),
+            verifier_hash: digest('5'),
+            verification_receipt_hash: digest('6'),
+            committed_state_hash: digest('7'),
+            actual_cost_microusd: 9,
+            acknowledged_at_unix_ms: 13_000,
+            signer_key_id: "writer-key-1".into(),
+            signature_base64: "A".repeat(86),
+        }
     }
 
     fn request() -> CodexExecutionRequestV1 {
@@ -272,6 +413,53 @@ mod tests {
             .expect("read frame");
         assert_eq!(decoded.request, request());
         assert_eq!(decoded.payload_hash, written_hash);
+    }
+
+    #[test]
+    fn commit_acknowledgement_round_trip_is_separate_from_execution() {
+        let mut encoded = Vec::new();
+        let written_hash = write_commit_bound_acknowledgement_frame(
+            &mut encoded,
+            &acknowledgement(),
+            BrokerFramePolicyV1::default(),
+        )
+        .expect("write acknowledgement frame");
+        assert_eq!(
+            read_request_frame(
+                &mut Cursor::new(encoded.clone()),
+                BrokerFramePolicyV1::default(),
+            ),
+            Err(BrokerFrameError::InvalidMagic),
+        );
+        let decoded = read_commit_bound_acknowledgement_frame(
+            &mut Cursor::new(encoded),
+            BrokerFramePolicyV1::default(),
+        )
+        .expect("read acknowledgement frame");
+        assert_eq!(decoded.acknowledgement, acknowledgement());
+        assert_eq!(decoded.payload_hash, written_hash);
+    }
+
+    #[test]
+    fn rejects_noncanonical_commit_acknowledgement_json() {
+        let canonical = serde_json::to_vec(&acknowledgement()).expect("canonical acknowledgement");
+        let mut noncanonical = Vec::with_capacity(canonical.len() + 1);
+        noncanonical.push(b' ');
+        noncanonical.extend_from_slice(&canonical);
+        let mut frame = Vec::from(COMMIT_ACKNOWLEDGEMENT_MAGIC);
+        frame.extend_from_slice(
+            &u64::try_from(noncanonical.len())
+                .expect("small fixture")
+                .to_be_bytes(),
+        );
+        frame.extend_from_slice(&noncanonical);
+        assert_eq!(
+            read_commit_bound_acknowledgement_frame(
+                &mut Cursor::new(frame),
+                BrokerFramePolicyV1::default(),
+            ),
+            Err(BrokerFrameError::NonCanonicalJson),
+        );
     }
 
     #[test]

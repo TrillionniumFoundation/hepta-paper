@@ -114,7 +114,7 @@ A module/capability may promote only when:
 - every mapped check is non-empty and successful;
 - full schemas validate;
 - compatibility and performance requirements pass;
-- required reviewers accept the latest unchanged subject;
+- the maintainer selects the latest unchanged subject after all required machine checks succeed;
 - no current P0 or revocation affects it;
 - live revalidation confirms no bound input/evidence changed.
 
@@ -130,7 +130,7 @@ Qualification invalidates when any bound item changes or becomes unavailable:
 - artifact retention/digest;
 - module binary/configuration/deployment generation;
 - host/runtime identity;
-- review or branch policy;
+- required-check or branch reference policy;
 - external key/trust/evidence status;
 - canonical workload/threshold;
 - accepted P0 defect.
@@ -150,11 +150,12 @@ cannot:
 - establish WORM custody;
 - mutate a portal;
 - authorize submission;
-- approve its own independent review.
+- manufacture an operational authority receipt that its producer does not control.
 
-## 9. Reviews
+## 9. Human review versus operational authority
 
-Mechanical evidence and human/authority decisions are separate. The
-implementation author may repair and explain results but cannot act as the
-required independent host, credential, key, scientific, governance, release, or
-submission authority.
+Source integration does not require a second human approver. Mechanical source
+evidence and the maintainer's integration decision remain separate from runtime
+authorities. The implementation author may repair and explain results but cannot
+fabricate host, credential, key, scientific, release, storage, portal, or
+submission facts that require distinct operational principals.

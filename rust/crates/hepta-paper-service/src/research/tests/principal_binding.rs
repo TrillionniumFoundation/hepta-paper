@@ -151,11 +151,20 @@ fn each_qualified_role_retains_its_own_exact_principal() {
         qualification
             .role_principals
             .insert(name.into(), (uid, gid));
+        let runtime = digest(uid as u8);
+        qualification
+            .role_runtime_hashes
+            .insert(name.into(), runtime.to_string());
         let peer = source(&mut config);
         peer.role = role;
+        peer.runtime_identity_hash = runtime;
         peer.broker_uid = uid;
         peer.broker_gid = gid;
         assert!(validate_research_broker_principals(&config.service, &qualification).is_ok());
+        let expected_runtime = source(&mut config).runtime_identity_hash.clone();
+        source(&mut config).runtime_identity_hash = digest(88);
+        assert!(validate_research_broker_principals(&config.service, &qualification).is_err());
+        source(&mut config).runtime_identity_hash = expected_runtime;
         source(&mut config).broker_uid += 1;
         assert!(validate_research_broker_principals(&config.service, &qualification).is_err());
     }
@@ -233,22 +242,40 @@ fn initialized_research_workflow(
     (qualification, definition, definition_hash)
 }
 
-fn persist_profile_change_and_check_recovery(rebind: bool) {
+fn persist_profile_change_and_check_recovery(change_kind: u8) {
     use crate::workflow::{
         WorkflowAmendmentV1, amend_local_workflow_with_clock_v1, operate_local_workflow_v1,
         read_current_local_workflow_v1,
     };
     let temp = Temp::new();
-    let (_, definition, original_hash) = initialized_research_workflow(&temp);
+    let (_, definition, original_hash) = if change_kind == 2 {
+        let mut qualification = TestQualification::valid();
+        qualification.role_runtime_hashes = BTreeMap::from([
+            ("author".into(), digest(30).to_string()),
+            ("reviewer".into(), digest(31).to_string()),
+        ]);
+        let definition = workflow_definition(&temp, &qualification);
+        assert_eq!(definition.research_profile.as_ref().unwrap().version, 2);
+        let definition_hash = initialize_local_workflow_v1(definition.clone()).unwrap();
+        (qualification, definition, definition_hash)
+    } else {
+        initialized_research_workflow(&temp)
+    };
     let root = &definition.template.state_directory;
     let initial =
         operate_local_workflow_v1(root, &original_hash, WorkflowActionV1::Status, 0).unwrap();
     let mut next = definition.clone();
-    if rebind {
+    if change_kind == 1 {
         next.research_profile
             .as_mut()
             .unwrap()
             .qualification_binding_hash = digest(20);
+    } else if change_kind == 2 {
+        next.research_profile
+            .as_mut()
+            .unwrap()
+            .qualified_codex_role_runtime_identity_hashes_v2
+            .insert("author".into(), digest(32));
     } else {
         next.research_profile = None;
     }
@@ -325,12 +352,17 @@ fn persist_profile_change_and_check_recovery(rebind: bool) {
 
 #[test]
 fn persisted_research_profile_removal_is_rejected_during_recovery() {
-    persist_profile_change_and_check_recovery(false);
+    persist_profile_change_and_check_recovery(0);
 }
 
 #[test]
 fn persisted_research_profile_rebinding_is_rejected_during_recovery() {
-    persist_profile_change_and_check_recovery(true);
+    persist_profile_change_and_check_recovery(1);
+}
+
+#[test]
+fn persisted_per_role_runtime_mapping_rebinding_is_rejected_during_recovery() {
+    persist_profile_change_and_check_recovery(2);
 }
 
 #[test]

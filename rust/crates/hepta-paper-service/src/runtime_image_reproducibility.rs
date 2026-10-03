@@ -5,13 +5,16 @@
 //! must resolve the active plugin scope and process configuration through their
 //! respective authority chains before calling the contract layer. A valid receipt
 //! does not itself authorize production activation or online fenced publication.
+mod cli;
 mod context;
 mod contract;
+pub(crate) mod control;
 pub mod online_publication;
 mod plugin;
 mod process;
 mod publication;
 mod support;
+mod wire;
 mod workflow;
 
 use serde_json::{Value, json};
@@ -38,6 +41,10 @@ impl From<rusqlite::Error> for Error {
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub use cli::{
+    RuntimeImageReproducibilityOutputV1, runtime_image_reproducibility_cli_v1,
+    runtime_image_reproducibility_cli_with_control_v1,
+};
 pub use context::{
     current_runtime_image_release_binding_v1, inspect_runtime_image_build_input_closure_v1,
 };
@@ -51,15 +58,21 @@ pub use plugin::{
     PluginAuthority, resolve_runtime_image_plugin_authority_v1,
     verify_runtime_image_builtin_plugin_source_binding_v1,
 };
+pub(crate) use plugin::{
+    numerical_plugin_signatures_v1, resolve_runtime_image_plugin_authority_from_observed_v1,
+};
 pub use process::{
     ProcessConfiguration, VerifierProcess, invoke_runtime_image_reproducibility_verifiers_v1,
+    invoke_runtime_image_reproducibility_verifiers_with_control_v1,
     read_runtime_image_reproducibility_process_configuration_v1,
 };
 pub use publication::{
     publish_runtime_image_reproducibility_offline_v2,
     read_runtime_image_reproducibility_publication_v2,
 };
-pub use workflow::runtime_image_reproducibility_report_v2;
+pub use workflow::{
+    runtime_image_reproducibility_report_v2, runtime_image_reproducibility_report_with_control_v2,
+};
 
 /// Resolved authority inputs, supplied by the composition layer. No current
 /// source identity or public key is taken from the receipt being verified.

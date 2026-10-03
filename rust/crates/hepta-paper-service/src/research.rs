@@ -6,6 +6,7 @@
 //! external effects remain structurally unavailable.
 
 use std::{
+    collections::BTreeMap,
     path::Path,
     str::FromStr,
     sync::{
@@ -70,6 +71,9 @@ pub struct ResearchServiceReceiptV1 {
     pub qualification_trust_store_generation: u64,
     pub qualification_expires_at_unix_ms: u64,
     pub qualified_codex_runtime_identity_hash: Sha256Digest,
+    /// Diagnostic exact role map; this receipt cannot replace opaque authority.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub qualified_codex_role_runtime_identity_hashes_v2: BTreeMap<String, Sha256Digest>,
     pub service_configuration_hash: Sha256Digest,
     pub control_plane_receipt: ControlPlaneRunReceiptV1,
     pub research_activation: bool,
@@ -129,8 +133,9 @@ fn profile_from_authority<A: ResearchQualificationAuthorityV1>(
     stage: ResearchActivationStageV1,
     qualification: &A,
 ) -> Result<ResearchWorkflowProfileV1, ServiceError> {
+    let role_hashes = qualification.codex_role_runtime_identity_hashes_v2();
     Ok(ResearchWorkflowProfileV1 {
-        version: 1,
+        version: if role_hashes.is_empty() { 1 } else { 2 },
         stage,
         repository: qualification.subject().repository.clone(),
         commit: qualification.subject().commit.clone(),
@@ -143,6 +148,9 @@ fn profile_from_authority<A: ResearchQualificationAuthorityV1>(
             &qualification.runtime_facts().codex_runtime_identity_hash,
         )
         .map_err(|_| ServiceError::Configuration)?,
+        qualified_codex_role_runtime_identity_hashes_v2:
+            crate::research_profile::parse_role_hashes(&role_hashes)
+                .map_err(|_| ServiceError::Configuration)?,
         automatic_activation: false,
         production_activation: false,
         release_authority: false,
@@ -210,6 +218,7 @@ trait ResearchQualificationAuthorityV1 {
     fn expires_at_unix_ms(&self) -> u64;
     fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1;
     fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)>;
+    fn codex_role_runtime_identity_hashes_v2(&self) -> BTreeMap<String, String>;
     fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError>;
 }
 
@@ -235,15 +244,28 @@ impl ResearchQualificationAuthorityV1 for VerifiedResearchQualificationRequestV3
     fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
         self.qualification().codex_role_principal(role)
     }
+    fn codex_role_runtime_identity_hashes_v2(&self) -> BTreeMap<String, String> {
+        self.qualification().codex_role_runtime_identity_hashes_v2()
+    }
     fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError> {
         self.observe_current(now_unix_ms)
     }
 }
 
-/// Pure structural check. This function grants no writer or provider authority.
+/// Legacy single-runtime structural diagnostic. This grants no authority and
+/// does not satisfy current per-role broker admission.
 pub fn validate_research_service_policy_v1(
     config: &ResearchServiceRunV1,
     qualified_runtime_identity: &Sha256Digest,
+) -> Result<(), ServiceError> {
+    validate_research_service_policy_with_runtime(config, &|source| {
+        &source.runtime_identity_hash == qualified_runtime_identity
+    })
+}
+
+fn validate_research_service_policy_with_runtime(
+    config: &ResearchServiceRunV1,
+    runtime_matches: &dyn Fn(&crate::broker_prepared::BrokerPreparedSourceV1) -> bool,
 ) -> Result<(), ServiceError> {
     if config.version != 1
         || config.service.version != 1
@@ -289,7 +311,7 @@ pub fn validate_research_service_policy_v1(
             WorkerBindingV1::Native => {}
             WorkerBindingV1::BrokerExecute { source } => {
                 source.validate()?;
-                if &source.runtime_identity_hash != qualified_runtime_identity
+                if !runtime_matches(source)
                     || source.request_signer.is_none()
                     || source.cost_settlement.is_none()
                     || source.commit_acknowledgement.is_none()
@@ -299,7 +321,7 @@ pub fn validate_research_service_policy_v1(
             }
             WorkerBindingV1::BrokerPrepared { source } => {
                 source.validate()?;
-                if &source.runtime_identity_hash != qualified_runtime_identity
+                if !runtime_matches(source)
                     || source.cost_settlement.is_none()
                     || source.commit_acknowledgement.is_none()
                 {
@@ -395,7 +417,14 @@ fn run_research_service_with_authority_clock_and_cancellation_v1<
     let runtime_identity_hash =
         parse_digest(&qualification.runtime_facts().codex_runtime_identity_hash)
             .map_err(|_| ServiceError::Configuration)?;
-    validate_research_service_policy_v1(&config, &runtime_identity_hash)?;
+    let role_hashes = qualification.codex_role_runtime_identity_hashes_v2();
+    let qualified_role_hashes = crate::research_profile::parse_role_hashes(&role_hashes)
+        .map_err(|_| ServiceError::Configuration)?;
+    validate_research_service_policy_with_runtime(&config, &|source| {
+        role_hashes
+            .get(broker_role_name(source.role))
+            .is_some_and(|hash| hash == source.runtime_identity_hash.as_str())
+    })?;
     validate_research_broker_principals(&config.service, qualification)?;
     let configuration_hash = service_configuration_hash_v1(&config.service)?;
     let preflight_now = observe().map_err(|_| ServiceError::Persistence)?;
@@ -435,28 +464,37 @@ fn run_research_service_with_authority_clock_and_cancellation_v1<
         qualification.trust_store_generation(),
         qualification.expires_at_unix_ms(),
         runtime_identity_hash,
+        qualified_role_hashes,
         configuration_hash,
         control_plane_receipt,
     )
+}
+
+fn broker_role_name(role: hepta_codex_protocol::AgentRole) -> &'static str {
+    match role {
+        hepta_codex_protocol::AgentRole::Author => "author",
+        hepta_codex_protocol::AgentRole::Reviewer => "reviewer",
+        hepta_codex_protocol::AgentRole::FormalReviewer => "formal_reviewer",
+        hepta_codex_protocol::AgentRole::Repairer => "repairer",
+    }
 }
 
 fn validate_research_broker_principals<A: ResearchQualificationAuthorityV1>(
     service: &ServiceRunV1,
     qualification: &A,
 ) -> Result<(), ServiceError> {
+    let role_hashes = qualification.codex_role_runtime_identity_hashes_v2();
     for worker in service.workers.values() {
         let source = match worker {
             WorkerBindingV1::BrokerExecute { source }
             | WorkerBindingV1::BrokerPrepared { source } => source,
             _ => continue,
         };
-        let role = match source.role {
-            hepta_codex_protocol::AgentRole::Author => "author",
-            hepta_codex_protocol::AgentRole::Reviewer => "reviewer",
-            hepta_codex_protocol::AgentRole::FormalReviewer => "formal_reviewer",
-            hepta_codex_protocol::AgentRole::Repairer => "repairer",
-        };
+        let role = broker_role_name(source.role);
         if qualification.codex_role_principal(role) != Some((source.broker_uid, source.broker_gid))
+            || !role_hashes
+                .get(role)
+                .is_some_and(|hash| hash == source.runtime_identity_hash.as_str())
         {
             return Err(ServiceError::Configuration);
         }
@@ -479,17 +517,25 @@ fn build_receipt(
     qualification_trust_store_generation: u64,
     qualification_expires_at_unix_ms: u64,
     qualified_codex_runtime_identity_hash: Sha256Digest,
+    qualified_codex_role_runtime_identity_hashes_v2: BTreeMap<String, Sha256Digest>,
     service_configuration_hash: Sha256Digest,
     control_plane_receipt: ControlPlaneRunReceiptV1,
 ) -> Result<ResearchServiceReceiptV1, ServiceError> {
+    let version = if qualified_codex_role_runtime_identity_hashes_v2.is_empty() {
+        1
+    } else {
+        2
+    };
     let body = ResearchReceiptBodyV1 {
-        version: 1,
+        version,
         stage,
         subject: &subject,
         qualification_receipt_hash: &qualification_receipt_hash,
         qualification_trust_store_generation,
         qualification_expires_at_unix_ms,
         qualified_codex_runtime_identity_hash: &qualified_codex_runtime_identity_hash,
+        qualified_codex_role_runtime_identity_hashes_v2:
+            &qualified_codex_role_runtime_identity_hashes_v2,
         service_configuration_hash: &service_configuration_hash,
         control_plane_receipt: &control_plane_receipt,
         research_activation: true,
@@ -501,7 +547,7 @@ fn build_receipt(
     };
     let receipt_hash = canonical_hash_v1(&body).map_err(|_| ServiceError::Configuration)?;
     Ok(ResearchServiceReceiptV1 {
-        version: 1,
+        version,
         stage,
         repository: subject.repository,
         commit: subject.commit,
@@ -510,6 +556,7 @@ fn build_receipt(
         qualification_trust_store_generation,
         qualification_expires_at_unix_ms,
         qualified_codex_runtime_identity_hash,
+        qualified_codex_role_runtime_identity_hashes_v2,
         service_configuration_hash,
         control_plane_receipt,
         research_activation: true,
@@ -532,6 +579,8 @@ struct ResearchReceiptBodyV1<'a> {
     qualification_trust_store_generation: u64,
     qualification_expires_at_unix_ms: u64,
     qualified_codex_runtime_identity_hash: &'a Sha256Digest,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    qualified_codex_role_runtime_identity_hashes_v2: &'a BTreeMap<String, Sha256Digest>,
     service_configuration_hash: &'a Sha256Digest,
     control_plane_receipt: &'a ControlPlaneRunReceiptV1,
     research_activation: bool,
@@ -634,6 +683,7 @@ mod tests {
         post_io_delta_ms: u64,
         checks: Cell<u64>,
         role_principals: BTreeMap<String, (u32, u32)>,
+        role_runtime_hashes: BTreeMap<String, String>,
     }
 
     impl TestQualification {
@@ -656,6 +706,7 @@ mod tests {
                 post_io_delta_ms: 0,
                 checks: Cell::new(0),
                 role_principals: BTreeMap::new(),
+                role_runtime_hashes: BTreeMap::new(),
             }
         }
     }
@@ -681,6 +732,9 @@ mod tests {
         }
         fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
             self.role_principals.get(role).copied()
+        }
+        fn codex_role_runtime_identity_hashes_v2(&self) -> BTreeMap<String, String> {
+            self.role_runtime_hashes.clone()
         }
         fn observe_current(&self, now_unix_ms: u64) -> Result<u64, ClosureError> {
             let check = self.checks.get().checked_add(1).unwrap();

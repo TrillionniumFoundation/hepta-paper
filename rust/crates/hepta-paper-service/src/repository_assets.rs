@@ -3,6 +3,8 @@
 //! This is a read-only verifier. It never publishes an external reference,
 //! deletes tracked bytes, or grants release authority.
 
+mod coercion;
+
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -30,6 +32,8 @@ pub enum RepositoryAssetError {
     HandoffBlocked(String),
     #[error("repository asset compatibility hash failed")]
     Compatibility,
+    #[error("{0}")]
+    Coercion(&'static str),
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -46,31 +50,11 @@ fn is_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn js_string(value: Option<&Value>) -> String {
-    match value {
-        None | Some(Value::Null) => String::new(),
-        Some(Value::String(value)) => value.clone(),
-        Some(Value::Bool(value)) => value.to_string(),
-        Some(Value::Number(value)) => value.to_string(),
-        Some(Value::Array(_)) => String::from(""),
-        Some(Value::Object(_)) => String::from("[object Object]"),
-    }
-}
-
 fn field<'a>(asset: &'a Value, name: &str) -> Option<&'a Value> {
     asset.as_object().and_then(|object| object.get(name))
 }
-
-fn field_string(asset: &Value, name: &str) -> String {
-    js_string(field(asset, name))
-}
-
-fn optional_string(value: String) -> Value {
-    if value.is_empty() {
-        Value::Null
-    } else {
-        Value::String(value)
-    }
+fn field_string(asset: &Value, name: &str) -> Result<String, RepositoryAssetError> {
+    coercion::string_or_empty(field(asset, name))
 }
 
 fn path_value(value: &str) -> Result<String, &'static str> {
@@ -106,25 +90,6 @@ fn read_file_bounded(path: &Path) -> Result<Vec<u8>, RepositoryAssetError> {
     Ok(bytes)
 }
 
-fn valid_date_string(value: &str) -> bool {
-    // The manifest uses ISO-8601 UTC timestamps. Keep this parser bounded and
-    // reject malformed values without treating a receipt as external authority.
-    let bytes = value.as_bytes();
-    bytes.len() >= 20
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(10) == Some(&b'T')
-        && bytes.get(13) == Some(&b':')
-        && bytes.get(16) == Some(&b':')
-        && bytes[0..4].iter().all(u8::is_ascii_digit)
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[8..10].iter().all(u8::is_ascii_digit)
-        && bytes[11..13].iter().all(u8::is_ascii_digit)
-        && bytes[14..16].iter().all(u8::is_ascii_digit)
-        && bytes[17..19].iter().all(u8::is_ascii_digit)
-        && (bytes[19] == b'Z' || bytes[19] == b'+' || bytes[19] == b'-' || bytes[19] == b'.')
-}
-
 fn valid_restore_receipt(
     asset: &Value,
     receipt: Option<&Value>,
@@ -132,45 +97,45 @@ fn valid_restore_receipt(
     let Some(receipt) = receipt.and_then(Value::as_object) else {
         return Ok(false);
     };
-    let claimed = receipt
-        .get("repositoryAssetExternalRestoreDrillReceiptHash")
-        .map(|value| js_string(Some(value)))
-        .unwrap_or_default();
+    let reference = field(asset, "externalReference").and_then(Value::as_object);
+    if !receipt
+        .get("version")
+        .and_then(Value::as_f64)
+        .is_some_and(|v| v == 1.0)
+        || receipt.get("kind").and_then(Value::as_str)
+            != Some("RepositoryAssetExternalRestoreDrillReceipt")
+        || receipt.get("status").and_then(Value::as_str)
+            != Some("repository_asset_external_restore_verified")
+        || !coercion::primitive_equal(receipt.get("assetId"), field(asset, "assetId"))
+        || !coercion::primitive_equal(
+            receipt.get("externalReferenceDigest"),
+            reference.and_then(|v| v.get("digest")),
+        )
+        || !coercion::primitive_equal(
+            receipt.get("restoredIdentitySha256"),
+            field(asset, "expectedIdentitySha256"),
+        )
+        || !crate::store_status::passive_node_date_parse_finite_v1(&coercion::string_or_empty(
+            receipt.get("verifiedAt"),
+        )?)
+    {
+        return Ok(false);
+    }
+    let claimed = receipt.get("repositoryAssetExternalRestoreDrillReceiptHash");
+    if !is_sha256(&coercion::string_or_empty(claimed)?) {
+        return Ok(false);
+    }
     let payload: Map<String, Value> = receipt
         .iter()
         .filter(|(key, _)| key.as_str() != "repositoryAssetExternalRestoreDrillReceiptHash")
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    let ok = receipt.get("version").and_then(Value::as_u64) == Some(1)
-        && receipt.get("kind").and_then(Value::as_str)
-            == Some("RepositoryAssetExternalRestoreDrillReceipt")
-        && receipt.get("status").and_then(Value::as_str)
-            == Some("repository_asset_external_restore_verified")
-        && receipt.get("assetId").and_then(Value::as_str)
-            == Some(field_string(asset, "assetId").as_str())
-        && receipt
-            .get("externalReferenceDigest")
-            .and_then(Value::as_str)
-            == field(asset, "externalReference")
-                .and_then(|reference| reference.get("digest"))
-                .and_then(Value::as_str)
-        && receipt
-            .get("restoredIdentitySha256")
-            .and_then(Value::as_str)
-            == field(asset, "expectedIdentitySha256").and_then(Value::as_str)
-        && receipt
-            .get("verifiedAt")
-            .and_then(Value::as_str)
-            .is_some_and(valid_date_string)
-        && is_sha256(&claimed)
-        && production_hash_record_v1(
-            "RepositoryAssetExternalRestoreDrillReceipt",
-            &Value::Object(payload),
-        )
-        .map_err(|_| RepositoryAssetError::Compatibility)?
-        .as_str()
-            == claimed;
-    Ok(ok)
+    let actual = production_hash_record_v1(
+        "RepositoryAssetExternalRestoreDrillReceipt",
+        &Value::Object(payload),
+    )
+    .map_err(|_| RepositoryAssetError::Compatibility)?;
+    Ok(claimed.and_then(Value::as_str) == Some(actual.as_str()))
 }
 
 fn git_env() -> Vec<(String, String)> {
@@ -232,49 +197,42 @@ fn parent_gitlink(root: &Path, source: &str) -> Result<String, &'static str> {
     Ok(commit.to_owned())
 }
 
-fn submodule_binding(root: &Path, source: &str, asset: &Value) -> Vec<String> {
+fn submodule_binding(
+    root: &Path,
+    source: &str,
+    asset: &Value,
+) -> Result<Vec<String>, RepositoryAssetError> {
     let Some(reference) = field(asset, "externalReference").and_then(Value::as_object) else {
-        return vec![];
+        return Ok(vec![]);
     };
-    let transport = reference
-        .get("transport")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    // The incumbent verifier only applies submodule binding checks when the
-    // external reference explicitly opts into a submodule transport. Keep a
-    // missing transport equivalent to the Node implementation's
-    // `if (!reference?.transport) return []` guard; a missing transport is
-    // handled by the generic external-reference contract instead.
-    if transport.is_empty() {
-        return vec![];
+    let transport = reference.get("transport");
+    if !coercion::truthy(transport) {
+        return Ok(vec![]);
     }
-    if transport != "git-submodule" && transport != "git-lfs-submodule" {
-        return vec!["repository_asset_external_transport_invalid".into()];
+    if !matches!(
+        transport.and_then(Value::as_str),
+        Some("git-submodule" | "git-lfs-submodule")
+    ) {
+        return Ok(vec!["repository_asset_external_transport_invalid".into()]);
     }
-    let pinned = reference
-        .get("pinnedCommit")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let repository_url = reference
-        .get("repositoryUrl")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let location = reference
-        .get("location")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let expected = field_string(asset, "expectedIdentitySha256");
+    let pinned = coercion::string_or_empty(reference.get("pinnedCommit"))?;
+    let repository_url = reference.get("repositoryUrl").and_then(Value::as_str);
+    let location = reference.get("location").and_then(Value::as_str);
     if !(pinned.len() >= 40
         && pinned.len() <= 64
         && pinned
             .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-        || repository_url.is_empty()
-        || location != format!("{repository_url}#{pinned}")
-        || reference.get("digest").and_then(Value::as_str) != Some(expected.as_str())
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+        || repository_url.is_none_or(|v| coercion::trim(v).is_empty())
+        || location != repository_url.map(|v| format!("{v}#{pinned}")).as_deref()
+        || !coercion::primitive_equal(
+            reference.get("digest"),
+            field(asset, "expectedIdentitySha256"),
+        )
     {
-        return vec!["repository_asset_submodule_reference_invalid".into()];
+        return Ok(vec!["repository_asset_submodule_reference_invalid".into()]);
     }
+    let repository_url = repository_url.unwrap_or_default();
     let gitmodules = fs::read_to_string(root.join(".gitmodules"));
     let binding = gitmodules.ok().map(|contents| {
         let mut path_value = None;
@@ -302,19 +260,21 @@ fn submodule_binding(root: &Path, source: &str, asset: &Value) -> Vec<String> {
     });
     let parent = match parent_gitlink(root, source) {
         Ok(parent) => parent,
-        Err(error) => return vec![error.into()],
+        Err(error) => return Ok(vec![error.into()]),
     };
     let materialized = match materialized_submodule_head(&safe_join(root, source)) {
         Ok(head) => head,
-        Err(error) => return vec![error.into()],
+        Err(error) => return Ok(vec![error.into()]),
     };
     if binding != Some(true)
-        || parent != pinned
-        || materialized.as_ref().is_some_and(|head| head != pinned)
+        || reference.get("pinnedCommit").and_then(Value::as_str) != Some(parent.as_str())
+        || materialized.as_ref().is_some_and(|head| {
+            reference.get("pinnedCommit").and_then(Value::as_str) != Some(head.as_str())
+        })
     {
-        return vec!["repository_asset_submodule_binding_mismatch".into()];
+        return Ok(vec!["repository_asset_submodule_binding_mismatch".into()]);
     }
-    vec![]
+    Ok(vec![])
 }
 
 fn materialized_submodule_head(source: &Path) -> Result<Option<String>, &'static str> {
@@ -380,55 +340,95 @@ fn materialized_submodule_head(source: &Path) -> Result<Option<String>, &'static
     Err("repository_asset_submodule_head_unresolved")
 }
 
+struct MigrationBlocker {
+    json: Value,
+    message: String,
+}
+fn migration_blocker(
+    value: Option<&Value>,
+) -> Result<Option<MigrationBlocker>, RepositoryAssetError> {
+    let key = coercion::string(value)?;
+    let message = match key.as_str() {
+        "pending-external-registry-reference" => "external_registry_reference_required".to_owned(),
+        "pending-read-only-reference-release" => "read_only_reference_release_required".to_owned(),
+        "__proto__" => "[object Object]".to_owned(),
+        "constructor" => "function Object() { [native code] }".to_owned(),
+        "__defineGetter__"
+        | "__defineSetter__"
+        | "hasOwnProperty"
+        | "__lookupGetter__"
+        | "__lookupSetter__"
+        | "isPrototypeOf"
+        | "propertyIsEnumerable"
+        | "toString"
+        | "valueOf"
+        | "toLocaleString" => format!("function {key}() {{ [native code] }}"),
+        _ => return Ok(None),
+    };
+    let json = if key.starts_with("pending-") {
+        Value::String(message.clone())
+    } else if key == "__proto__" {
+        json!({})
+    } else {
+        Value::Null
+    };
+    Ok(Some(MigrationBlocker { json, message }))
+}
+
 fn inspect_asset(root: &Path, asset: &Value) -> Result<Value, RepositoryAssetError> {
-    let mut blockers = Vec::new();
-    let source = path_value(&field_string(asset, "sourcePath")).ok();
-    let identity = path_value(&field_string(asset, "identityFile")).ok();
-    if source.is_none() || identity.is_none() {
-        blockers.push("repository_asset_path_invalid".into());
+    let mut blockers: Vec<String> = Vec::new();
+    let mut source = None;
+    let mut identity = None;
+    // One incumbent try block: the second path is evaluated only after the
+    // first succeeds, and an invalid second path retains the first result.
+    let paths = (|| {
+        source = Some(
+            path_value(&field_string(asset, "sourcePath")?)
+                .map_err(RepositoryAssetError::Coercion)?,
+        );
+        identity = Some(
+            path_value(&field_string(asset, "identityFile")?)
+                .map_err(RepositoryAssetError::Coercion)?,
+        );
+        Ok::<(), RepositoryAssetError>(())
+    })();
+    if let Err(error) = paths {
+        blockers.push(error.to_string());
     }
-    let asset_id = field_string(asset, "assetId");
-    if asset_id.trim().is_empty() {
+    if coercion::trim(&field_string(asset, "assetId")?).is_empty() {
         blockers.push("repository_asset_id_required".into());
     }
-    let expected = field_string(asset, "expectedIdentitySha256");
-    if !is_sha256(&expected) {
+    if !is_sha256(&field_string(asset, "expectedIdentitySha256")?) {
         blockers.push("repository_asset_identity_hash_invalid".into());
     }
-    if field_string(asset, "currentStorage").trim().is_empty()
-        || field_string(asset, "targetStorage").trim().is_empty()
-        || field_string(asset, "requiredExternalReferenceKind")
-            .trim()
-            .is_empty()
-        || field_string(asset, "retentionPolicy").trim().is_empty()
+    if coercion::trim(&field_string(asset, "currentStorage")?).is_empty()
+        || coercion::trim(&field_string(asset, "targetStorage")?).is_empty()
+        || coercion::trim(&field_string(asset, "requiredExternalReferenceKind")?).is_empty()
+        || coercion::trim(&field_string(asset, "retentionPolicy")?).is_empty()
     {
         blockers.push("repository_asset_storage_policy_incomplete".into());
     }
-    let migration = field_string(asset, "migrationStatus");
-    let migration_blocker = match migration.as_str() {
-        "externalized" => None,
-        "pending-external-registry-reference" => Some("external_registry_reference_required"),
-        "pending-read-only-reference-release" => Some("read_only_reference_release_required"),
-        _ => {
-            blockers.push("repository_asset_migration_status_invalid".into());
-            None
-        }
-    };
-    let mut observed = None;
+    let migration = field(asset, "migrationStatus");
+    let externalized = migration.and_then(Value::as_str) == Some("externalized");
+    let migration_blocker = migration_blocker(migration)?;
+    if migration_blocker.is_none() && !externalized {
+        blockers.push("repository_asset_migration_status_invalid".into());
+    }
+    let mut observed = Value::Null;
+    let expected = field(asset, "expectedIdentitySha256");
     if let (Some(source), Some(identity)) = (&source, &identity) {
         let source_root = safe_join(root, source);
         let identity_path = safe_join(root, identity);
         if !identity_path.starts_with(&source_root) {
             blockers.push("repository_asset_identity_outside_source".into());
-        } else if migration == "externalized" {
+        } else if externalized {
             let restored = field(asset, "externalReference")
-                .and_then(|r| r.get("restoreDrillReceipt"))
-                .and_then(|r| r.get("restoredIdentitySha256"));
-            observed = restored
-                .and_then(Value::as_str)
-                .filter(|value| is_sha256(value))
-                .map(ToOwned::to_owned);
-            if observed.as_deref() != Some(expected.as_str()) {
+                .and_then(|v| v.get("restoreDrillReceipt"))
+                .and_then(|v| v.get("restoredIdentitySha256"));
+            if is_sha256(&coercion::string_or_empty(restored)?) {
+                observed = coercion::clone_raw(restored)?;
+            }
+            if !coercion::primitive_equal(Some(&observed), expected) {
                 blockers.push("repository_asset_identity_hash_mismatch".into());
             }
             if let Ok(stat) = fs::symlink_metadata(&source_root)
@@ -440,7 +440,8 @@ fn inspect_asset(root: &Path, asset: &Value) -> Result<Value, RepositoryAssetErr
                 if stat.file_type().is_symlink() || !stat.is_file() {
                     blockers.push("repository_asset_identity_not_regular_file".into());
                 } else if let Ok(bytes) = read_file_bounded(&identity_path) {
-                    if sha256(&bytes) != expected {
+                    let actual = Value::String(sha256(&bytes));
+                    if !coercion::primitive_equal(Some(&actual), expected) {
                         blockers.push("repository_asset_identity_hash_mismatch".into());
                     }
                 } else {
@@ -448,68 +449,70 @@ fn inspect_asset(root: &Path, asset: &Value) -> Result<Value, RepositoryAssetErr
                 }
             }
         } else {
-            match fs::symlink_metadata(&source_root) {
-                Ok(stat) if !stat.file_type().is_symlink() && stat.is_dir() => {}
-                _ => blockers.push("repository_asset_source_not_regular_directory".into()),
-            }
-            match fs::symlink_metadata(&identity_path) {
-                Ok(stat) if !stat.file_type().is_symlink() && stat.is_file() => {
-                    match read_file_bounded(&identity_path) {
-                        Ok(bytes) => {
-                            observed = Some(sha256(&bytes));
-                            if observed.as_deref() != Some(expected.as_str()) {
-                                blockers.push("repository_asset_identity_hash_mismatch".into());
+            // Source and identity metadata are obtained before either type
+            // check, matching the incumbent's single try/catch ordering.
+            match fs::symlink_metadata(&source_root)
+                .and_then(|a| fs::symlink_metadata(&identity_path).map(|b| (a, b)))
+            {
+                Ok((source_stat, identity_stat)) => {
+                    if source_stat.file_type().is_symlink() || !source_stat.is_dir() {
+                        blockers.push("repository_asset_source_not_regular_directory".into());
+                    }
+                    if identity_stat.file_type().is_symlink() || !identity_stat.is_file() {
+                        blockers.push("repository_asset_identity_not_regular_file".into());
+                    } else {
+                        match read_file_bounded(&identity_path) {
+                            Ok(bytes) => {
+                                observed = Value::String(sha256(&bytes));
+                                if !coercion::primitive_equal(Some(&observed), expected) {
+                                    blockers.push("repository_asset_identity_hash_mismatch".into());
+                                }
                             }
+                            Err(_) => blockers.push("repository_asset_identity_unreadable".into()),
                         }
-                        Err(_) => blockers.push("repository_asset_identity_unreadable".into()),
                     }
                 }
-                Ok(_) => blockers.push("repository_asset_identity_not_regular_file".into()),
                 Err(_) => blockers.push("repository_asset_identity_unreadable".into()),
             }
         }
     }
-    if migration == "externalized" {
-        let reference = field(asset, "externalReference").and_then(Value::as_object);
-        let valid_reference = reference.is_some_and(|reference| {
-            reference.get("kind").and_then(Value::as_str)
-                == Some(field_string(asset, "requiredExternalReferenceKind").as_str())
-                && reference
-                    .get("location")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| {
-                        !value.trim().is_empty()
-                            && value.len() <= 2048
-                            && !value.chars().any(char::is_whitespace)
-                    })
-                && reference
-                    .get("digest")
-                    .and_then(Value::as_str)
-                    .is_some_and(is_sha256)
-                && valid_restore_receipt(asset, reference.get("restoreDrillReceipt"))
-                    .unwrap_or(false)
-        });
+    if externalized {
+        let reference = field(asset, "externalReference");
+        let location = reference
+            .and_then(|v| v.get("location"))
+            .and_then(Value::as_str);
+        let valid_reference = coercion::primitive_equal(
+            reference.and_then(|v| v.get("kind")),
+            field(asset, "requiredExternalReferenceKind"),
+        ) && location.is_some_and(|v| {
+            !coercion::trim(v).is_empty()
+                && v.encode_utf16().count() <= 2048
+                && !coercion::has_whitespace(v)
+        }) && is_sha256(&coercion::string_or_empty(
+            reference.and_then(|v| v.get("digest")),
+        )?) && valid_restore_receipt(
+            asset,
+            reference.and_then(|v| v.get("restoreDrillReceipt")),
+        )?;
         if !valid_reference {
             blockers.push("repository_asset_external_reference_incomplete".into());
         }
-        if let Some(ref source) = source {
-            blockers.extend(submodule_binding(root, source, asset));
+        if let Some(source) = &source {
+            blockers.extend(submodule_binding(root, source, asset)?);
         }
     }
     let integrity_ready = blockers.is_empty();
     Ok(json!({
-        "assetId": optional_string(asset_id),
-        "sourcePath": source,
-        "identityFile": identity,
-        "expectedIdentitySha256": optional_string(expected),
+        "assetId": coercion::raw_or_null(field(asset, "assetId"))?,
+        "sourcePath": source, "identityFile": identity,
+        "expectedIdentitySha256": coercion::raw_or_null(expected)?,
         "observedIdentitySha256": observed,
-        "currentStorage": optional_string(field_string(asset, "currentStorage")),
-        "targetStorage": optional_string(field_string(asset, "targetStorage")),
-        "migrationStatus": optional_string(field_string(asset, "migrationStatus")),
-        "integrityReady": integrity_ready,
-        "externalized": migration == "externalized" && integrity_ready,
+        "currentStorage": coercion::raw_or_null(field(asset, "currentStorage"))?,
+        "targetStorage": coercion::raw_or_null(field(asset, "targetStorage"))?,
+        "migrationStatus": coercion::raw_or_null(migration)?,
+        "integrityReady": integrity_ready, "externalized": externalized && integrity_ready,
         "blockers": blockers,
-        "externalizationBlockers": migration_blocker.into_iter().collect::<Vec<_>>(),
+        "externalizationBlockers": migration_blocker.into_iter().map(|v| v.json).collect::<Vec<_>>(),
     }))
 }
 
@@ -519,7 +522,7 @@ pub fn inspect_repository_asset_externalization_v1(
 ) -> Result<Value, RepositoryAssetError> {
     let mut manifest_blockers = Vec::new();
     let assets = manifest.get("assets").and_then(Value::as_array);
-    if manifest.get("version").and_then(Value::as_u64) != Some(1)
+    if manifest.get("version").and_then(Value::as_f64) != Some(1.0)
         || manifest.get("kind").and_then(Value::as_str)
             != Some("RepositoryAssetExternalizationManifest")
         || assets.is_none_or(|assets| assets.is_empty())
@@ -530,51 +533,42 @@ pub fn inspect_repository_asset_externalization_v1(
     for asset in assets.into_iter().flatten() {
         inspected.push(inspect_asset(root, asset)?);
     }
+    // Set uses primitive SameValueZero and object identity. Each independently
+    // parsed JSON member has its own identity, even with equal object bytes.
     let mut ids = std::collections::BTreeSet::new();
-    if inspected.iter().any(|asset| {
-        !ids.insert(
-            asset
-                .get("assetId")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-        )
-    }) {
-        manifest_blockers.push("repository_asset_id_duplicate");
+    for asset in &inspected {
+        if let Some(id) = coercion::primitive_identity(&asset["assetId"])
+            && !ids.insert(id)
+        {
+            manifest_blockers.push("repository_asset_id_duplicate");
+            break;
+        }
     }
-    let integrity: Vec<String> = manifest_blockers
-        .iter()
-        .map(|value| (*value).to_owned())
-        .chain(inspected.iter().flat_map(|asset| {
-            asset["blockers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|value| value.as_str())
-                .map(|blocker| {
-                    format!(
-                        "{}:{blocker}",
-                        asset["assetId"].as_str().unwrap_or("unknown")
-                    )
-                })
-        }))
-        .collect();
-    let external: Vec<String> = inspected
-        .iter()
-        .flat_map(|asset| {
-            asset["externalizationBlockers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|value| value.as_str())
-                .map(|blocker| {
-                    format!(
-                        "{}:{blocker}",
-                        asset["assetId"].as_str().unwrap_or("unknown")
-                    )
-                })
-        })
-        .collect();
+    let mut integrity: Vec<String> = manifest_blockers.iter().map(|v| (*v).to_owned()).collect();
+    let mut external = Vec::new();
+    for (index, asset) in inspected.iter().enumerate() {
+        let id = asset.get("assetId");
+        let prefix = if coercion::truthy(id) {
+            coercion::string(id)?
+        } else {
+            "unknown".to_owned()
+        };
+        for blocker in asset["blockers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            integrity.push(format!("{prefix}:{blocker}"));
+        }
+        if let Some(blocker) = migration_blocker(
+            assets
+                .and_then(|v| v.get(index))
+                .and_then(|v| field(v, "migrationStatus")),
+        )? {
+            external.push(format!("{}:{}", coercion::string(id)?, blocker.message));
+        }
+    }
     Ok(json!({
         "version": 1,
         "kind": "RepositoryAssetExternalizationInspection",
@@ -610,20 +604,20 @@ pub fn build_repository_asset_externalization_handoff_v1(
         .and_then(Value::as_array)
         .ok_or(RepositoryAssetError::InvalidRequest)?;
     let handoff_assets = assets.iter().map(|asset| {
-        let asset_id = field_string(asset, "assetId");
-        let expected = field_string(asset, "expectedIdentitySha256");
-        json!({
+        let asset_id = coercion::clone_raw(field(asset, "assetId"))?;
+        let expected = coercion::clone_raw(field(asset, "expectedIdentitySha256"))?;
+        Ok::<Value, RepositoryAssetError>(json!({
             "assetId": asset_id,
-            "sourcePath": field_string(asset, "sourcePath"),
-            "identityFile": field_string(asset, "identityFile"),
+            "sourcePath": coercion::clone_raw(field(asset, "sourcePath"))?,
+            "identityFile": coercion::clone_raw(field(asset, "identityFile"))?,
             "expectedIdentitySha256": expected,
-            "targetStorage": field_string(asset, "targetStorage"),
-            "requiredExternalReferenceKind": field_string(asset, "requiredExternalReferenceKind"),
-            "retentionPolicy": field_string(asset, "retentionPolicy"),
+            "targetStorage": coercion::clone_raw(field(asset, "targetStorage"))?,
+            "requiredExternalReferenceKind": coercion::clone_raw(field(asset, "requiredExternalReferenceKind"))?,
+            "retentionPolicy": coercion::clone_raw(field(asset, "retentionPolicy"))?,
             "externalizationSequence": ["publish-immutable-reference", "verify-reference-digest", "restore-into-fresh-trusted-root", "verify-restored-identity", "issue-content-bound-restore-drill-receipt", "update-manifest-to-externalized", "switch-production-readers", "delete-tracked-payload-in-dedicated-migration"],
-            "requiredExternalReference": { "kind": field_string(asset, "requiredExternalReferenceKind"), "location": null, "digest": null, "restoreDrillReceipt": { "version": 1, "kind": "RepositoryAssetExternalRestoreDrillReceipt", "status": "repository_asset_external_restore_verified", "assetId": asset_id, "externalReferenceDigest": null, "restoredIdentitySha256": expected, "verifiedAt": null, "repositoryAssetExternalRestoreDrillReceiptHash": null } },
-        })
-    }).collect::<Vec<_>>();
+            "requiredExternalReference": { "kind": coercion::clone_raw(field(asset, "requiredExternalReferenceKind"))?, "location": null, "digest": null, "restoreDrillReceipt": { "version": 1, "kind": "RepositoryAssetExternalRestoreDrillReceipt", "status": "repository_asset_external_restore_verified", "assetId": asset_id, "externalReferenceDigest": null, "restoredIdentitySha256": expected, "verifiedAt": null, "repositoryAssetExternalRestoreDrillReceiptHash": null } },
+        }))
+    }).collect::<Result<Vec<_>, _>>()?;
     Ok(json!({
         "version": 1,
         "kind": "RepositoryAssetExternalizationHandoff",

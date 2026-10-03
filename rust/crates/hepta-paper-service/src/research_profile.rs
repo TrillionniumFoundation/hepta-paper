@@ -1,7 +1,10 @@
 //! Durable, non-authorizing binding between a local workflow and an opaque
 //! restricted-research qualification.
 
-use std::str::FromStr;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
 
 use hepta_codex_protocol::Sha256Digest;
 use hepta_module_platform::ActivationStateV1;
@@ -38,7 +41,7 @@ impl ResearchActivationStageV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResearchWorkflowProfileV1 {
-    /// Contract version, exactly one.
+    /// Contract version: legacy diagnostic one or per-role runtime binding two.
     pub version: u16,
     /// Canary or established private research state.
     pub stage: ResearchActivationStageV1,
@@ -54,8 +57,11 @@ pub struct ResearchWorkflowProfileV1 {
     pub qualification_trust_store_generation: u64,
     /// First invalid millisecond of the retained evidence set.
     pub qualification_expires_at_unix_ms: u64,
-    /// Runtime identity agreed by the independently signed role package.
+    /// Signed aggregate diagnostic label; V2 dispatch uses the per-role mapping.
     pub qualified_codex_runtime_identity_hash: Sha256Digest,
+    /// Authenticated per-role hashes for V2. Wire data remains non-authorizing.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub qualified_codex_role_runtime_identity_hashes_v2: BTreeMap<String, Sha256Digest>,
     /// Research qualification never activates the workflow automatically.
     pub automatic_activation: bool,
     /// Research qualification never grants production activation.
@@ -79,7 +85,11 @@ impl ResearchWorkflowProfileV1 {
             Sha256Digest::from_str(&qualification.runtime_facts().codex_runtime_identity_hash)
                 .map_err(|_| QualificationClosureError::PayloadFactsInvalid)?;
         Ok(Self {
-            version: 1,
+            version: if qualification.codex_role_runtime_identities_v2().is_empty() {
+                1
+            } else {
+                2
+            },
             stage,
             repository: subject.repository.clone(),
             commit: subject.commit.clone(),
@@ -88,6 +98,9 @@ impl ResearchWorkflowProfileV1 {
             qualification_trust_store_generation: qualification.trust_store_generation(),
             qualification_expires_at_unix_ms: qualification.expires_at_unix_ms(),
             qualified_codex_runtime_identity_hash,
+            qualified_codex_role_runtime_identity_hashes_v2: parse_role_hashes(
+                &qualification.codex_role_runtime_identity_hashes_v2(),
+            )?,
             automatic_activation: false,
             production_activation: false,
             release_authority: false,
@@ -101,7 +114,7 @@ impl ResearchWorkflowProfileV1 {
     pub fn from_template(
         template: &ResearchWorkflowProfileTemplateV1,
     ) -> Result<Self, QualificationClosureError> {
-        if template.version != 1
+        if !matches!(template.version, 1 | 2)
             || template.stage != "canary"
             || template.automatic_activation
             || template.production_activation
@@ -126,6 +139,9 @@ impl ResearchWorkflowProfileV1 {
             qualification_trust_store_generation: template.qualification_trust_store_generation,
             qualification_expires_at_unix_ms: template.qualification_expires_at_unix_ms,
             qualified_codex_runtime_identity_hash,
+            qualified_codex_role_runtime_identity_hashes_v2: parse_role_hashes(
+                &template.qualified_codex_role_runtime_identity_hashes_v2,
+            )?,
             automatic_activation: template.automatic_activation,
             production_activation: template.production_activation,
             release_authority: template.release_authority,
@@ -152,13 +168,19 @@ impl ResearchWorkflowProfileV1 {
             qualified_codex_runtime_identity_hash: self
                 .qualified_codex_runtime_identity_hash
                 .to_string(),
+            workflow_profile_version: self.version,
+            qualified_codex_role_runtime_identity_hashes_v2: self
+                .qualified_codex_role_runtime_identity_hashes_v2
+                .iter()
+                .map(|(role, hash)| (role.clone(), hash.to_string()))
+                .collect(),
         }
     }
 
     /// Pure shape validation; authority remains in the opaque qualification.
     #[must_use]
     pub fn is_well_formed(&self) -> bool {
-        self.version == 1
+        self.runtime_mapping_is_well_formed()
             && self.repository == "TrillionniumFoundation/hepta-paper"
             && valid_git_hash(&self.commit)
             && valid_git_hash(&self.tree)
@@ -170,6 +192,37 @@ impl ResearchWorkflowProfileV1 {
             && !self.production_activation
             && !self.release_authority
             && !self.submission_authority
+    }
+
+    /// Exact closed map shape; legacy records are retained for diagnostics.
+    fn runtime_mapping_is_well_formed(&self) -> bool {
+        let roles = &self.qualified_codex_role_runtime_identity_hashes_v2;
+        match self.version {
+            1 => roles.is_empty(),
+            2 => {
+                (2..=4).contains(&roles.len())
+                    && roles.contains_key("author")
+                    && roles.contains_key("reviewer")
+                    && roles.keys().all(|role| {
+                        matches!(
+                            role.as_str(),
+                            "author" | "reviewer" | "formal_reviewer" | "repairer"
+                        )
+                    })
+                    && roles.values().collect::<BTreeSet<_>>().len() == roles.len()
+            }
+            _ => false,
+        }
+    }
+
+    /// Per-role expected identity. A legacy profile cannot authorize any role.
+    #[must_use]
+    pub fn qualified_runtime_for_role_v2(&self, role: &str) -> Option<&Sha256Digest> {
+        if self.version != 2 || !self.runtime_mapping_is_well_formed() {
+            return None;
+        }
+        self.qualified_codex_role_runtime_identity_hashes_v2
+            .get(role)
     }
 
     /// Recheck exact identity and currentness before a dispatch boundary.
@@ -185,6 +238,19 @@ impl ResearchWorkflowProfileV1 {
         }
         Ok(())
     }
+}
+
+pub(crate) fn parse_role_hashes(
+    hashes: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, Sha256Digest>, QualificationClosureError> {
+    hashes
+        .iter()
+        .map(|(role, hash)| {
+            Sha256Digest::from_str(hash)
+                .map(|hash| (role.clone(), hash))
+                .map_err(|_| QualificationClosureError::PayloadFactsInvalid)
+        })
+        .collect()
 }
 
 fn valid_git_hash(value: &str) -> bool {

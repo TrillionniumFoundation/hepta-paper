@@ -604,7 +604,11 @@ fn validate_codex_role(
             "signatureBase64",
         ],
     )?;
-    common_subject(root, subject, "commit", "tree")?;
+    let version = unsigned(root, "schemaVersion")?;
+    if !matches!(version, 1 | 2) {
+        return Err(QualificationPayloadError::SchemaInvalid);
+    }
+    common_subject_version(root, subject, "commit", "tree", version)?;
     sha256(root, "runtimeIdentityHash")?;
     identifier(root, "providerAccountKeyId")?;
     if !boolean(root, "crossRoleAccessDenied")?
@@ -630,26 +634,34 @@ fn validate_codex_role(
     let mut journals = BTreeSet::new();
     let mut schemas = BTreeSet::new();
     let mut audiences = BTreeSet::new();
+    let mut runtimes = BTreeSet::new();
     for role in roles {
         let role = object(role)?;
-        exact_keys(
-            role,
-            &[
-                "role",
-                "uid",
-                "gid",
-                "homeIdentityHash",
-                "socketIdentityHash",
-                "journalIdentityHash",
-                "schemaIdentityHash",
-                "capabilityAudienceHash",
-                "authenticated",
-                "boundedCompletion",
-                "environmentDisclosureDenied",
-                "unexpectedFdDisclosureDenied",
-                "receiptHash",
-            ],
-        )?;
+        let mut fields = vec![
+            "role",
+            "uid",
+            "gid",
+            "homeIdentityHash",
+            "socketIdentityHash",
+            "journalIdentityHash",
+            "schemaIdentityHash",
+            "capabilityAudienceHash",
+            "authenticated",
+            "boundedCompletion",
+            "environmentDisclosureDenied",
+            "unexpectedFdDisclosureDenied",
+            "receiptHash",
+        ];
+        if version == 2 {
+            fields.extend([
+                "runtimeIdentityHash",
+                "transportProfileHash",
+                "executableIdentityHash",
+                "modelSelector",
+                "environmentPolicyHash",
+            ]);
+        }
+        exact_keys(role, &fields)?;
         let name = string(role, "role")?;
         let uid = unsigned(role, "uid")?;
         let gid = unsigned(role, "gid")?;
@@ -670,6 +682,25 @@ fn validate_codex_role(
         let schema = sha256(role, "schemaIdentityHash")?;
         let audience = sha256(role, "capabilityAudienceHash")?;
         sha256(role, "receiptHash")?;
+        if version == 2 {
+            let runtime = sha256(role, "runtimeIdentityHash")?;
+            let digest = |field| {
+                sha256(role, field)?
+                    .parse()
+                    .map_err(|_| QualificationPayloadError::SemanticInvalid)
+            };
+            let expected = hepta_codex_runtime::codex_runtime_identity_hash_v1(
+                &digest("executableIdentityHash")?,
+                &digest("homeIdentityHash")?,
+                string(role, "modelSelector")?,
+                &digest("environmentPolicyHash")?,
+                &digest("transportProfileHash")?,
+            )
+            .map_err(|_| QualificationPayloadError::SemanticInvalid)?;
+            if runtime != expected.as_str() || !runtimes.insert(runtime) {
+                return Err(QualificationPayloadError::SemanticInvalid);
+            }
+        }
         if !homes.insert(home)
             || !sockets.insert(socket)
             || !journals.insert(journal)
@@ -1253,7 +1284,17 @@ fn common_subject(
     commit_key: &str,
     tree_key: &str,
 ) -> Result<(), QualificationPayloadError> {
-    if unsigned(root, "schemaVersion")? != 1
+    common_subject_version(root, subject, commit_key, tree_key, 1)
+}
+
+fn common_subject_version(
+    root: &Map<String, Value>,
+    subject: &QualificationSubjectV1,
+    commit_key: &str,
+    tree_key: &str,
+    version: u64,
+) -> Result<(), QualificationPayloadError> {
+    if unsigned(root, "schemaVersion")? != version
         || string(root, "packageId")? != subject.package_id.as_str()
         || string(root, "repository")? != subject.repository.as_str()
         || string(root, commit_key)? != subject.commit.as_str()

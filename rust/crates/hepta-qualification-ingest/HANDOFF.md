@@ -39,6 +39,36 @@ release/submission authority while retaining host, storage, key-owner, role and
 cutover-safety evidence. The durable ledger schema is V2. The report digest and
 the stable opaque binding digest are separate domains and are not interchangeable.
 
+## Signed per-role runtime mapping
+
+Current author/reviewer dispatch requires EXT-CODEX-ROLE-001 payload schemaVersion
+2, documented by
+[role schema V2](../../../docs/rust/qualification/authenticated-codex-role-canary-v2.schema.json).
+Each role binds its distinct UID/GID, private home hash, full runtime hash and
+transport profile. Home identity includes configuration and non-secret credential
+metadata. Executable identity, model, environment, home and transport components
+must reproduce the full runtime hash through the same codex_runtime_identity_hash_v1
+owner used by filesystem inspection. The signed canonical payload hash binds every
+role fact; the opaque closure retains the mapping without a JSON constructor.
+
+Templates and durable workflow profiles explicitly use version 2 with
+qualifiedCodexRoleRuntimeIdentityHashesV2. Exact subject, signed-set binding,
+trust generation, expiry, profile version and role map are compared before any
+replay transaction. Current service admission uses each selected role's runtime
+and principal; actual broker inspection and recovery still recheck that full
+identity. Legacy payload/profile version 1 remains decodable historical data
+and supplies no current per-role broker admission. Neither version grants
+release or submission authority.
+
+The executable source fixture owners are:
+
+    cargo test -p hepta-qualification-ingest --lib role_runtime_v2:: --locked --offline
+    cargo test -p hepta-paper-service --lib research::tests::principal_binding:: --locked --offline
+
+Fixture signatures and local identity directories qualify source behavior only;
+actual separate provider accounts, trusted role evidence, and the normal managed
+execution canary must be supplied and accepted independently.
+
 ## File and resource contract
 
 The request is a canonical absolute path to a singly linked regular file,

@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hepta-codex-runtime = { version = "=0.1.0", path = "../hepta-codex-runtime" }
 nix.workspace = true
 rusqlite.workspace = true
 base64ct.workspace = true

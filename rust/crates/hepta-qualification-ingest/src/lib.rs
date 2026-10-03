@@ -12,9 +12,10 @@ pub mod qualification_closure;
 pub use closure::{
     ExternalQualificationCandidateV1, ExternalQualificationClosureSubjectV1,
     ExternalQualificationRuntimeFactsV1, QualificationClosureError, QualificationClosureProfile,
-    VerifiedExternalQualificationClosureV1, VerifiedResearchQualificationV3,
-    verify_external_qualification_closure_v1, verify_external_qualification_closure_v2,
-    verify_research_qualification_v3, verify_research_qualification_v4,
+    QualifiedCodexRoleRuntimeIdentityV2, VerifiedExternalQualificationClosureV1,
+    VerifiedResearchQualificationV3, verify_external_qualification_closure_v1,
+    verify_external_qualification_closure_v2, verify_research_qualification_v3,
+    verify_research_qualification_v4,
 };
 
 pub use package_payload::{

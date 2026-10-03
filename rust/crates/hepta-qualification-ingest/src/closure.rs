@@ -120,12 +120,46 @@ pub struct ExternalQualificationRuntimeFactsV1 {
     pub database_identity_hash: String,
     /// Reviewed service-unit identity from the destructive-storage package.
     pub service_identity_hash: String,
-    /// Authenticated Codex runtime identity from the separate-role canary package.
+    /// Legacy aggregate diagnostic label from the signed role package; V2 dispatch uses its per-role map.
     pub codex_runtime_identity_hash: String,
     /// Durable writer-transfer receipt from full/V3 cutover evidence. V4 research
     /// omits this fact rather than inventing a receipt for its private state.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub writer_transfer_receipt_hash: Option<String>,
+}
+
+/// Per-role facts derived only after authenticating the closed V2 role payload.
+/// No deserializer or public constructor can manufacture this evidence view.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QualifiedCodexRoleRuntimeIdentityV2 {
+    uid: u32,
+    gid: u32,
+    home_identity_hash: String,
+    runtime_identity_hash: String,
+    transport_profile_hash: String,
+}
+
+impl QualifiedCodexRoleRuntimeIdentityV2 {
+    /// Qualified broker process principal.
+    #[must_use]
+    pub const fn principal(&self) -> (u32, u32) {
+        (self.uid, self.gid)
+    }
+    /// Private home including configuration and non-secret credential metadata.
+    #[must_use]
+    pub fn home_identity_hash(&self) -> &str {
+        &self.home_identity_hash
+    }
+    /// Exact composed runtime hash, checked by the original runtime hash owner.
+    #[must_use]
+    pub fn runtime_identity_hash(&self) -> &str {
+        &self.runtime_identity_hash
+    }
+    /// Exact transport profile included in this runtime hash.
+    #[must_use]
+    pub fn transport_profile_hash(&self) -> &str {
+        &self.transport_profile_hash
+    }
 }
 
 /// Opaque, complete and cross-bound external qualification set.
@@ -146,6 +180,7 @@ pub struct VerifiedExternalQualificationClosureV1 {
     authority_groups: BTreeMap<String, Vec<String>>,
     runtime_facts: ExternalQualificationRuntimeFactsV1,
     codex_role_principals: BTreeMap<String, (u32, u32)>,
+    codex_role_runtime_identities_v2: BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2>,
 }
 
 impl VerifiedExternalQualificationClosureV1 {
@@ -211,6 +246,24 @@ impl VerifiedExternalQualificationClosureV1 {
     #[must_use]
     pub fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
         self.codex_role_principals.get(role).copied()
+    }
+
+    /// Current-version identities from the exact authenticated role package.
+    /// Legacy V1 evidence intentionally has no per-role runtime admission.
+    #[must_use]
+    pub fn codex_role_runtime_identities_v2(
+        &self,
+    ) -> &BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2> {
+        &self.codex_role_runtime_identities_v2
+    }
+
+    /// Exact independently bound runtime for one role; legacy V1 returns none.
+    #[must_use]
+    pub fn codex_role_runtime_identity_v2(
+        &self,
+        role: &str,
+    ) -> Option<&QualifiedCodexRoleRuntimeIdentityV2> {
+        self.codex_role_runtime_identities_v2.get(role)
     }
 
     /// Returns the verified package record for a closed package identifier.
@@ -326,6 +379,31 @@ impl VerifiedResearchQualificationV3 {
     #[must_use]
     pub fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
         self.inner.codex_role_principal(role)
+    }
+
+    /// Authenticated V2 runtime mapping, never reconstructed from a receipt.
+    #[must_use]
+    pub fn codex_role_runtime_identities_v2(
+        &self,
+    ) -> &BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2> {
+        self.inner.codex_role_runtime_identities_v2()
+    }
+
+    /// Bound runtime facts for the selected role. Legacy evidence returns none.
+    #[must_use]
+    pub fn codex_role_runtime_identity_v2(
+        &self,
+        role: &str,
+    ) -> Option<&QualifiedCodexRoleRuntimeIdentityV2> {
+        self.inner.codex_role_runtime_identity_v2(role)
+    }
+    /// Non-authorizing expected hashes for durable workflow comparison.
+    #[must_use]
+    pub fn codex_role_runtime_identity_hashes_v2(&self) -> BTreeMap<String, String> {
+        self.codex_role_runtime_identities_v2()
+            .iter()
+            .map(|(role, identity)| (role.clone(), identity.runtime_identity_hash().to_owned()))
+            .collect()
     }
     /// Still-separated operational control domains, not a human approval count.
     pub fn authority_groups(&self) -> &BTreeMap<String, Vec<String>> {
@@ -539,6 +617,7 @@ fn assemble_verified_closure(
         writer_transfer_receipt_hash,
     };
     let codex_role_principals = codex_role_principals(codex)?;
+    let codex_role_runtime_identities_v2 = codex_role_runtime_identities_v2(codex)?;
 
     let ordered_packages = profile
         .packages()
@@ -623,7 +702,57 @@ fn assemble_verified_closure(
         authority_groups,
         runtime_facts,
         codex_role_principals,
+        codex_role_runtime_identities_v2,
     })
+}
+
+fn codex_role_runtime_identities_v2(
+    payload: &serde_json::Map<String, Value>,
+) -> Result<BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2>, QualificationClosureError> {
+    // This extractor is reached only after closed payload and signature checks.
+    // Legacy records (including internal facts-only diagnostics) have no map.
+    if payload.get("schemaVersion").and_then(Value::as_u64) != Some(2) {
+        return Ok(BTreeMap::new());
+    }
+    let roles = payload
+        .get("roles")
+        .and_then(Value::as_array)
+        .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+    let mut identities = BTreeMap::new();
+    for role in roles {
+        let role = role
+            .as_object()
+            .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+        let id = |name| {
+            role.get(name)
+                .and_then(Value::as_u64)
+                .and_then(|id| u32::try_from(id).ok())
+                .filter(|id| *id > 0)
+                .ok_or(QualificationClosureError::PayloadFactsInvalid)
+        };
+        let name = role
+            .get("role")
+            .and_then(Value::as_str)
+            .filter(|name| {
+                matches!(
+                    *name,
+                    "author" | "reviewer" | "formal_reviewer" | "repairer"
+                )
+            })
+            .ok_or(QualificationClosureError::PayloadFactsInvalid)?
+            .to_owned();
+        let identity = QualifiedCodexRoleRuntimeIdentityV2 {
+            uid: id("uid")?,
+            gid: id("gid")?,
+            home_identity_hash: fact(role, "homeIdentityHash")?.to_owned(),
+            runtime_identity_hash: fact(role, "runtimeIdentityHash")?.to_owned(),
+            transport_profile_hash: fact(role, "transportProfileHash")?.to_owned(),
+        };
+        if identities.insert(name, identity).is_some() {
+            return Err(QualificationClosureError::PayloadFactsInvalid);
+        }
+    }
+    Ok(identities)
 }
 
 fn codex_role_principals(

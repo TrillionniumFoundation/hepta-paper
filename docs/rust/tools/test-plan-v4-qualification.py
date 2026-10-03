@@ -44,6 +44,7 @@ def load_module(name: str, path: Path):
 
 COLLECT = load_module("hepta_collect_required_checks", TOOLS / "collect-required-checks.py")
 SCHEMA = load_module("hepta_strict_json_schema", TOOLS / "strict_json_schema.py")
+PROGRAM_TRUTH = load_module("hepta_program_truth", VALIDATE)
 
 
 def recompute_snapshot_identity(evidence: dict[str, object]) -> None:
@@ -199,6 +200,37 @@ class PlanV4QualificationTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(VALIDATE)], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("rust_plan_v4_program_truth_valid", result.stdout)
+
+    def test_machine_package_versions_are_read_from_signed_schema_declarations(self) -> None:
+        mapping = json.loads((ROOT / "docs/rust/qualification/external-package-map.v1.json").read_text())
+        for row in mapping["packages"]:
+            versions = PROGRAM_TRUTH.validate_package_schema_declaration(row["packageId"], row["schemas"])
+            declared = [json.loads((PROGRAM_TRUTH.QUAL / name).read_text())["properties"]["schemaVersion"]["const"]
+                        for name in row["schemas"]]
+            self.assertEqual(versions, declared)
+        role = next(row for row in mapping["packages"] if row["packageId"] == "EXT-CODEX-ROLE-001")
+        self.assertEqual(PROGRAM_TRUTH.validate_package_schema_declaration(role["packageId"], role["schemas"]), [2, 1])
+
+    def test_machine_package_version_declaration_rejects_reordering_substitution_and_signed_version_drift(self) -> None:
+        names = ["authenticated-codex-role-canary-v2.schema.json", "authenticated-codex-role-canary-v1.schema.json"]
+        for hostile in [[], names * 3, list(reversed(names)), [names[0], names[0]],
+                        [names[0], "../" + names[1]], [names[0], "external-key-owner-drill-v1.schema.json"]]:
+            with self.subTest(hostile=hostile), self.assertRaises(ValueError):
+                PROGRAM_TRUTH.validate_package_schema_declaration("EXT-CODEX-ROLE-001", hostile)
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            original = json.loads((PROGRAM_TRUTH.QUAL / names[0]).read_text())
+            for field, value in [("schemaVersion", {"const": 1}), ("schemaVersion", {"const": True}),
+                                 ("packageId", {"const": "EXT-KEY-OWNER-001"})]:
+                hostile = copy.deepcopy(original)
+                hostile["properties"][field] = value
+                (root / names[0]).write_text(json.dumps(hostile))
+                with self.subTest(field=field, value=value), mock.patch.object(PROGRAM_TRUTH, "QUAL", root), self.assertRaises(ValueError):
+                    PROGRAM_TRUTH.validate_package_schema_declaration("EXT-CODEX-ROLE-001", names[:1])
+            (root / names[0]).unlink()
+            (root / names[0]).symlink_to(PROGRAM_TRUTH.QUAL / names[0])
+            with mock.patch.object(PROGRAM_TRUTH, "QUAL", root), self.assertRaises(ValueError):
+                PROGRAM_TRUTH.validate_package_schema_declaration("EXT-CODEX-ROLE-001", names[:1])
 
     def test_complete_authenticated_matrix_derives_nonactivating_status(self) -> None:
         _, output, _ = self.run_derive(copy.deepcopy(self.complete), True)

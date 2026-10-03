@@ -67,6 +67,14 @@ Each changed candidate still needs a producer-authenticated non-empty matrix,
 retained fully schema-valid artifacts, live V3 revalidation and maintainer
 verification. Local execution does not qualify a branch or authorize a deployment.
 
+Historical source selection uses one [machine registry](../system/evidence/historical-source-semantic-selection-v1.json)
+of reviewed old blobs and complete current path/blob/mode vectors. The existing
+[history projector](../tools/revalidate-history-dispositions.py) consumes that
+registry from the selected Git commit, stores each unique historical-tip comparison
+once, and withdraws a recorded selection when any current successor changes.
+Its absorb/supersede/reference/reject results concern mapped source content;
+runtime parity, whole-branch merge and installation acceptance remain separate.
+
 ## Static source state
 
 | Plane | Current status | Effective evidence rule | Authority granted |

@@ -14,7 +14,7 @@ release, portal, or submission facts.
 | EXT-HOST-CGROUP-001 | GAP-HOST-001 | `independent-linux-review-v1.schema.json` | target-host operator plus independent Linux reviewer |
 | EXT-HOST-STORAGE-001 | GAP-HOST-002 | `external-host-storage-package-v1.schema.json` | destructive storage/host operator plus independent reviewer |
 | EXT-KEY-OWNER-001 | GAP-KEY-001 | `external-key-owner-drill-v1.schema.json` | capability key owner plus independent reviewer |
-| EXT-CODEX-ROLE-001 | GAP-CODEX-001 | `authenticated-codex-role-canary-v1.schema.json` | credential owner, target-host operator, and role reviewer |
+| EXT-CODEX-ROLE-001 | GAP-CODEX-001 | `authenticated-codex-role-canary-v2.schema.json` (current role dispatch); V1 historical diagnostics | credential owner, target-host operator, and role reviewer |
 | EXT-CUTOVER-SOAK-001 | GAP-REL-001 | `production-cutover-soak-v1.schema.json` | production writer/operator plus independent reviewer |
 | EXT-AUTHORITY-SET-001 | GAP-REL-001 | `external-authority-set-v1.schema.json` | release/KMS/HSM/WORM/portal/submission authorities and set reviewer |
 | LEGACY-REPLAY-001 | LEGACY-REPLAY-001 | `legacy-matrix-replay-closure-v1.schema.json` | private archive/replay operator plus independent reviewer; no production authority |

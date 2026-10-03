@@ -247,7 +247,10 @@
       ],
       "properties": {
         "version": {
-          "const": 1
+          "enum": [
+            1,
+            2
+          ]
         },
         "stage": {
           "const": "canary"
@@ -288,9 +291,65 @@
         },
         "submissionAuthority": {
           "const": false
+        },
+        "qualifiedCodexRoleRuntimeIdentityHashesV2": {
+          "type": "object",
+          "minProperties": 2,
+          "maxProperties": 4,
+          "additionalProperties": false,
+          "required": [
+            "author",
+            "reviewer"
+          ],
+          "properties": {
+            "author": {
+              "$ref": "#/$defs/sha256"
+            },
+            "reviewer": {
+              "$ref": "#/$defs/sha256"
+            },
+            "formal_reviewer": {
+              "$ref": "#/$defs/sha256"
+            },
+            "repairer": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
         }
       },
-      "description": "Directly reusable LocalWorkflowV1 researchProfile template. It is diagnostic only; advancing still requires the matching opaque V3 authority."
+      "description": "Directly reusable LocalWorkflowV1 researchProfile template. It is diagnostic only; advancing still requires the matching opaque V3 authority.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "version": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "qualifiedCodexRoleRuntimeIdentityHashesV2"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "version": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "qualifiedCodexRoleRuntimeIdentityHashesV2"
+            ]
+          }
+        }
+      ]
     },
     "replayProtection": {
       "const": "durable_sqlite_v2"

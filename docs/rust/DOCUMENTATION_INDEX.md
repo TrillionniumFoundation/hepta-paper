@@ -29,7 +29,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | runtime image reproducibility | `../modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md` |
 | externally fenced SQLite mutation | `../modules/SQLITE_MUTATION_COORDINATOR_HANDOFF.md` |
 | research capability projection | `../modules/RESEARCH_CAPABILITY_MATRIX_HANDOFF.md` |
-| advanced numerical reference candidate | `../modules/ADVANCED_NUMERICAL_PLUGIN_HANDOFF.md` |
+| ordinary signed CPU/status and standalone numerical candidate | `../modules/ADVANCED_NUMERICAL_PLUGIN_HANDOFF.md` |
 | startup mutation recovery | `../modules/ONLINE_MUTATION_STARTUP_HANDOFF.md` |
 | native workspace status | `../modules/WORKSPACE_STATUS_HANDOFF.md` |
 | native architecture conformance | `../modules/ARCHITECTURE_CONFORMANCE_HANDOFF.md` |
@@ -57,6 +57,7 @@ status, architecture, milestones, modules, scheduler, and ownership live under
 | state safety diagnostic projection | `../modules/STATE_SAFETY_PROJECTION_HANDOFF.md` |
 | actual pristine runtime database baseline | `../modules/PRISTINE_RUNTIME_STATE_HANDOFF.md` |
 | native five-mode state backup command | `../modules/STATE_BACKUP_CLI_HANDOFF.md` |
+| reviewed historical source selections | `../system/evidence/historical-source-semantic-selection-v1.json` + `../tools/revalidate-history-dispositions.py` |
 | complete command gap ledger | `../migration/NODE_RUST_GAP_CLOSURE.md` |
 
 Cross-subsystem current contracts:

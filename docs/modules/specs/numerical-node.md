@@ -45,7 +45,7 @@ Outputs:
 - convergence/error estimates
 - oracle comparison receipt
 
-### Three distinct Rust numerical surfaces
+### Four distinct Rust numerical surfaces
 
 1. `execute_native_business_for_capability_v1(job, "CAP-NUMERICAL")` accepts
    `NativeBusinessJobV1::NumericalLinearSolve` (`kind: numerical_linear_solve`).
@@ -74,10 +74,18 @@ Outputs:
    `AdvancedNumericalPluginResult`, with `nativeExecution=true`,
    `productionQualified=false` and `reference_candidate_unqualified` status.
 
-These are distinct input/output contracts. The advanced result's local oracle
+4. The ordinary `hepta-paper-rust operator advanced-numerical-plugin` route
+   inspects signed V1 CPU and V2 CPU/GPU status. Its `--action run` mode
+   implements signed V1 Python CPU execution through the existing held work/
+   output and bounded process owners. The [advanced numerical handoff](../ADVANCED_NUMERICAL_PLUGIN_HANDOFF.md)
+   defines its exact signed limits, request/result/BOM/receipt bindings,
+   no-overwrite publication, observed unknown outcomes and remaining worker
+   package/failure/installed acceptance boundaries.
+
+These are distinct input/output contracts. The standalone advanced result's local oracle
 and replay fields do not represent independently issued scientific evidence.
 It uses a deterministic native stream, without claiming byte parity with the
-Python reference generator. It is not the signed out-of-process plugin runner.
+Python reference generator. That standalone surface is separate from the ordinary signed CPU runner.
 The [business handoff](../NATIVE_BUSINESS_HANDOFF.md) supplies the linear-kernel
 example and shared byte/evidence conventions.
 
@@ -104,6 +112,8 @@ Additive Rust implementation roots (the incumbent roots above remain distinct):
 - `rust/crates/hepta-paper-service/src/native_business/types.rs`
 - `rust/crates/hepta-paper-service/src/native_business/numerical.rs`
 - `rust/crates/hepta-paper-service/src/advanced_numerical.rs`
+- `rust/crates/hepta-paper-service/src/ordinary_advanced_numerical_plugin.rs`
+- `rust/crates/hepta-paper-service/src/ordinary_advanced_numerical_plugin`
 - `rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs`
 - `rust/crates/hepta-paper-service/src/scientific_runtime.rs`
 - `rust/crates/hepta-paper-service/src/bin/hepta-scientific-worker.rs`

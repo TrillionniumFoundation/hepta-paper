@@ -33,6 +33,7 @@ pub(crate) struct ObservedSourceEntryV1 {
     pub name: String,
     pub directory: bool,
     pub regular: bool,
+    pub symlink: bool,
 }
 
 /// Fixed pre-read reservation shared by the two ordinary inventory observations.
@@ -92,6 +93,32 @@ impl SourceObservation<'_> {
             return Err(BOUND.to_owned());
         }
         self.read(relative, maximum, true).map(|value| value.0)
+    }
+
+    /// Read a host-only document against the same retained file descriptor.
+    /// This checks the opened owner and private mode before reading any bytes;
+    /// it grants no authority and keeps the incumbent observation controls.
+    pub(crate) fn inventory_private_document(
+        &mut self,
+        relative: &Path,
+        maximum: u64,
+    ) -> Result<Vec<u8>, String> {
+        self.require_active()?;
+        if maximum > MAX_DOCUMENT_BYTES {
+            return Err(BOUND.to_owned());
+        }
+        let path = self.relative(relative, false)?;
+        let pin = self.pins.get(&path).ok_or_else(|| INVALID.to_owned())?;
+        pin.assert_current(&path)?;
+        if pin.before.uid() != nix::unistd::Uid::effective().as_raw()
+            || pin.before.mode() & 0o077 != 0
+            || pin.before.nlink() != 1
+        {
+            return Err("native_private_input_identity_invalid".into());
+        }
+        let value = self.read(relative, maximum, true)?.0;
+        self.assert_current()?;
+        Ok(value)
     }
 
     /// Retain the first genuinely missing edge, including its held parent
@@ -241,6 +268,7 @@ impl SourceObservation<'_> {
                 name: name.to_owned(),
                 directory: metadata.is_dir(),
                 regular: metadata.is_file(),
+                symlink: metadata.file_type().is_symlink(),
             });
         }
         pin.assert_current(&path)?;

@@ -134,8 +134,38 @@ impl<'a> SourceObservation<'a> {
         Self::construct(root, cancelled, Some(deadline))
     }
 
+    // Only a failed, known-terminal attempt may remove its exact retained
+    // archive before retry. Prior successful pins keep their original epoch.
+    pub(super) fn remove_failed_archive_v1(&mut self, file: &str) -> Result<(), String> {
+        self.require_active()?;
+        if !super::archive_file_name(file) {
+            return Err(INVALID.into());
+        }
+        let path = self.root.join("src/contrib").join(file);
+        self.assert_current()?;
+        if !self.pins.contains_key(&path) {
+            return Err(CHANGED.into());
+        }
+        fs::remove_file(&path).map_err(|_| CHANGED.to_owned())?;
+        self.pins.remove(&path);
+        self.assert_current()
+    }
+
     fn require_active(&self) -> Result<(), String> {
         require_observation_active(self.cancelled, self.deadline)
+    }
+
+    /// Borrow the original controls; an opaque observation cannot be re-bound
+    /// to another cancellation owner or a newly selected absolute deadline.
+    pub(crate) fn require_control_context_v1(
+        &self,
+        cancelled: &AtomicBool,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        if !std::ptr::eq(self.cancelled, cancelled) || self.deadline != Some(deadline) {
+            return Err("native_source_observation_control_context_mismatch".into());
+        }
+        self.require_active()
     }
 
     fn construct(
@@ -310,6 +340,34 @@ impl<'a> SourceObservation<'a> {
     pub(crate) fn document(&mut self, relative: &Path) -> Result<Vec<u8>, String> {
         self.read(relative, MAX_DOCUMENT_BYTES, true).map(|v| v.0)
     }
+    // Optional-path observations retain the first missing edge and complete
+    // held parent namespace. Formatting the original ENOENT status diagnostic
+    // does not turn an alias, permission error or special input into absence.
+    pub(super) fn status_document_v1(&mut self, relative: &Path) -> Result<Vec<u8>, String> {
+        if self.inventory_probe(relative)?.is_none() {
+            return Err(format!(
+                "r_runtime_source_cas_unavailable:ENOENT: no such file or directory, open '{}'",
+                self.root.join(relative).display()
+            ));
+        }
+        self.document(relative)
+    }
+    pub(super) fn status_missing_edge_v1(&self) -> Option<&Path> {
+        self.absent.first().map(PathBuf::as_path)
+    }
+    pub(super) fn status_archive_v1(
+        &mut self,
+        relative: &Path,
+        maximum: u64,
+    ) -> Result<(String, u64), String> {
+        if self.inventory_probe(relative)?.is_none() {
+            return Err(format!(
+                "r_runtime_source_cas_unavailable:ENOENT: no such file or directory, open '{}'",
+                self.root.join(relative).display()
+            ));
+        }
+        self.archive(relative, maximum)
+    }
     pub(crate) fn archive(
         &mut self,
         relative: &Path,
@@ -426,4 +484,5 @@ impl<'a> SourceObservation<'a> {
 mod tests;
 
 mod inventory;
+mod one_shot;
 pub(crate) use inventory::{ObservedSourceEntryV1, SharedInventoryReadBudgetV1};

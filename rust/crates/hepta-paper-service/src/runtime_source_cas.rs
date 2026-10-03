@@ -50,7 +50,7 @@
 //! published bytes. These observations are not filesystem snapshots, hostile
 //! same-UID exclusion, kernel-I/O preemption or publisher/installation authority.
 
-use hepta_legacy_compatibility::production_hash_record_v1;
+use hepta_legacy_compatibility::{ProductionCollationV1, production_hash_record_v1};
 use nix::fcntl::{Flock, FlockArg, OFlag, RenameFlags, renameat2};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -65,7 +65,9 @@ use std::{
 };
 
 mod archive_process;
+mod mixed_acquisition;
 pub(crate) mod observation;
+pub(crate) mod ordinary_status;
 use archive_process::{ArchiveExecution, require_active};
 use observation::{MAX_DOCUMENT_BYTES, ObservationBudget, SourceObservation};
 
@@ -173,11 +175,13 @@ fn parse_lock(bytes: &[u8]) -> Result<(Vec<Value>, String), String> {
             "url": format!("{SNAPSHOT}/src/contrib/{file}"),
         }));
     }
+    let collator = ProductionCollationV1::load()
+        .map_err(|_| "r_runtime_source_cas_collation_unavailable".to_owned())?;
     entries.sort_by(|left, right| {
-        left["package"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(right["package"].as_str().unwrap_or_default())
+        collator.compare(
+            left["package"].as_str().unwrap_or_default(),
+            right["package"].as_str().unwrap_or_default(),
+        )
     });
     if entries.is_empty() {
         return Err("r_runtime_source_cas_lock_closure_invalid".to_owned());
@@ -260,165 +264,230 @@ fn inspect_with_checkpoint(
     cancelled: &AtomicBool,
     checkpoint: &mut impl FnMut(),
 ) -> Value {
+    inspect_with_optional_deadline(repository_root, cancelled, None, checkpoint)
+}
+
+pub(crate) fn inspect_runtime_source_cas_with_deadline_v1(
+    repository_root: &Path,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+) -> Value {
+    inspect_with_optional_deadline(repository_root, cancelled, Some(deadline), &mut || {})
+}
+
+fn inspect_with_optional_deadline(
+    repository_root: &Path,
+    cancelled: &AtomicBool,
+    deadline: Option<std::time::Instant>,
+    checkpoint: &mut impl FnMut(),
+) -> Value {
     let result = (|| -> Result<Value, String> {
         let context = repository_root.join("runtime-images/r-scientific");
-        let mut observed = SourceObservation::new(&context, cancelled)?;
-        let lock = observed.document(Path::new("renv.lock"))?;
-        let (expected, lockfile_hash) = parse_lock(&lock)?;
-        let manifest_bytes = observed.document(Path::new("source-cas/manifest.json"))?;
-        let manifest: Value = match serde_json::from_slice(&manifest_bytes) {
-            Ok(value) => value,
-            Err(_) => {
-                return Ok(blocked(
-                    "r_runtime_source_cas_unavailable:r_runtime_source_cas_manifest_json_invalid",
-                ));
-            }
+        let mut observed = match deadline {
+            Some(deadline) => SourceObservation::new_with_deadline(&context, cancelled, deadline)?,
+            None => SourceObservation::new(&context, cancelled)?,
         };
-        let Some(object) = manifest.as_object() else {
-            return Ok(blocked("r_runtime_source_cas_manifest_drift"));
-        };
-        let Some(packages) = object.get("packages").and_then(Value::as_array) else {
-            return Ok(blocked("r_runtime_source_cas_manifest_drift"));
-        };
-        let metadata: Vec<Value> = packages
-            .iter()
-            .map(|entry| {
-                json!({
-                    "package": entry.get("package").and_then(Value::as_str).unwrap_or_default(),
-                    "version": entry.get("version").and_then(Value::as_str).unwrap_or_default(),
-                    "file": entry.get("file").and_then(Value::as_str).unwrap_or_default(),
-                    "url": entry.get("url").and_then(Value::as_str).unwrap_or_default(),
-                })
+        inspect_observed_status_v1(&mut observed, checkpoint, false)
+    })();
+    result.unwrap_or_else(blocked)
+}
+
+// Both original standalone status and the ordinary retained adapter execute
+// this one validator. The ordinary branch only preserves original diagnostics;
+// it never relaxes the descriptor, archive, namespace or input budgets.
+fn inspect_observed_status_v1(
+    observed: &mut SourceObservation<'_>,
+    checkpoint: &mut impl FnMut(),
+    ordinary: bool,
+) -> Result<Value, String> {
+    let lock = if ordinary {
+        observed.status_document_v1(Path::new("renv.lock"))?
+    } else {
+        observed.document(Path::new("renv.lock"))?
+    };
+    let (expected, lockfile_hash) = parse_lock(&lock).map_err(|error| {
+        if ordinary
+            && matches!(
+                error.as_str(),
+                "r_runtime_source_cas_lock_json_invalid"
+                    | "r_runtime_source_cas_lock_entry_invalid"
+                    | "r_runtime_source_cas_lock_closure_invalid"
+            )
+        {
+            format!("r_runtime_source_cas_unavailable:{error}")
+        } else {
+            error
+        }
+    })?;
+    let manifest_bytes = if ordinary {
+        observed.status_document_v1(Path::new("source-cas/manifest.json"))?
+    } else {
+        observed.document(Path::new("source-cas/manifest.json"))?
+    };
+    let manifest: Value = match serde_json::from_slice(&manifest_bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(blocked(
+                "r_runtime_source_cas_unavailable:r_runtime_source_cas_manifest_json_invalid",
+            ));
+        }
+    };
+    let Some(object) = manifest.as_object() else {
+        return Ok(blocked("r_runtime_source_cas_manifest_drift"));
+    };
+    let Some(packages) = object.get("packages").and_then(Value::as_array) else {
+        return Ok(blocked("r_runtime_source_cas_manifest_drift"));
+    };
+    let metadata: Vec<Value> = packages
+        .iter()
+        .map(|entry| {
+            json!({
+                "package": entry.get("package").and_then(Value::as_str).unwrap_or_default(),
+                "version": entry.get("version").and_then(Value::as_str).unwrap_or_default(),
+                "file": entry.get("file").and_then(Value::as_str).unwrap_or_default(),
+                "url": entry.get("url").and_then(Value::as_str).unwrap_or_default(),
             })
-            .collect();
-        let entries_valid = packages.iter().all(|entry| {
-            exact_keys(
-                entry,
-                &["bytes", "file", "package", "sha256", "url", "version"],
-            ) && entry
-                .get("package")
+        })
+        .collect();
+    let entries_valid = packages.iter().all(|entry| {
+        exact_keys(
+            entry,
+            &["bytes", "file", "package", "sha256", "url", "version"],
+        ) && entry
+            .get("package")
+            .and_then(Value::as_str)
+            .is_some_and(valid_package)
+            && entry
+                .get("version")
                 .and_then(Value::as_str)
-                .is_some_and(valid_package)
-                && entry
-                    .get("version")
-                    .and_then(Value::as_str)
-                    .is_some_and(valid_version)
-                && entry.get("file").and_then(Value::as_str)
-                    == Some(&format!(
-                        "{}_{}.tar.gz",
-                        entry
-                            .get("package")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                        entry
-                            .get("version")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                    ))
-                && entry.get("url").and_then(Value::as_str)
-                    == Some(&format!(
-                        "{SNAPSHOT}/src/contrib/{}",
-                        entry
-                            .get("file")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                    ))
-                && entry
-                    .get("bytes")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|bytes| bytes >= 100)
-                && valid_sha256(entry.get("sha256"))
-        });
-        let packages_sorted = packages.windows(2).all(|pair| {
-            pair[0]
-                .get("package")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                < pair[1]
-                    .get("package")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-        });
-        if object.get("version") != Some(&json!(1))
-            || object.get("kind").and_then(Value::as_str) != Some("RRuntimeSourceCasManifest")
-            || object.get("status").and_then(Value::as_str) != Some("r_runtime_source_cas_complete")
-            || object.get("snapshot").and_then(Value::as_str) != Some(SNAPSHOT)
-            || object.get("exactLockClosure") != Some(&Value::Bool(true))
-            || object.get("allSourceArchivesContentHashed") != Some(&Value::Bool(true))
-            || object.get("offlineRestoreRequired") != Some(&Value::Bool(true))
-            || object.get("lockfileHash").and_then(Value::as_str) != Some(lockfile_hash.as_str())
-            || object.get("packageCount").and_then(Value::as_u64) != Some(expected.len() as u64)
-            || metadata != expected
-            || !entries_valid
-            || !packages_sorted
-            || manifest_hash(&manifest).is_none()
-        {
-            return Ok(blocked("r_runtime_source_cas_manifest_drift"));
-        }
-        let expected_files = expected_cas_files(packages);
-        let mut actual_files = observed.files(Path::new("source-cas"))?;
-        actual_files.sort();
-        if actual_files != expected_files {
-            return Ok(blocked("r_runtime_source_cas_file_closure_mismatch"));
-        }
-        let (sums, package_index) = expected_indexes(packages);
-        if observed.document(Path::new("source-cas/SHA256SUMS"))? != sums.as_bytes()
-            || observed.document(Path::new("source-cas/PACKAGES.tsv"))? != package_index.as_bytes()
-        {
-            return Ok(blocked("r_runtime_source_cas_index_content_mismatch"));
-        }
-        for entry in packages {
-            let Some(file) = entry.get("file").and_then(Value::as_str) else {
-                return Ok(blocked("r_runtime_source_cas_manifest_drift"));
-            };
-            let (actual_hash, actual_bytes) = observed.archive(
-                &Path::new("source-cas/src/contrib").join(file),
-                MAX_ARCHIVE_BYTES,
-            )?;
-            if actual_bytes != entry.get("bytes").and_then(Value::as_u64).unwrap_or(0)
-                || actual_hash
-                    != entry
-                        .get("sha256")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-            {
-                return Ok(blocked(format!(
-                    "r_runtime_source_cas_archive_hash_mismatch:{}",
+                .is_some_and(valid_version)
+            && entry.get("file").and_then(Value::as_str)
+                == Some(&format!(
+                    "{}_{}.tar.gz",
                     entry
                         .get("package")
                         .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    entry
+                        .get("version")
+                        .and_then(Value::as_str)
                         .unwrap_or_default()
-                )));
-            }
-        }
-        let manifest_hash = manifest
-            .get("rRuntimeSourceCasManifestHash")
-            .cloned()
-            .unwrap_or(Value::Null);
-        let mut definition_paths = vec![
-            "source-cas/PACKAGES.tsv".to_owned(),
-            "source-cas/SHA256SUMS".to_owned(),
-            "source-cas/manifest.json".to_owned(),
-        ];
-        definition_paths.extend(packages.iter().filter_map(|entry| {
-            entry
-                .get("file")
+                ))
+            && entry.get("url").and_then(Value::as_str)
+                == Some(&format!(
+                    "{SNAPSHOT}/src/contrib/{}",
+                    entry
+                        .get("file")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                ))
+            && entry
+                .get("bytes")
+                .and_then(Value::as_u64)
+                .is_some_and(|bytes| bytes >= 100)
+            && valid_sha256(entry.get("sha256"))
+    });
+    let collator = ProductionCollationV1::load()
+        .map_err(|_| "r_runtime_source_cas_collation_unavailable".to_owned())?;
+    let packages_sorted = packages.windows(2).all(|pair| {
+        collator.compare(
+            pair[0]
+                .get("package")
                 .and_then(Value::as_str)
-                .map(|file| format!("source-cas/src/contrib/{file}"))
-        }));
-        checkpoint();
-        observed.assert_current()?;
-        Ok(json!({
-            "ready": true,
-            "status": "r_runtime_source_cas_verified",
-            "manifestHash": manifest_hash,
-            "packageCount": packages.len(),
-            "lockfileHash": lockfile_hash,
-            "definitionPaths": definition_paths,
-            "blockers": [],
-        }))
-    })();
-    result.unwrap_or_else(blocked)
+                .unwrap_or_default(),
+            pair[1]
+                .get("package")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) == std::cmp::Ordering::Less
+    });
+    if object.get("version") != Some(&json!(1))
+        || object.get("kind").and_then(Value::as_str) != Some("RRuntimeSourceCasManifest")
+        || object.get("status").and_then(Value::as_str) != Some("r_runtime_source_cas_complete")
+        || object.get("snapshot").and_then(Value::as_str) != Some(SNAPSHOT)
+        || object.get("exactLockClosure") != Some(&Value::Bool(true))
+        || object.get("allSourceArchivesContentHashed") != Some(&Value::Bool(true))
+        || object.get("offlineRestoreRequired") != Some(&Value::Bool(true))
+        || object.get("lockfileHash").and_then(Value::as_str) != Some(lockfile_hash.as_str())
+        || object.get("packageCount").and_then(Value::as_u64) != Some(expected.len() as u64)
+        || metadata != expected
+        || !entries_valid
+        || !packages_sorted
+        || manifest_hash(&manifest).is_none()
+    {
+        return Ok(blocked("r_runtime_source_cas_manifest_drift"));
+    }
+    let expected_files = expected_cas_files(packages);
+    let mut actual_files = observed.files(Path::new("source-cas"))?;
+    actual_files.sort();
+    if actual_files != expected_files {
+        return Ok(blocked("r_runtime_source_cas_file_closure_mismatch"));
+    }
+    let (sums, package_index) = expected_indexes(packages);
+    let mut read_index = |relative: &Path| {
+        if ordinary {
+            observed.status_document_v1(relative)
+        } else {
+            observed.document(relative)
+        }
+    };
+    if read_index(Path::new("source-cas/SHA256SUMS"))? != sums.as_bytes()
+        || read_index(Path::new("source-cas/PACKAGES.tsv"))? != package_index.as_bytes()
+    {
+        return Ok(blocked("r_runtime_source_cas_index_content_mismatch"));
+    }
+    for entry in packages {
+        let Some(file) = entry.get("file").and_then(Value::as_str) else {
+            return Ok(blocked("r_runtime_source_cas_manifest_drift"));
+        };
+        let relative = Path::new("source-cas/src/contrib").join(file);
+        let (actual_hash, actual_bytes) = if ordinary {
+            observed.status_archive_v1(&relative, MAX_ARCHIVE_BYTES)?
+        } else {
+            observed.archive(&relative, MAX_ARCHIVE_BYTES)?
+        };
+        if actual_bytes != entry.get("bytes").and_then(Value::as_u64).unwrap_or(0)
+            || actual_hash
+                != entry
+                    .get("sha256")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+        {
+            return Ok(blocked(format!(
+                "r_runtime_source_cas_archive_hash_mismatch:{}",
+                entry
+                    .get("package")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+            )));
+        }
+    }
+    let manifest_hash = manifest
+        .get("rRuntimeSourceCasManifestHash")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let mut definition_paths = vec![
+        "source-cas/PACKAGES.tsv".to_owned(),
+        "source-cas/SHA256SUMS".to_owned(),
+        "source-cas/manifest.json".to_owned(),
+    ];
+    definition_paths.extend(packages.iter().filter_map(|entry| {
+        entry
+            .get("file")
+            .and_then(Value::as_str)
+            .map(|file| format!("source-cas/src/contrib/{file}"))
+    }));
+    checkpoint();
+    observed.assert_current()?;
+    Ok(json!({
+        "ready": true,
+        "status": "r_runtime_source_cas_verified",
+        "manifestHash": manifest_hash,
+        "packageCount": packages.len(),
+        "lockfileHash": lockfile_hash,
+        "definitionPaths": definition_paths,
+        "blockers": [],
+    }))
 }
 
 const MAX_TAR_LISTING_BYTES: u64 = 16 * 1024 * 1024;
@@ -552,6 +621,25 @@ fn seed_archives(root: &Path, cancelled: &AtomicBool) -> Result<BTreeMap<String,
     Ok(output)
 }
 
+fn seed_archives_with_deadline(
+    root: &Path,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<BTreeMap<String, PathBuf>, String> {
+    require_acquisition_active(cancelled, Some(deadline))?;
+    let root = fs::canonicalize(root).map_err(|_| "r_runtime_source_cas_seed_unavailable")?;
+    let mut output = BTreeMap::new();
+    let mut remaining = MAX_SEED_ENTRIES;
+    collect_seed_archives(
+        &root,
+        &mut output,
+        &mut || require_acquisition_active(cancelled, Some(deadline)),
+        &mut remaining,
+        0,
+    )?;
+    Ok(output)
+}
+
 fn random_nonce() -> Result<String, String> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)
@@ -617,6 +705,84 @@ fn copy_seed_archive(source: &Path, destination: &Path) -> Result<(), String> {
     }
     if bytes.len() < 100 {
         return Err("r_runtime_source_cas_archive_bytes_invalid".to_owned());
+    }
+    write_new_file(destination, &bytes)
+}
+
+// The controlled path retains this same seed-copy owner while bounding before
+// allocation and rechecking named/held identity across the cooperative stream.
+fn copy_seed_archive_with_control(
+    source: &Path,
+    destination: &Path,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+    expected: u64,
+) -> Result<(), String> {
+    use std::os::unix::fs::FileExt;
+    require_acquisition_active(cancelled, Some(deadline))?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags((OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC).bits())
+        .open(source)
+        .map_err(|_| "r_runtime_source_cas_seed_file_invalid")?;
+    let before = file
+        .metadata()
+        .map_err(|_| "r_runtime_source_cas_seed_file_invalid")?;
+    let same = |a: &std::fs::Metadata, b: &std::fs::Metadata| {
+        a.dev() == b.dev()
+            && a.ino() == b.ino()
+            && a.mode() == b.mode()
+            && a.uid() == b.uid()
+            && a.gid() == b.gid()
+            && a.nlink() == b.nlink()
+            && a.len() == b.len()
+            && a.mtime() == b.mtime()
+            && a.mtime_nsec() == b.mtime_nsec()
+            && a.ctime() == b.ctime()
+            && a.ctime_nsec() == b.ctime_nsec()
+    };
+    if !before.is_file()
+        || before.nlink() != 1
+        || before.len() != expected
+        || !(100..=MAX_ARCHIVE_BYTES).contains(&expected)
+        || !same(
+            &before,
+            &fs::symlink_metadata(source).map_err(|_| "r_runtime_source_cas_seed_file_invalid")?,
+        )
+    {
+        return Err("r_runtime_source_cas_seed_file_invalid".into());
+    }
+    let length = usize::try_from(expected).map_err(|_| "r_runtime_source_cas_seed_file_invalid")?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(length)
+        .map_err(|_| "r_runtime_source_cas_observation_limit_exceeded")?;
+    let mut buffer = [0u8; 64 * 1024];
+    let mut offset = 0;
+    while offset < expected {
+        require_acquisition_active(cancelled, Some(deadline))?;
+        let available = usize::try_from((expected - offset).min(buffer.len() as u64))
+            .map_err(|_| "r_runtime_source_cas_seed_file_invalid")?;
+        let count = file
+            .read_at(&mut buffer[..available], offset)
+            .map_err(|_| "r_runtime_source_cas_seed_file_invalid")?;
+        if count == 0 {
+            return Err("r_runtime_source_cas_seed_file_invalid".into());
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        offset += count as u64;
+    }
+    require_acquisition_active(cancelled, Some(deadline))?;
+    if !same(
+        &before,
+        &file
+            .metadata()
+            .map_err(|_| "r_runtime_source_cas_seed_file_invalid")?,
+    ) || !same(
+        &before,
+        &fs::symlink_metadata(source).map_err(|_| "r_runtime_source_cas_seed_file_invalid")?,
+    ) {
+        return Err("r_runtime_source_cas_seed_file_invalid".into());
     }
     write_new_file(destination, &bytes)
 }
@@ -777,9 +943,76 @@ fn acquire_with_observation(
     )
 }
 
+#[derive(Clone, Copy)]
 enum AcquisitionSource<'a> {
     Seed(&'a Path),
     FixedSnapshot,
+    MixedSnapshot {
+        seed: Option<&'a Path>,
+        concurrency: usize,
+        deadline: std::time::Instant,
+    },
+}
+
+/// Normal acquisition reuses this locked publisher with the original mixed
+/// seed/fixed-origin behavior. Controls do not grant publisher/runtime authority.
+pub fn acquire_runtime_source_cas_mixed_with_control_v1(
+    repository_root: &Path,
+    seed: Option<&Path>,
+    concurrency: usize,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<Value, String> {
+    if !(1..=16).contains(&concurrency) {
+        return Err("r_runtime_source_cas_concurrency_invalid".into());
+    }
+    acquire_from_source_with_controls(
+        repository_root,
+        AcquisitionSource::MixedSnapshot {
+            seed,
+            concurrency,
+            deadline,
+        },
+        cancelled,
+        &mut |_, _| Ok(()),
+    )
+}
+
+fn require_acquisition_active(
+    cancelled: &AtomicBool,
+    deadline: Option<std::time::Instant>,
+) -> Result<(), String> {
+    require_active(cancelled)?;
+    if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+        return Err("r_runtime_source_cas_deadline_exceeded".into());
+    }
+    Ok(())
+}
+fn acquisition_observation<'a>(
+    context: &Path,
+    cancelled: &'a AtomicBool,
+    deadline: Option<std::time::Instant>,
+) -> Result<SourceObservation<'a>, String> {
+    match deadline {
+        Some(deadline) => SourceObservation::new_with_deadline(context, cancelled, deadline),
+        None => SourceObservation::new(context, cancelled),
+    }
+}
+fn acquisition_status(
+    root: &Path,
+    cancelled: &AtomicBool,
+    deadline: Option<std::time::Instant>,
+) -> Result<Value, String> {
+    match deadline {
+        None => Ok(inspect_runtime_source_cas_with_cancellation_v1(
+            root, cancelled,
+        )),
+        Some(deadline) => {
+            let observed = ordinary_status::inspect_retained_status_v1(root, cancelled, deadline)?;
+            observed.assert_current()?;
+            Ok(observed.report)
+        }
+    }
 }
 
 /// Explicit fixed-snapshot HTTPS acquisition through the SAME locked publisher.
@@ -817,10 +1050,14 @@ fn acquire_from_source_with_controls(
     cancelled: &AtomicBool,
     observe: &mut impl FnMut(PublicationBoundary, &Path) -> Result<(), String>,
 ) -> Result<Value, String> {
-    require_active(cancelled)?;
+    let deadline = match source {
+        AcquisitionSource::MixedSnapshot { deadline, .. } => Some(deadline),
+        _ => None,
+    };
+    require_acquisition_active(cancelled, deadline)?;
     let mut observe = |boundary, path: &Path| {
         observe(boundary, path)?;
-        require_active(cancelled)
+        require_acquisition_active(cancelled, deadline)
     };
     let context = fs::canonicalize(repository_root.join("runtime-images/r-scientific"))
         .map_err(|_| "r_runtime_source_cas_unavailable".to_owned())?;
@@ -839,9 +1076,8 @@ fn acquire_from_source_with_controls(
     match fs::symlink_metadata(&destination) {
         Ok(metadata) if metadata.is_dir() => {
             let installed = open_directory(&destination)?;
-            let current =
-                inspect_runtime_source_cas_with_cancellation_v1(repository_root, cancelled);
-            require_active(cancelled)?;
+            let current = acquisition_status(repository_root, cancelled, deadline)?;
+            require_acquisition_active(cancelled, deadline)?;
             if current["ready"] != Value::Bool(true) || !retains_directory(&destination, &installed)
             {
                 return Err("r_runtime_source_cas_existing_invalid".to_owned());
@@ -864,49 +1100,96 @@ fn acquire_from_source_with_controls(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return Err("r_runtime_source_cas_existing_invalid".to_owned()),
     }
-    let mut input_observation = SourceObservation::new(&context, cancelled)?;
+    let mut input_observation = acquisition_observation(&context, cancelled, deadline)?;
     let lock_bytes = input_observation.document(Path::new("renv.lock"))?;
     let (expected, lockfile_hash) = parse_lock(&lock_bytes)?;
     let seeds = match source {
         AcquisitionSource::Seed(directory) => Some(seed_archives(directory, cancelled)?),
         AcquisitionSource::FixedSnapshot => None,
+        AcquisitionSource::MixedSnapshot { seed, .. } => match seed {
+            Some(directory) => Some(seed_archives_with_deadline(
+                directory,
+                cancelled,
+                deadline.ok_or("r_runtime_source_cas_deadline_invalid")?,
+            )?),
+            None => None,
+        },
     };
-    require_active(cancelled)?;
+    require_acquisition_active(cancelled, deadline)?;
     let staging = begin_staging(&context)?;
     let stage = open_directory(&staging)?;
     let mut publication_attempted = false;
-    let mut execution = ArchiveExecution::new(cancelled);
+    let mut execution = match deadline {
+        Some(deadline) => ArchiveExecution::new_with_deadline(cancelled, deadline),
+        None => ArchiveExecution::new(cancelled),
+    };
+    let mut mixed_observations = Vec::new();
+    let mut mixed_owned_archives = Vec::new();
+    let mut mixed_publication_started = false;
     let result = (|| {
-        let mut staged_observation = SourceObservation::new(&staging, cancelled)?;
+        let mut staged_observation = acquisition_observation(&staging, cancelled, deadline)?;
         let mut budget = ObservationBudget::default();
         budget.account(lock_bytes.len() as u64, MAX_DOCUMENT_BYTES)?;
         let mut packages = Vec::with_capacity(expected.len());
-        for entry in &expected {
-            require_active(cancelled)?;
-            let file = entry["file"]
-                .as_str()
-                .ok_or_else(|| "r_runtime_source_cas_lock_entry_invalid".to_owned())?;
-            let target = staging.join("src/contrib").join(file);
-            if let Some(seeds) = &seeds {
-                let source = seeds
-                    .get(file)
-                    .ok_or_else(|| format!("r_runtime_source_cas_seed_missing:{file}"))?;
-                copy_seed_archive(source, &target)?;
-            } else {
-                let bytes = execution.snapshot_archive(entry, &target)?;
-                require_active(cancelled)?;
-                write_new_file(&target, &bytes)?;
+        if let AcquisitionSource::MixedSnapshot {
+            concurrency,
+            deadline,
+            ..
+        } = source
+        {
+            let outcome = mixed_acquisition::acquire(
+                &expected,
+                &staging,
+                seeds.as_ref(),
+                concurrency,
+                cancelled,
+                deadline,
+                lock_bytes.len() as u64,
+            );
+            if !outcome.cleanup_verified {
+                execution.retain_unknown_cleanup();
             }
-            let package =
-                verify_seed_archive(entry, &target, &mut execution, &mut staged_observation)?;
-            budget.account(
-                package["bytes"]
-                    .as_u64()
-                    .ok_or_else(|| "r_runtime_source_cas_archive_invalid".to_owned())?,
-                MAX_ARCHIVE_BYTES,
-            )?;
-            packages.push(package);
+            mixed_observations = outcome.retained;
+            mixed_owned_archives = outcome.owned_archives;
+            let ordered = outcome.result?;
+            for package in ordered {
+                budget.account(
+                    package["bytes"]
+                        .as_u64()
+                        .ok_or("r_runtime_source_cas_archive_invalid")?,
+                    MAX_ARCHIVE_BYTES,
+                )?;
+                packages.push(package);
+            }
+        } else {
+            for entry in &expected {
+                require_acquisition_active(cancelled, deadline)?;
+                let file = entry["file"]
+                    .as_str()
+                    .ok_or_else(|| "r_runtime_source_cas_lock_entry_invalid".to_owned())?;
+                let target = staging.join("src/contrib").join(file);
+                if let Some(seeds) = &seeds {
+                    let source = seeds
+                        .get(file)
+                        .ok_or_else(|| format!("r_runtime_source_cas_seed_missing:{file}"))?;
+                    copy_seed_archive(source, &target)?;
+                } else {
+                    let bytes = execution.snapshot_archive(entry, &target)?;
+                    require_acquisition_active(cancelled, deadline)?;
+                    write_new_file(&target, &bytes)?;
+                }
+                let package =
+                    verify_seed_archive(entry, &target, &mut execution, &mut staged_observation)?;
+                budget.account(
+                    package["bytes"]
+                        .as_u64()
+                        .ok_or_else(|| "r_runtime_source_cas_archive_invalid".to_owned())?,
+                    MAX_ARCHIVE_BYTES,
+                )?;
+                packages.push(package);
+            }
         }
+        mixed_publication_started = deadline.is_some();
         let (sums, package_index) = expected_indexes(&packages);
         budget.account(sums.len() as u64, MAX_DOCUMENT_BYTES)?;
         budget.account(package_index.len() as u64, MAX_DOCUMENT_BYTES)?;
@@ -934,9 +1217,15 @@ fn acquire_from_source_with_controls(
             "rRuntimeSourceCasManifestHash".to_owned(),
             Value::String(manifest_hash.as_str().to_owned()),
         );
-        let mut manifest_bytes = serde_json::to_vec_pretty(&Value::Object(manifest))
-            .map_err(|_| "r_runtime_source_cas_manifest_write_failed".to_owned())?;
-        manifest_bytes.push(b'\n');
+        let manifest_value = Value::Object(manifest);
+        let manifest_bytes = if let Some(deadline) = deadline {
+            mixed_acquisition::encode_manifest(&manifest_value, cancelled, deadline)?
+        } else {
+            let mut bytes = serde_json::to_vec_pretty(&manifest_value)
+                .map_err(|_| "r_runtime_source_cas_manifest_write_failed".to_owned())?;
+            bytes.push(b'\n');
+            bytes
+        };
         budget.account(manifest_bytes.len() as u64, MAX_DOCUMENT_BYTES)?;
         write_new_file(&staging.join("manifest.json"), &manifest_bytes)?;
         // Fresh publication and later status consume the same bounded pinned
@@ -957,9 +1246,12 @@ fn acquire_from_source_with_controls(
         }
         observe(PublicationBoundary::BeforePublish, &staging)?;
         staged_observation.assert_current()?;
+        for observed in &mixed_observations {
+            observed.assert_current()?;
+        }
         require_parent(&context, &parent)?;
         if input_observation.assert_current().is_err() {
-            require_active(cancelled)?;
+            require_acquisition_active(cancelled, deadline)?;
             return Err("r_runtime_source_cas_lock_changed".to_owned());
         }
         publish_staging(
@@ -970,8 +1262,8 @@ fn acquire_from_source_with_controls(
             &mut publication_attempted,
             &mut observe,
         )?;
-        let verified = inspect_runtime_source_cas_with_cancellation_v1(repository_root, cancelled);
-        require_active(cancelled)?;
+        let verified = acquisition_status(repository_root, cancelled, deadline)?;
+        require_acquisition_active(cancelled, deadline)?;
         if verified["ready"] != Value::Bool(true) {
             // Rename is the publication boundary. A failed later observation
             // cannot revoke or erase these potentially consumed bytes. Keep the
@@ -998,6 +1290,24 @@ fn acquire_from_source_with_controls(
         report["acquired"] = Value::Bool(true);
         Ok(report)
     })();
+    if result.is_err() && deadline.is_some() && !publication_attempted {
+        let known = if mixed_publication_started {
+            false
+        } else {
+            match acquisition_observation(&staging, cancelled, deadline) {
+                Ok(mut observed) => mixed_acquisition::known_failed_namespace(
+                    &mut observed,
+                    &mixed_observations,
+                    &mixed_owned_archives,
+                )
+                .is_ok(),
+                Err(_) => false,
+            }
+        };
+        if !known {
+            execution.retain_unknown_cleanup();
+        }
+    }
     if result.is_err()
         && execution.cleanup_verified()
         && !publication_attempted

@@ -22,9 +22,11 @@ pub(super) struct Directory {
     pub path: PathBuf,
     pub held: File,
     pinned: Metadata,
+    pub(super) control: Option<StateDatabaseInventoryControlV1>,
 }
 impl Directory {
     pub fn assert_current(&self) -> Result<()> {
+        control::checkpoint(&self.control)?;
         let current = std::fs::symlink_metadata(&self.path).map_err(|_| changed())?;
         let held = self.held.metadata().map_err(|_| changed())?;
         ensure(
@@ -50,6 +52,7 @@ impl Directory {
         let result = Self {
             path: self.path.join(name),
             pinned: held.metadata().map_err(|_| changed())?,
+            control: self.control.clone(),
             held,
         };
         result.assert_current()?;
@@ -60,6 +63,13 @@ impl Directory {
     }
 }
 pub(super) fn open_root(root: &Path) -> Result<(PathBuf, Vec<Directory>)> {
+    open_root_with_control(root, None)
+}
+pub(super) fn open_root_with_control(
+    root: &Path,
+    control: Option<StateDatabaseInventoryControlV1>,
+) -> Result<(PathBuf, Vec<Directory>)> {
+    control::checkpoint(&control)?;
     let root = if root.is_absolute() {
         root.to_owned()
     } else {
@@ -77,6 +87,7 @@ pub(super) fn open_root(root: &Path) -> Result<(PathBuf, Vec<Directory>)> {
     let mut parent = Directory {
         path: PathBuf::from("/"),
         pinned: held.metadata().map_err(|_| changed())?,
+        control,
         held,
     };
     let mut parents = Vec::new();
@@ -136,9 +147,11 @@ pub(super) struct FileObservation {
     pub file: File,
     pub metadata: Value,
     pub sha256: String,
+    pub(super) control: Option<StateDatabaseInventoryControlV1>,
 }
 impl FileObservation {
     pub fn assert_namespace_current(&self) -> Result<()> {
+        control::checkpoint(&self.control)?;
         let named = std::fs::symlink_metadata(&self.path).map_err(|_| changed())?;
         let held = self.file.metadata().map_err(|_| changed())?;
         ensure(
@@ -168,6 +181,7 @@ impl FileObservation {
         let mut offset = 0u64;
         let mut bytes = [0u8; 64 * 1024];
         loop {
+            control::checkpoint(&self.control)?;
             let n = self
                 .file
                 .read_at(&mut bytes, offset)
@@ -189,6 +203,7 @@ impl FileObservation {
         Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
     }
     pub fn assert_current(&self) -> Result<()> {
+        control::checkpoint(&self.control)?;
         let named = std::fs::symlink_metadata(&self.path).map_err(|_| changed())?;
         let held = self.file.metadata().map_err(|_| changed())?;
         ensure(
@@ -210,6 +225,7 @@ impl FileObservation {
         let mut offset = 0u64;
         let mut buffer = [0u8; 64 * 1024];
         loop {
+            control::checkpoint(&self.control)?;
             let n = self
                 .file
                 .read_at(&mut buffer, offset)
@@ -280,6 +296,7 @@ fn observe(
         file,
         metadata: identity(&named),
         sha256: String::new(),
+        control: parent.control.clone(),
     };
     result.sha256 = result.hash()?;
     result.assert_current()?;

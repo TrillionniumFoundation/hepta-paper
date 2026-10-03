@@ -22,12 +22,52 @@ pub(super) fn require_active(cancelled: &AtomicBool) -> Result<(), String> {
 pub(super) struct ArchiveExecution<'a> {
     cancelled: &'a AtomicBool,
     outcome_unknown: bool,
+    deadline: Option<std::time::Instant>,
 }
 impl<'a> ArchiveExecution<'a> {
     pub(super) fn new(cancelled: &'a AtomicBool) -> Self {
         Self {
             cancelled,
             outcome_unknown: false,
+            deadline: None,
+        }
+    }
+    pub(super) fn new_with_deadline(
+        cancelled: &'a AtomicBool,
+        deadline: std::time::Instant,
+    ) -> Self {
+        Self {
+            cancelled,
+            outcome_unknown: false,
+            deadline: Some(deadline),
+        }
+    }
+    pub(super) fn retain_unknown_cleanup(&mut self) {
+        self.outcome_unknown = true;
+    }
+    fn require_active(&self) -> Result<(), String> {
+        require_active(self.cancelled)?;
+        if self
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            return Err("r_runtime_source_cas_deadline_exceeded".into());
+        }
+        Ok(())
+    }
+    fn process_budget(&self, maximum: u64) -> Result<u64, String> {
+        self.require_active()?;
+        match self.deadline {
+            None => Ok(maximum),
+            Some(deadline) => {
+                let millis = deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis();
+                if millis == 0 {
+                    return Err("r_runtime_source_cas_deadline_exceeded".into());
+                }
+                Ok(maximum.min(u64::try_from(millis).unwrap_or(u64::MAX)))
+            }
         }
     }
     pub(super) fn cleanup_verified(&self) -> bool {
@@ -40,7 +80,7 @@ impl<'a> ArchiveExecution<'a> {
         trailing: Option<&str>,
         limit: u64,
     ) -> Result<Vec<u8>, String> {
-        require_active(self.cancelled)?;
+        self.require_active()?;
         if self.outcome_unknown {
             return Err("r_runtime_source_cas_archive_cleanup_unverified".into());
         }
@@ -84,7 +124,7 @@ impl<'a> ArchiveExecution<'a> {
             stdin: None,
         };
         let limits = ProcessLimitsV1 {
-            timeout_ms: 60_000,
+            timeout_ms: self.process_budget(60_000)?,
             termination_grace_ms: 100,
             cleanup_timeout_ms: 2_000,
             poll_interval_ms: 10,
@@ -103,7 +143,7 @@ impl<'a> ArchiveExecution<'a> {
         entry: &serde_json::Value,
         target: &Path,
     ) -> Result<Vec<u8>, String> {
-        require_active(self.cancelled)?;
+        self.require_active()?;
         if self.outcome_unknown {
             return Err("r_runtime_source_cas_snapshot_cleanup_unverified".into());
         }
@@ -175,7 +215,7 @@ impl<'a> ArchiveExecution<'a> {
             stdin: None,
         };
         let limits = ProcessLimitsV1 {
-            timeout_ms: SNAPSHOT_TIMEOUT_MS,
+            timeout_ms: self.process_budget(SNAPSHOT_TIMEOUT_MS)?,
             termination_grace_ms: 100,
             cleanup_timeout_ms: 2_000,
             poll_interval_ms: 10,
@@ -231,7 +271,7 @@ impl<'a> ArchiveExecution<'a> {
         {
             return Err(format!("r_runtime_source_cas_{kind}_invalid"));
         }
-        require_active(self.cancelled)?;
+        self.require_active()?;
         Ok(captured.stdout)
     }
 }

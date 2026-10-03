@@ -1,5 +1,6 @@
 //! Observed live SQLite inventory. Serialized claims cannot create the opaque
 //! observation type. WAL inspection operates only on a private database copy.
+mod control;
 mod files;
 mod inspection;
 pub(crate) mod schema_source;
@@ -17,6 +18,7 @@ use crate::sqlite_mutation_coordinator::{
     Result, SqliteMutationCoordinatorError as Error, error, hash, text,
 };
 use crate::state_backup_authority::manifest;
+pub(crate) use control::StateDatabaseInventoryControlV1;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 fn ensure(valid: bool, code: &str) -> Result<()> {
@@ -167,6 +169,15 @@ struct Resolution {
     databases: Vec<(String, files::DatabaseObservation)>,
 }
 fn resolve(runtime_root: &Path, manifest: &Value, handoff: bool) -> Result<Resolution> {
+    resolve_with_control(runtime_root, manifest, handoff, None)
+}
+fn resolve_with_control(
+    runtime_root: &Path,
+    manifest: &Value,
+    handoff: bool,
+    control: Option<StateDatabaseInventoryControlV1>,
+) -> Result<Resolution> {
+    control::checkpoint(&control)?;
     manifest::assert_state_database_manifest_v1(manifest)?;
     // The contract fixes the ten roles; bound the variable object lists and
     // path strings before cloning definitions during namespace traversal.
@@ -194,7 +205,7 @@ fn resolve(runtime_root: &Path, manifest: &Value, handoff: bool) -> Result<Resol
             }),
         "autonomous_research_state_database_inventory_limit_exceeded",
     )?;
-    let (runtime_root, ancestors) = files::open_root(runtime_root)?;
+    let (runtime_root, ancestors) = files::open_root_with_control(runtime_root, control.clone())?;
     let root = ancestors.last().ok_or_else(files::changed)?;
     let (candidates, mut blockers) = tree::collect(root, manifest, handoff)?;
     let initial_scope = tree::fingerprint(&candidates, &blockers);
@@ -202,6 +213,7 @@ fn resolve(runtime_root: &Path, manifest: &Value, handoff: bool) -> Result<Resol
     let mut observations = Vec::new();
     let mut budget = files::Budget::default();
     for candidate in &candidates {
+        control::checkpoint(&control)?;
         match inspection::candidate(root, candidate, &mut budget) {
             Ok((instance, observation)) => {
                 let id = text(&instance, "instanceId")?;
@@ -255,6 +267,7 @@ fn resolve(runtime_root: &Path, manifest: &Value, handoff: bool) -> Result<Resol
         initial_scope == tree::fingerprint(&last_candidates, &last_blockers),
         "autonomous_research_state_database_changed_during_snapshot",
     )?;
+    control::checkpoint(&control)?;
     let collator = hepta_legacy_compatibility::ProductionCollationV1::load()
         .map_err(|e| error(e.to_string()))?;
     instances.sort_by(|a, b| {
@@ -294,6 +307,7 @@ fn resolve(runtime_root: &Path, manifest: &Value, handoff: bool) -> Result<Resol
     } else {
         Value::Null
     };
+    control::checkpoint(&control)?;
     Ok(Resolution {
         report,
         runtime_root,
@@ -391,5 +405,55 @@ pub fn observe_state_database_inventory_v1(
         manifest: manifest.clone(),
         ancestors: resolved.ancestors,
         databases: resolved.databases,
+    })
+}
+
+/// Retained local status, including semantic blocked reports. Unlike the
+/// authority-facing ready-only observer this type never grants a capability.
+pub(crate) struct ObservedStateDatabaseStatusV1 {
+    resolution: Resolution,
+    manifest: Value,
+    control: StateDatabaseInventoryControlV1,
+}
+impl ObservedStateDatabaseStatusV1 {
+    pub(crate) fn report(&self) -> &Value {
+        &self.resolution.report
+    }
+    pub(crate) fn assert_current(&self) -> Result<()> {
+        self.control.check()?;
+        for directory in &self.resolution.ancestors {
+            directory.assert_current()?;
+        }
+        for (_, database) in &self.resolution.databases {
+            database.assert_current()?;
+        }
+        let current = resolve_with_control(
+            &self.resolution.runtime_root,
+            &self.manifest,
+            false,
+            Some(self.control.clone()),
+        )?;
+        ensure(
+            current.report == self.resolution.report,
+            "autonomous_research_state_database_inventory_changed",
+        )?;
+        self.control.check()
+    }
+    pub(crate) fn finish(self) -> Result<Value> {
+        self.assert_current()?;
+        Ok(self.resolution.report)
+    }
+}
+pub(crate) fn observe_state_database_status_with_control_v1(
+    runtime_root: &Path,
+    manifest: &Value,
+    control: StateDatabaseInventoryControlV1,
+) -> Result<ObservedStateDatabaseStatusV1> {
+    let resolution = resolve_with_control(runtime_root, manifest, false, Some(control.clone()))?;
+    control.check()?;
+    Ok(ObservedStateDatabaseStatusV1 {
+        resolution,
+        manifest: manifest.clone(),
+        control,
     })
 }

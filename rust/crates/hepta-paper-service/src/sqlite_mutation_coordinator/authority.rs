@@ -79,11 +79,25 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
         expected_configuration_file_hash: &str,
         transport: T,
     ) -> Result<Self> {
-        let configuration = Snapshot::load(
+        Self::load_with_control(
+            configuration_path,
+            expected_configuration_file_hash,
+            transport,
+            None,
+        )
+    }
+    pub(crate) fn load_with_control(
+        configuration_path: &Path,
+        expected_configuration_file_hash: &str,
+        transport: T,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
+        let configuration = Snapshot::load_with_control(
             configuration_path,
             expected_configuration_file_hash,
             4 * 1024 * 1024,
             "autonomous_research_online_mutation_authority_configuration_invalid",
+            control.clone(),
         )?;
         let value = configuration
             .json("autonomous_research_online_mutation_authority_configuration_invalid")?;
@@ -92,11 +106,12 @@ impl<T: MutationAuthorityTransportV1> PinnedMutationAuthorityV1<T> {
                 "autonomous_research_online_mutation_authority_configuration_invalid",
             ));
         }
-        let public_key_document = Snapshot::load(
+        let public_key_document = Snapshot::load_with_control(
             Path::new(text(&value, "publicKeyPath")?),
             text(&value, "publicKeySha256")?,
             64 * 1024,
             "autonomous_research_online_mutation_authority_public_key_identity_mismatch",
+            control.clone(),
         )?;
         let document = public_key_document
             .json("autonomous_research_online_mutation_authority_public_key_invalid")?;

@@ -156,9 +156,13 @@ fn valid_configuration(value: &Value) -> bool {
                 .is_some_and(|v| Path::new(v).is_absolute())
                 && sha(&value["onlineMutationAuthorityConfigurationSha256"])))
 }
-fn load_configuration(path: &Path, pin: &str) -> Result<(Snapshot, Value)> {
+fn load_configuration(
+    path: &Path,
+    pin: &str,
+    control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+) -> Result<(Snapshot, Value)> {
     let code = "autonomous_research_state_backup_authority_process_configuration_invalid";
-    let file = Snapshot::load(path, pin, 4 * 1024 * 1024, code)?;
+    let file = Snapshot::load_with_control(path, pin, 4 * 1024 * 1024, code, control.clone())?;
     let value = file.json(code)?;
     if !valid_configuration(&value) {
         return Err(error(code));
@@ -205,39 +209,51 @@ impl<T: StateBackupAuthorityTransportV1> PinnedStateBackupAuthorityV1<T> {
     /// Requires a separately supplied raw-byte configuration pin. Version two
     /// also loads the independently pinned online mutation verifier for replay.
     pub fn load(path: &Path, pin: &str, transport: T) -> Result<Self> {
-        let (configuration, value) = load_configuration(path, pin)?;
+        Self::load_with_control(path, pin, transport, None)
+    }
+    pub(crate) fn load_with_control(
+        path: &Path,
+        pin: &str,
+        transport: T,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
+        let (configuration, value) = load_configuration(path, pin, control.clone())?;
         let code = "autonomous_research_state_backup_authority_process_identity_mismatch";
-        let public_document = Snapshot::load(
+        let public_document = Snapshot::load_with_control(
             Path::new(text(&value, "publicKeyPath")?),
             text(&value, "publicKeySha256")?,
             64 * 1024,
             code,
+            control.clone(),
         )?;
-        let command = Snapshot::load(
+        let command = Snapshot::load_with_control(
             Path::new(text(&value, "commandPath")?),
             text(&value, "commandSha256")?,
             256 * 1024 * 1024,
             code,
+            control.clone(),
         )?;
         if !command.executable() {
             return Err(error(code));
         }
         let key = parse_public_key(&public_document, &value)?;
         let online_configuration = if number(&value["version"]) == Some(2) {
-            Some(Snapshot::load(
+            Some(Snapshot::load_with_control(
                 Path::new(text(&value, "onlineMutationAuthorityConfigurationPath")?),
                 text(&value, "onlineMutationAuthorityConfigurationSha256")?,
                 4 * 1024 * 1024,
                 "autonomous_research_state_backup_online_authority_identity_mismatch",
+                control.clone(),
             )?)
         } else {
             None
         };
         let online = if number(&value["version"]) == Some(2) {
-            Some(PinnedMutationAuthorityV1::load(
+            Some(PinnedMutationAuthorityV1::load_with_control(
                 Path::new(text(&value, "onlineMutationAuthorityConfigurationPath")?),
                 text(&value, "onlineMutationAuthorityConfigurationSha256")?,
                 NoOnlineTransport,
+                control.clone(),
             )?)
         } else {
             None
@@ -516,10 +532,18 @@ impl PinnedStateBackupAuthorityV1<ProcessStateBackupAuthorityTransportV1> {
         self.transport.current()
     }
     pub fn load_process(path: &Path, pin: &str) -> Result<Self> {
-        Self::load(
+        Self::load_process_with_control(path, pin, None)
+    }
+    pub(crate) fn load_process_with_control(
+        path: &Path,
+        pin: &str,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
+        Self::load_with_control(
             path,
             pin,
-            ProcessStateBackupAuthorityTransportV1::load(path, pin)?,
+            ProcessStateBackupAuthorityTransportV1::load_with_control(path, pin, control.clone())?,
+            control.clone(),
         )
     }
 }

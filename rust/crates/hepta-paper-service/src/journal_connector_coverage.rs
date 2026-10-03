@@ -7,7 +7,7 @@
 //! nor verified qualification can become live submission authority.
 
 pub mod qualification;
-mod qualification_authority;
+pub(crate) mod qualification_authority;
 mod qualification_json;
 
 use hepta_legacy_compatibility::{ProductionCollationV1, production_hash_record_v1};

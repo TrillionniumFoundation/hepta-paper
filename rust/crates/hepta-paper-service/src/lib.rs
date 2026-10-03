@@ -22,6 +22,7 @@ pub mod autonomous_submission_dispatcher;
 pub mod autonomous_submission_dispatcher_challenge;
 pub mod batch_campaign;
 pub mod batch_cli;
+pub mod batch_local_reports;
 pub mod batch_operator;
 pub mod broker_prepared;
 pub mod campaign_policy;
@@ -46,21 +47,34 @@ pub mod local_state_authority_client;
 pub mod machine_intake;
 pub mod maintenance;
 pub mod native_business;
+pub mod native_empirical_markers;
+pub mod native_evidence_consumption;
 pub mod native_inventory;
 pub mod native_latex_theorem_syntax;
+pub mod native_research_assessment;
+pub mod native_research_canonical;
 pub mod native_research_claims;
+pub mod native_research_contract_context;
 pub mod native_research_contracts;
+pub mod native_research_empirical_assertion;
+pub mod native_research_empirical_claim;
 pub mod native_research_evidence;
 pub mod native_research_formal;
+pub mod native_research_gap_plan;
 pub mod native_research_manuscript;
 pub mod native_research_plan;
+pub mod native_research_promotion;
+mod native_research_quality;
 pub mod native_research_source;
+pub mod native_research_source_plan;
+pub mod native_research_support_surfaces;
 pub mod native_research_workflow;
 pub mod native_workspace;
 pub mod nested_runtime_cli;
 pub mod nested_runtime_qualification;
 pub mod node_migration;
 pub(crate) mod node_package_deletion_writer;
+pub mod normal_personal_gpu;
 mod objects;
 pub mod online_authority_evidence_cache;
 pub mod online_authority_inspection;
@@ -68,7 +82,17 @@ pub mod online_mutation_composition;
 pub mod online_schema_execution;
 pub mod online_schema_transition;
 pub mod operational_status;
+pub mod operator_dataset_harness;
+pub mod ordinary_advanced_numerical_plugin;
+pub mod ordinary_campaign_query;
+pub mod ordinary_nested_runtime;
+pub mod ordinary_one_shot;
+pub mod ordinary_portal_target;
+pub mod ordinary_reconcile;
+pub mod ordinary_runtime_r_source_cas;
+pub mod ordinary_state_backup_status;
 pub mod owner_status;
+pub mod personal_self_hosted_cli;
 pub mod personal_self_hosted_formal;
 pub mod personal_self_hosted_gpu;
 pub mod personal_self_hosted_readiness;
@@ -84,6 +108,7 @@ pub mod release_integrity_key;
 pub mod release_replay;
 pub mod release_state;
 pub mod release_trust_gate;
+pub mod release_trust_normal;
 pub mod repository_assets;
 mod research;
 mod research_profile;
@@ -281,6 +306,16 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
     observe: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
+    run_service_with_observed_native_deadline_v1(config, observe, cancelled, None)
+}
+/// Only trusted opaque source composition passes an absolute native deadline.
+/// No serialized request field can create or extend that control context.
+pub(crate) fn run_service_with_observed_native_deadline_v1(
+    config: ServiceRunV1,
+    observe: &mut dyn FnMut() -> Result<u64, hepta_control_plane::ControlPlaneError>,
+    cancelled: Arc<AtomicBool>,
+    inherited_native_deadline: Option<std::time::Instant>,
+) -> Result<ControlPlaneRunReceiptV1, ServiceError> {
     // Publish only values returned by the already-selected trusted composition
     // clock. Broker-side auxiliary evidence must not open an independent clock
     // path that can disagree with admission, cancellation or SQLite commit time.
@@ -443,7 +478,8 @@ pub(crate) fn run_service_with_clock_and_cancellation_v1(
             current_time_unix_ms,
             writer_lease_expires_at_unix_ms,
         })
-        .with_cancellation(Arc::clone(&cancelled));
+        .with_cancellation(Arc::clone(&cancelled))
+        .with_inherited_native_deadline(inherited_native_deadline);
     let broker_commit_targets = executor.broker_commit_targets();
     let mut control = ControlPlaneV1::new(
         registry,

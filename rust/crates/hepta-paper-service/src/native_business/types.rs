@@ -128,6 +128,10 @@ pub enum NativeBusinessJobV1 {
     ResearchDataWorkerV1 {
         request: super::research_data::NativeResearchDataWorkerRequestV1,
     },
+    /// Recompute a source-preview assessment from actual captured CAS bytes.
+    ResearchObservedAssessmentFromCasV1 {
+        request: crate::native_research_assessment::NativeResearchCasAssessmentRequestV1,
+    },
     /// Read actual CAS artifacts and prepare a non-authorizing local dry-run.
     PrepareLocalSubmissionFromCasV1 {
         request: super::local_submission_preflight::CasLocalSubmissionPreparationRequestV1,
@@ -154,7 +158,8 @@ impl NativeBusinessJobV1 {
     #[must_use]
     pub fn capability_id(&self) -> &'static str {
         match self {
-            Self::ResearchDataWorkerV1 { .. } => "CAP-EVD-VERIFY",
+            Self::ResearchDataWorkerV1 { .. }
+            | Self::ResearchObservedAssessmentFromCasV1 { .. } => "CAP-EVD-VERIFY",
             Self::AuthorDraft { .. } => "CAP-AUTHOR",
             Self::ReviewerAssessment { .. } => "CAP-REVIEW",
             Self::FormalCertificate { .. } => "CAP-FORMAL",

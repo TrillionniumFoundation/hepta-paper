@@ -980,7 +980,7 @@ fn selected_trust_key(value: &Value, key_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_iso_millis(value: &str) -> Option<i64> {
+pub(crate) fn parse_iso_millis(value: &str) -> Option<i64> {
     if value.len() != 24
         || !value.ends_with('Z')
         || value.as_bytes().get(4) != Some(&b'-')

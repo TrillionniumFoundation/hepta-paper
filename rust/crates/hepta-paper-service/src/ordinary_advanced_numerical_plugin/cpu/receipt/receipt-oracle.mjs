@@ -23,7 +23,12 @@ for(const name of cases){
   if(name==='source-mutated')fs.writeFileSync(path.join(f.pluginRoot,'mutated.txt'),'actual changed source');
   if(name==='runtime-mutated')fs.writeFileSync(runtimeCopy,'actual changed executable');
   if(name==='missing-artifact')fs.unlinkSync(path.join(out,'result.json'));
-  const w=historical;const result={status:name==='failed'?1:0,signal:null,stdout:'',stderr:'',pid:w.executionProcessIdentity.launcherPid};
+  // Preserve the fixed source/contract sample while binding the executable
+  // observation to the actual host bytes used by this differential owner.
+  const w={...historical,runtimeExecutableSnapshotHash:f.pythonHash,runtimeExecutableSnapshotHashAfter:f.pythonHash};
+  const {ok:_ok,receiptHash:_receiptHash,blockers:_blockers,...positivePayload}=w;
+  w.receiptHash=hashRecord('OsSandboxWorkerReceipt',positivePayload);
+  const result={status:name==='failed'?1:0,signal:null,stdout:'',stderr:'',pid:w.executionProcessIdentity.launcherPid};
   if(name==='aborted')result.aborted=true;
   if(name==='timed-out')result.timedOut=true;
   if(name==='stderr-error'){result.status=1;result.error=new Error('actual_error');}
@@ -42,7 +47,7 @@ for(const name of cases){
    sandboxRoot,selectedImage:null,sourceDatasetRoots:[],sourceExcludedNames:[],sourceMerkleHashBefore:w.sourceMerkleHashBefore,sourceWorkspaceManifestHashBefore:w.sourceWorkspaceManifestHashBefore,supervisorRoot:null,workRoot:f.pluginRoot,workSourceMerkleHash:w.workSourceMerkleHash,workWorkspaceManifestHash:w.workWorkspaceManifestHash,
   });
   const report=finalize(result);
-  if(name==='positive')assert.deepEqual(report,historical);
+  if(name==='positive')assert.deepEqual(report,w);
   outputs.push({name,report,result:{...result,error:result.error?{message:result.error.message}:null},sourceAfter:report.sourceMerkleHashAfter,sourceManifestAfter:report.sourceWorkspaceManifestHashAfter});
  }finally{fs.rmSync(f.root,{recursive:true,force:true});if(fs.existsSync(sandboxRoot))fs.rmSync(sandboxRoot,{recursive:true,force:true});}
 }

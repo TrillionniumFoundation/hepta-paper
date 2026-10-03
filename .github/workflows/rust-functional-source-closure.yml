@@ -61,6 +61,7 @@ jobs:
           rm -rf "$CARGO_TARGET_DIR"
           npm ci --ignore-scripts --no-audit --fund=false
           git diff --exit-code -- package.json package-lock.json
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
           cargo build --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --bin hepta-codex-preexec-gate
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           node paper-core/bin/verify-source-implementation-evidence.mjs \
@@ -127,6 +128,7 @@ jobs:
           rm -rf "$CARGO_TARGET_DIR"
           npm ci --ignore-scripts --no-audit --fund=false
           git diff --exit-code -- package.json package-lock.json
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
           cargo build --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --bin hepta-codex-preexec-gate
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           node paper-core/bin/verify-source-implementation-evidence.mjs \

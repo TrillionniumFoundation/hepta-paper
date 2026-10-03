@@ -66,3 +66,78 @@ fn first_enumeration_captures_current_children_but_never_rebases_sealed_inventor
     drop(observed);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn traversed_ancestors_allow_unobserved_siblings_until_the_namespace_is_sealed() {
+    let root = std::env::temp_dir().join(format!(
+        "hepta-cas-ancestor-{}",
+        super::super::random_nonce().unwrap()
+    ));
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("nested")).unwrap();
+    fs::write(root.join("nested/held"), b"original").unwrap();
+    let cancelled = AtomicBool::new(false);
+    let mut observed = SourceObservation::new(&root, &cancelled).unwrap();
+    assert!(
+        observed
+            .inventory_probe(Path::new("nested/held"))
+            .unwrap()
+            .is_some()
+    );
+    fs::write(root.join("nested/unobserved"), b"sibling").unwrap();
+    assert!(
+        observed
+            .inventory_probe(Path::new("nested/held"))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        observed.document(Path::new("nested/held")).unwrap(),
+        b"original"
+    );
+    let names: Vec<_> = observed
+        .inventory_entries(Path::new("nested"))
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect();
+    assert_eq!(names, ["held", "unobserved"]);
+    fs::write(root.join("nested/after-seal"), b"later").unwrap();
+    assert_eq!(
+        observed
+            .inventory_probe(Path::new("nested/held"))
+            .unwrap_err(),
+        CHANGED
+    );
+    assert_eq!(observed.assert_current().unwrap_err(), CHANGED);
+    drop(observed);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn missing_inventory_edge_seals_its_parent_before_later_sibling_creation() {
+    let root = std::env::temp_dir().join(format!(
+        "hepta-cas-absence-{}",
+        super::super::random_nonce().unwrap()
+    ));
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join("nested")).unwrap();
+    let cancelled = AtomicBool::new(false);
+    let mut observed = SourceObservation::new(&root, &cancelled).unwrap();
+    assert!(
+        observed
+            .inventory_probe(Path::new("nested/missing"))
+            .unwrap()
+            .is_none()
+    );
+    fs::write(root.join("nested/unrelated"), b"new").unwrap();
+    assert_eq!(
+        observed
+            .inventory_probe(Path::new("nested/missing"))
+            .unwrap_err(),
+        CHANGED
+    );
+    assert_eq!(observed.assert_current().unwrap_err(), CHANGED);
+    drop(observed);
+    fs::remove_dir_all(root).unwrap();
+}

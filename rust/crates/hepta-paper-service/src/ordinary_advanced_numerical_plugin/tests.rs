@@ -70,6 +70,28 @@ fn held_report<'a>(root: &Path, c: &'a AtomicBool, d: Instant) -> ObservedStatus
         qualification: None,
     }
 }
+
+#[test]
+fn ordinary_numerical_selected_root_alias_is_retained_and_retargeting_is_refused() {
+    let root = Scratch::new();
+    for name in ["original", "replacement"] {
+        fs::create_dir(root.0.join(name)).unwrap();
+        fs::write(root.0.join(name).join("config.json"), b"{\"version\":1}\n").unwrap();
+    }
+    let selected = root.0.join("selected");
+    std::os::unix::fs::symlink(root.0.join("original"), &selected).unwrap();
+    let c = AtomicBool::new(false);
+    let d = Instant::now() + Duration::from_secs(120);
+    assert_eq!(held_report(&selected, &c, d).finish().unwrap().exit_code, 0);
+    let retained = held_report(&selected, &c, d);
+    fs::remove_file(&selected).unwrap();
+    std::os::unix::fs::symlink(root.0.join("replacement"), &selected).unwrap();
+    assert!(retained.finish().unwrap_err().contains("input_changed"));
+    assert_eq!(
+        fs::read(root.0.join("original/config.json")).unwrap(),
+        b"{\"version\":1}\n"
+    );
+}
 #[test]
 fn ordinary_numerical_retained_input_drift_wire_budget_and_fresh_control_are_refused() {
     let root = Scratch::new();
@@ -154,8 +176,22 @@ fn ordinary_numerical_actual_parent_namespace_drift_refuses_until_fresh_observat
     let relative = path.strip_prefix("/").unwrap();
     let mut held = SourceObservation::new_with_deadline(Path::new("/"), &c, d).unwrap();
     let initial = held.inventory_document(relative, 4096).unwrap();
-    let namespace_change = Scratch::new();
-    assert_ne!(namespace_change.0, first.0);
+    let unrelated_sibling = Scratch::new();
+    assert_ne!(unrelated_sibling.0, first.0);
+    assert!(held.inventory_probe(relative).unwrap().is_some());
+    let missing = first.0.join("not-yet-present.json");
+    assert!(
+        held.inventory_probe(missing.strip_prefix("/").unwrap())
+            .unwrap()
+            .is_none()
+    );
+    // An absence observation seals the actual parent namespace. A new adjacent
+    // entry changes that observed input even when the retained file bytes agree.
+    fs::write(
+        first.0.join("new-adjacent.json"),
+        b"new observed parent entry",
+    )
+    .unwrap();
     assert!(
         held.inventory_probe(relative)
             .unwrap_err()

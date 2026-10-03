@@ -104,6 +104,11 @@ fn actual_source_runtime_candidates_verifier_match_original_whole_composition_va
         fs::create_dir_all(root.join("source")).unwrap();
         let id = format!("actual-native-composition-{}-{mode}", std::process::id());
         let mut r = request(&root, &id);
+        // Every case owns an existing task namespace. Another test creating its
+        // own task must not mutate a sealed shared-parent absence observation.
+        let dir = runtime.join("empirical-analysis").join(&id);
+        fs::create_dir_all(&dir).unwrap();
+        held.push(RuntimeDir(dir.clone()));
         fs::write(root.join("source/main.tex"), b"Actual local manuscript.\n").unwrap();
         if mode != "empty" {
             fs::write(root.join("source/dataset-result.csv"), b"x,y\n1,2\n").unwrap();
@@ -117,10 +122,7 @@ fn actual_source_runtime_candidates_verifier_match_original_whole_composition_va
             fs::write(root.join("source/claim-evidence-result.json"),br#"{"claims":[{"id":"claim:a","text":"Actual measured candidate"}],"candidate_evidence":[{"id":9007199254740993,"text":"Observed local JSON"}],"experiments":[{"id":"exp:a","resultClass":"observed"}]}"#).unwrap();
         }
         if mode == "runtime" {
-            let dir = runtime.join("empirical-analysis").join(&id);
-            fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("experiment-result.json"),br#"{"experiments":[{"experimentId":"actual-outside","resultClass":"observed"}],"evidence":[{"id":"outside-local"}]}"#).unwrap();
-            held.push(RuntimeDir(dir));
         }
         if mode == "empirical" {
             r.paper_task["paperQualityProfile"] = json!("empirical_or_experiment");
@@ -151,7 +153,7 @@ fn actual_source_runtime_candidates_verifier_match_original_whole_composition_va
                 .map(|v| v["bytes"].as_u64().unwrap())
                 .sum::<u64>()
                 + if i == 3 {
-                    fs::metadata(held[0].0.join("experiment-result.json"))
+                    fs::metadata(held[3].0.join("experiment-result.json"))
                         .unwrap()
                         .len()
                 } else {

@@ -65,6 +65,7 @@ jobs:
           printf 'HEPTA_TEST_NODE=%s\n' "$(realpath "$(command -v node)")" >> "$GITHUB_ENV"
           npm ci --ignore-scripts --no-audit --no-fund \
             2>&1 | tee "$EVIDENCE_ROOT/node-oracle-install.log"
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
           # Import the actual dependency closure before compiling Rust; otherwise
           # missing espree/eslint-scope fails much later inside differential tests.
           node --input-type=module -e \

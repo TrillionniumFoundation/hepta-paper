@@ -185,7 +185,12 @@ impl SourceObservation<'_> {
             }
             let child = self.child(&parent, Path::new(name), metadata.is_dir())?;
             let retained = self.pins.get(&child).ok_or_else(|| CHANGED.to_owned())?;
-            if !content_identity(&metadata, &retained.before) {
+            let stable = if metadata.is_file() || retained.enumerated {
+                content_identity(&metadata, &retained.before)
+            } else {
+                identity(&metadata, &retained.before)
+            };
+            if !stable {
                 return Err(CHANGED.to_owned());
             }
             parent = child;

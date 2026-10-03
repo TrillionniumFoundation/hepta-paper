@@ -212,6 +212,8 @@ impl Fixture {
         .unwrap();
         for args in [
             vec!["init", "--quiet"],
+            vec!["config", "gc.auto", "0"],
+            vec!["config", "maintenance.auto", "false"],
             vec!["add", "--all"],
             vec![
                 "-c",

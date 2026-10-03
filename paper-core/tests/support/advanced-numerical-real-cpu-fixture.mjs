@@ -25,6 +25,9 @@ with open(args[args.index("--hepta-output")+1],"x",encoding="utf8") as stream:
 export function createActualCpuNumericalFixture({ maximumProcesses = 8192 } = {}) {
   const f=signedPluginFixture();
 fs.writeFileSync(path.join(f.pluginRoot,'plugin.py'),body,{mode:0o644});
+// writeFile preserves an existing mode. Pin the source mode independently of
+// the creating process's umask before taking the actual execution snapshot.
+fs.chmodSync(path.join(f.pluginRoot,'plugin.py'),0o664);
 const python=fs.realpathSync.native('/usr/bin/python3');
 if(!fs.lstatSync(python).isFile()) throw new Error('actual_cpu_python_not_regular');
 const executable=path.basename(python);

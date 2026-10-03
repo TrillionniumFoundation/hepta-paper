@@ -50,9 +50,8 @@ impl<'a> StatusInputs<'a> {
                 return Err("advanced_numerical_plugin_input_scope_limit_exceeded".into());
             }
             let mut owner = SourceObservation::new_with_deadline(root, self.c, self.d)?;
-            if owner.root() != root {
-                return Err("advanced_numerical_plugin_input_alias_domain_v1_unaccepted".into());
-            }
+            // The existing observer retains the resolved root and rechecks
+            // the selected alias against it. Child traversal remains no-follow.
             self.budget.attach(&mut owner)?;
             self.scopes.insert(root.to_owned(), owner);
         }

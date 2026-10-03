@@ -79,6 +79,9 @@ jobs:
           sha256sum "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
+          npm ci --ignore-scripts --no-audit --fund=false
+          git diff --exit-code -- package.json package-lock.json
           node paper-core/tests/source-implementation-evidence-hardening.mjs \
             --base "$base" \
             --target "$head" \
@@ -90,6 +93,9 @@ jobs:
             --receipt /tmp/repository-source-evidence-head.json
           test -s /tmp/repository-source-evidence-hardening-head.json
           test -s /tmp/repository-source-evidence-head.json
+          # Remove only this job's newly installed oracle dependencies.
+          test -d node_modules && test ! -L node_modules
+          rm -rf -- node_modules
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           sha256sum /tmp/repository-source-evidence-hardening-head.json
@@ -113,12 +119,18 @@ jobs:
           sha256sum "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
+          npm ci --ignore-scripts --no-audit --fund=false
+          git diff --exit-code -- package.json package-lock.json
           node paper-core/bin/verify-source-implementation-evidence.mjs \
             --expected-head "$head" \
             --expected-tree "$tree" \
             --execute \
             --receipt /tmp/repository-source-evidence-head.json
           test -s /tmp/repository-source-evidence-head.json
+          # Remove only this job's newly installed oracle dependencies.
+          test -d node_modules && test ! -L node_modules
+          rm -rf -- node_modules
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           sha256sum /tmp/repository-source-evidence-head.json
@@ -204,6 +216,9 @@ jobs:
           sha256sum "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
+          npm ci --ignore-scripts --no-audit --fund=false
+          git diff --exit-code -- package.json package-lock.json
           node paper-core/tests/source-implementation-evidence-hardening.mjs \
             --base "$base" \
             --target "$target" \
@@ -215,6 +230,9 @@ jobs:
             --receipt /tmp/repository-source-evidence-merge.json
           test -s /tmp/repository-source-evidence-hardening-merge.json
           test -s /tmp/repository-source-evidence-merge.json
+          # Remove only this job's newly installed oracle dependencies.
+          test -d node_modules && test ! -L node_modules
+          rm -rf -- node_modules
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           sha256sum /tmp/repository-source-evidence-hardening-merge.json

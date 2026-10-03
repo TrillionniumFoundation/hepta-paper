@@ -135,12 +135,33 @@ mod tests {
         sync::{Arc, atomic::Ordering},
         time::{Duration, Instant},
     };
-    fn inotify_fds() -> usize {
+    fn inotify_fds_for(directory: &Path) -> usize {
+        // Count this fixture's actual kernel watches, so concurrent observers
+        // owned by other tests cannot make a closed descriptor appear leaked.
+        let metadata = fs::metadata(directory).unwrap();
+        let inode = format!("ino:{:x}", metadata.ino());
+        let device = format!(
+            "sdev:{:x}",
+            (nix::sys::stat::major(metadata.dev()) << 20) | nix::sys::stat::minor(metadata.dev())
+        );
         fs::read_dir("/proc/self/fd")
             .unwrap()
             .filter_map(|entry| entry.ok())
-            .filter_map(|entry| fs::read_link(entry.path()).ok())
-            .filter(|target| target.to_string_lossy() == "anon_inode:inotify")
+            .filter(|entry| {
+                fs::read_link(entry.path())
+                    .is_ok_and(|target| target.to_string_lossy() == "anon_inode:inotify")
+            })
+            .filter_map(|entry| {
+                fs::read_to_string(Path::new("/proc/self/fdinfo").join(entry.file_name())).ok()
+            })
+            .filter(|info| {
+                info.lines().any(|line| {
+                    let fields: Vec<_> = line.split_whitespace().collect();
+                    fields.first() == Some(&"inotify")
+                        && fields.contains(&inode.as_str())
+                        && fields.contains(&device.as_str())
+                })
+            })
             .count()
     }
     #[test]
@@ -166,10 +187,10 @@ mod tests {
                 cancelled,
                 Instant::now() + Duration::from_secs(120),
             );
-            let baseline = inotify_fds();
+            let baseline = inotify_fds_for(&fixture.0);
             {
                 let observed = NamedReopenContinuityV1::observe(&directory, &control).unwrap();
-                assert_eq!(inotify_fds(), baseline + 1);
+                assert_eq!(inotify_fds_for(&fixture.0), baseline + 1);
                 match kind {
                     "unrelated" => {
                         fs::create_dir(fixture.path("unrelated")).unwrap();
@@ -256,7 +277,7 @@ mod tests {
                 }
             }
             assert_eq!(
-                inotify_fds(),
+                inotify_fds_for(&fixture.0),
                 baseline,
                 "owned observer descriptor closes for {kind}"
             );
@@ -270,9 +291,14 @@ mod tests {
         let cancelled = Arc::new(AtomicBool::new(false));
         let control =
             ReconciliationReadControlV1::new(cancelled, Instant::now() + Duration::from_secs(120));
-        let baseline = inotify_fds();
+        let baseline = inotify_fds_for(&fixture.0);
         {
             let observed = NamedReopenContinuityV1::observe(&directory, &control).unwrap();
+            assert_eq!(
+                inotify_fds_for(&fixture.0),
+                baseline + 1,
+                "actual owned observer is visible"
+            );
             // An independent kernel observer confirms an actual overflow,
             // rather than setting a synthetic overflow flag in the owner.
             let shadow = Inotify::init(InitFlags::IN_CLOEXEC | InitFlags::IN_NONBLOCK).unwrap();
@@ -319,7 +345,7 @@ mod tests {
             assert!(observed.assert_current().is_err());
         }
         assert_eq!(
-            inotify_fds(),
+            inotify_fds_for(&fixture.0),
             baseline,
             "both registered observers are released"
         );
@@ -339,9 +365,14 @@ mod tests {
                         Duration::from_millis(100)
                     },
             );
-            let baseline = inotify_fds();
+            let baseline = inotify_fds_for(&fixture.0);
             {
                 let observed = NamedReopenContinuityV1::observe(&directory, &control).unwrap();
+                assert_eq!(
+                    inotify_fds_for(&fixture.0),
+                    baseline + 1,
+                    "actual owned observer is visible"
+                );
                 if cancelled_case {
                     cancelled.store(true, Ordering::Release);
                 } else {
@@ -354,7 +385,7 @@ mod tests {
                     "original rejected owner cannot revive"
                 );
             }
-            assert_eq!(inotify_fds(), baseline);
+            assert_eq!(inotify_fds_for(&fixture.0), baseline);
         }
     }
 }

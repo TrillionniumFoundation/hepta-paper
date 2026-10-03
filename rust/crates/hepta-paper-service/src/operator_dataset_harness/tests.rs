@@ -31,8 +31,10 @@ impl Fixture {
     }
     fn oracle(&self, action: &str, variant: &str) {
         let node = std::env::var_os("HEPTA_PRODUCTION_NODE_BINARY")
+            .or_else(|| std::env::var_os("HEPTA_TEST_NODE"))
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("node"));
+            .expect("qualified absolute producer Node input");
+        assert!(node.is_absolute());
         let environment = EnvironmentPolicyV1::new(
             "dataset-reader-source-oracle",
             ["PATH", "HOME", "LANG", "LC_ALL"],

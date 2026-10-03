@@ -106,9 +106,86 @@ fn valid_sha256(value: &str) -> bool {
     })
 }
 
-pub fn parse_autonomous_empirical_plugin_release_arguments(
+mod ordinary;
+pub use ordinary::run_ordinary_autonomous_empirical_plugin_template_v1;
+pub(crate) use ordinary::validate_grammar_v1 as validate_ordinary_template_grammar_v1;
+
+fn lex_arguments(
     args: &[String],
+    original: bool,
 ) -> Result<AutonomousEmpiricalPluginReleaseOptions, String> {
+    if original {
+        let mut options = AutonomousEmpiricalPluginReleaseOptions {
+            action: "plan".into(),
+            ..Default::default()
+        };
+        let mut seen = BTreeSet::new();
+        let mut tokens = args.iter();
+        while let Some(token) = tokens.next() {
+            if token == "--" {
+                return Err("unexpected_cli_argument_separator".into());
+            }
+            let raw = token
+                .strip_prefix("--")
+                .ok_or_else(|| format!("unexpected_cli_positional:{token}"))?;
+            let (key, inline) = raw
+                .split_once('=')
+                .map_or((raw, None), |(k, v)| (k, Some(v)));
+            if key.is_empty() {
+                return Err("empty_cli_option".into());
+            }
+            if key == "help" {
+                if inline.is_some() {
+                    return Err("boolean_cli_option_does_not_take_value:--help".into());
+                }
+                if !seen.insert(key.to_owned()) {
+                    return Err("duplicate_cli_option:--help".into());
+                }
+                options.help = true;
+                continue;
+            }
+            if ![
+                "action",
+                "activation",
+                "install-root",
+                "package-id",
+                "package-version",
+                "signing-config",
+                "template",
+                "benchmark-family",
+            ]
+            .contains(&key)
+            {
+                return Err(format!("unknown_cli_option:--{key}"));
+            }
+            let value = inline
+                .or_else(|| {
+                    tokens
+                        .next()
+                        .filter(|v| !v.starts_with("--"))
+                        .map(String::as_str)
+                })
+                .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?;
+            if value.is_empty() {
+                return Err(format!("empty_cli_option_value:--{key}"));
+            }
+            if key != "benchmark-family" && !seen.insert(key.to_owned()) {
+                return Err(format!("duplicate_cli_option:--{key}"));
+            }
+            match key {
+                "action" => options.action = value.into(),
+                "activation" => options.activation = Some(value.into()),
+                "install-root" => options.install_root = Some(value.into()),
+                "package-id" => options.package_id = Some(value.into()),
+                "package-version" => options.package_version = Some(value.into()),
+                "signing-config" => options.signing_config = Some(value.into()),
+                "template" => options.template = Some(value.into()),
+                "benchmark-family" => options.benchmark_families.push(value.into()),
+                _ => return Err("autonomous_empirical_plugin_release_grammar_invalid".into()),
+            }
+        }
+        return Ok(options);
+    }
     let mut options = AutonomousEmpiricalPluginReleaseOptions {
         action: "plan".into(),
         ..Default::default()
@@ -155,6 +232,13 @@ pub fn parse_autonomous_empirical_plugin_release_arguments(
             }
         }
     }
+    Ok(options)
+}
+
+pub fn parse_autonomous_empirical_plugin_release_arguments(
+    args: &[String],
+) -> Result<AutonomousEmpiricalPluginReleaseOptions, String> {
+    let mut options = lex_arguments(args, false)?;
     if options.help {
         return Ok(options);
     }

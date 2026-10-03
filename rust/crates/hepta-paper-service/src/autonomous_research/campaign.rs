@@ -143,10 +143,10 @@ impl AutonomousResearchCampaignRequestV1 {
             && (self.author.source.operation_publisher.is_none()
                 || self.reviewer.source.operation_publisher.is_none()
                 || !profile.is_well_formed()
-                || self.author.source.runtime_identity_hash
-                    != profile.qualified_codex_runtime_identity_hash
-                || self.reviewer.source.runtime_identity_hash
-                    != profile.qualified_codex_runtime_identity_hash
+                || profile.qualified_runtime_for_role_v2("author")
+                    != Some(&self.author.source.runtime_identity_hash)
+                || profile.qualified_runtime_for_role_v2("reviewer")
+                    != Some(&self.reviewer.source.runtime_identity_hash)
                 || self.author.source.broker_uid == self.reviewer.source.broker_uid
                 || self.author.source.broker_gid == self.reviewer.source.broker_gid)
         {

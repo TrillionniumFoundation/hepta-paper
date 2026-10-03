@@ -40,7 +40,7 @@ function rehash(record) {
   record.recordSha256 = `sha256:${createHash('sha256').update(JSON.stringify(canonical(payload))).digest('hex')}`;
   return record;
 }
-let observed;
+let observed, verifiedOwnSummary;
 before(async () => { observed = await observeRouteAcceptanceV1(); });
 
 test('every_canonical_route_retains_its_complete_argument_and_effect_contract_and_executable_acceptance_gap', () => {
@@ -113,6 +113,24 @@ test('schema_valid_json_status_claims_never_become_verified_acceptance_without_c
   assert.throws(() => renderNodeRustGapReport(report), /cannot establish independent acceptance/u);
 });
 
+test('own_consumer_pending_replay_rejects_actual_environment_drift_even_after_restoration', async () => {
+  if (!observed.subject.committedClean) return;
+  const original = process.env.TZ;
+  // The private replay Promise has been installed, but its complete matrix has
+  // not started. Two incoming callers still validate their own entire records.
+  const first = consumeRouteAcceptanceRecordV1(observed);
+  const settledFirst = first.then(value => ({ value }), error => ({ error }));
+  let second;
+  try {
+    process.env.TZ = original === 'Etc/GMT+3' ? 'Etc/GMT+4' : 'Etc/GMT+3';
+    second = consumeRouteAcceptanceRecordV1(observed);
+  } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
+  await assert.rejects(second, /own_replay_current_inputs_changed/u);
+  const initial = await settledFirst;
+  assert.match(initial.error?.message || '', /own_replay_current_inputs_changed/u);
+  assert.equal(initial.value, undefined);
+});
+
 test('current_commit_complete_matrix_consumer_closes_exactly_three_local_behavior_gaps_and_retains_all_routes', async () => {
   if (!observed.subject.committedClean) {
     assert.equal(observed.kind, 'NodeRustRouteBehaviorObservationV1');
@@ -121,7 +139,22 @@ test('current_commit_complete_matrix_consumer_closes_exactly_three_local_behavio
     return;
   }
   assert.equal(validate(observed), true, JSON.stringify(validate.errors));
-  const acceptance = await consumeRouteAcceptanceRecordV1(observed);
+  const forged = structuredClone(observed);
+  forged.rows[0].cases[0].node.stdout.status = 'concurrent_invented_success';
+  forged.rows[0].cases[0].native.stdout.status = 'concurrent_invented_success'; rehash(forged);
+  assert.equal(validate(forged), true, JSON.stringify(validate.errors));
+  const concurrent = await Promise.allSettled([
+    consumeRouteAcceptanceRecordV1(observed), consumeRouteAcceptanceRecordV1(structuredClone(observed)),
+    consumeRouteAcceptanceRecordV1(forged),
+  ]);
+  const refusalDiagnostic = result => result.reason
+    ? `${result.reason.stack}\nphysicalContextDifferences=${JSON.stringify(result.reason.physicalContextDifferences ?? null)}` : undefined;
+  assert.equal(concurrent[0].status, 'fulfilled', refusalDiagnostic(concurrent[0]));
+  assert.equal(concurrent[1].status, 'fulfilled', refusalDiagnostic(concurrent[1]));
+  assert.equal(concurrent[2].status, 'rejected'); assert.match(concurrent[2].reason.message, /actual_replay_differs/u);
+  const acceptance = concurrent[0].value; verifiedOwnSummary = acceptance;
+  assert.notEqual(acceptance, concurrent[1].value);
+  assert.deepEqual(assertVerifiedRouteAcceptanceV1(concurrent[1].value), acceptance);
   const report = auditCurrentCoverage({ routeAcceptance: acceptance });
   assert.equal(report.acceptedParityRows, 3);
   assert.equal(report.openCommandBehaviorGaps, 54);
@@ -293,4 +326,39 @@ test('whole_record_schema_rejects_malformed_runtime_outcomes_environment_and_phy
     mutate(forged); rehash(forged);
     await assert.rejects(() => consumeRouteAcceptanceRecordV1(forged), /record_schema_invalid/u);
   }
+});
+
+test('different_route_selection_runs_its_own_matrix_without_revoking_the_current_prior_summary', async () => {
+  if (!observed.subject.committedClean) {
+    assert.equal(verifiedOwnSummary, undefined); return;
+  }
+  const selected = rehash({ ...structuredClone(observed), rows: observed.rows
+    .filter(row => row.routeId === 'operator/workspace').map(row => structuredClone(row)) });
+  assert.equal(validate(selected), true, JSON.stringify(validate.errors));
+  const forged = structuredClone(selected);
+  forged.rows[0].cases[0].node.stdout.status = 'different_selection_invented_success';
+  forged.rows[0].cases[0].native.stdout.status = 'different_selection_invented_success'; rehash(forged);
+  const outcomes = await Promise.allSettled([
+    consumeRouteAcceptanceRecordV1(selected), consumeRouteAcceptanceRecordV1(structuredClone(selected)),
+    consumeRouteAcceptanceRecordV1(forged),
+  ]);
+  assert.equal(outcomes[0].status, 'fulfilled', outcomes[0].reason?.stack);
+  assert.equal(outcomes[1].status, 'fulfilled', outcomes[1].reason?.stack);
+  assert.equal(outcomes[2].status, 'rejected'); assert.match(outcomes[2].reason.message, /actual_replay_differs/u);
+  assert.deepEqual(outcomes[0].value.acceptedRouteIds, ['operator/workspace']);
+  assert.notEqual(outcomes[0].value, outcomes[1].value);
+  assert.deepEqual(assertVerifiedRouteAcceptanceV1(outcomes[1].value), outcomes[0].value);
+  assert.deepEqual(assertVerifiedRouteAcceptanceV1(verifiedOwnSummary).acceptedRouteIds,
+    ['operator/store', 'operator/workspace', 'verify/repository-assets']);
+});
+
+test('verified_own_summary_is_revoked_by_current_input_drift_and_restoration_does_not_revive_it', () => {
+  if (!observed.subject.committedClean) return;
+  assert.ok(verifiedOwnSummary);
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = original === 'Etc/GMT+3' ? 'Etc/GMT+4' : 'Etc/GMT+3';
+    assert.throws(() => assertVerifiedRouteAcceptanceV1(verifiedOwnSummary), /not_independently_replayed/u);
+  } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
+  assert.throws(() => assertVerifiedRouteAcceptanceV1(verifiedOwnSummary), /not_independently_replayed/u);
 });

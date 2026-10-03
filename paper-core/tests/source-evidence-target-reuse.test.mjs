@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { assertCargoBinaryArtifactsCurrent, assertCargoBuildScriptsCurrent } from '../src/source-evidence-cargo-observations.mjs';
+import { artifactPin, holdCargoTestArtifactEpoch, assertCargoBinaryArtifactsCurrent, assertCargoBuildScriptsCurrent } from '../src/source-evidence-cargo-observations.mjs';
 import { parse } from 'espree';
 import {
   assertExactCargoOwnerExecution, cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory,
@@ -12,6 +12,86 @@ import {
   SOURCE_EVIDENCE_PRODUCER_PATHS,
 } from '../bin/verify-source-implementation-evidence.mjs';
 const fixtureTempParent = fs.realpathSync(os.tmpdir());
+
+function artifactEpochFixture(t) {
+  const root = fs.mkdtempSync(path.join(fixtureTempParent, 'hepta-test-artifact-epoch-'));
+  t.after(() => fs.rmSync(root, { recursive: true }));
+  const source = path.join(root, 'source'); fs.mkdirSync(source);
+  const executable = path.join(root, 'actual-elf');
+  // Actual small system ELF bytes; these guards do not execute or qualify it.
+  fs.copyFileSync(fs.realpathSync('/usr/bin/true'), executable);
+  fs.chmodSync(executable, 0o755);
+  return { root: source, executable };
+}
+
+test('Cargo test artifact epoch reduces repeated byte reads while retaining initial and final full hashes', t => {
+  const f = artifactEpochFixture(t), metadata = fs.statSync(f.executable, { bigint: true });
+  const originalRead = fs.readSync;
+  let actualBytes = 0;
+  fs.readSync = function trackedRead(descriptor, ...args) {
+    const current = fs.fstatSync(descriptor, { bigint: true });
+    const count = Reflect.apply(originalRead, fs, [descriptor, ...args]);
+    if (current.dev === metadata.dev && current.ino === metadata.ino) actualBytes += count;
+    return count;
+  };
+  let owner;
+  try {
+    for (let index = 0; index < 20; index += 1) artifactPin(f.executable, f.root);
+    const baselineBytes = actualBytes; actualBytes = 0;
+    const first = artifactPin(f.executable, f.root);
+    owner = holdCargoTestArtifactEpoch(first, f.root);
+    for (let index = 0; index < 20; index += 1) owner.assertCurrent();
+    assert.equal(actualBytes, Number(metadata.size), 'intermediate FD checks read no ELF bytes');
+    owner.finish();
+    assert.equal(actualBytes, 2 * Number(metadata.size), 'final complete hash is still required');
+    assert.equal(baselineBytes, 20 * Number(metadata.size));
+    assert.throws(() => owner.assertCurrent(), /verification_artifact_epoch_closed/u);
+    t.diagnostic(`actual ELF read bytes: repeated=${baselineBytes}, single epoch=${actualBytes}; no elapsed-time or product performance claim`);
+  } finally {
+    owner?.close(); fs.readSync = originalRead;
+  }
+});
+
+test('Cargo test artifact epoch refuses changed rebound aliased or false-hash inputs and never rebaselines', t => {
+  const f = artifactEpochFixture(t);
+  const first = artifactPin(f.executable, f.root);
+  const owner = holdCargoTestArtifactEpoch(first, f.root);
+  t.after(() => owner.close());
+  const moved = `${f.executable}.moved`;
+  fs.renameSync(f.executable, moved);
+  let failure;
+  try { owner.assertCurrent(); } catch (error) { failure = error; }
+  assert(failure); assert.equal(failure.code, 'ENOENT');
+  fs.renameSync(moved, f.executable);
+  assert.throws(() => owner.assertCurrent(), error => error === failure);
+  assert.throws(() => owner.finish(), error => error === failure);
+  const fresh = holdCargoTestArtifactEpoch(artifactPin(f.executable, f.root), f.root);
+  fresh.finish();
+
+  const falseHash = holdCargoTestArtifactEpoch({ ...artifactPin(f.executable, f.root),
+    sha256: `sha256:${'0'.repeat(64)}` }, f.root);
+  t.after(() => falseHash.close());
+  falseHash.assertCurrent();
+  assert.throws(() => falseHash.finish(), /verification_artifact_changed/u);
+
+  const alias = `${f.executable}.alias`; fs.symlinkSync(f.executable, alias);
+  assert.throws(() => holdCargoTestArtifactEpoch({ ...artifactPin(f.executable, f.root), path: alias }, f.root),
+    /verification_artifact_path_invalid/u);
+  const bytes = fs.readFileSync(f.executable), before = fs.statSync(f.executable);
+  const changed = holdCargoTestArtifactEpoch(artifactPin(f.executable, f.root), f.root);
+  t.after(() => changed.close());
+  const altered = Buffer.from(bytes); altered[altered.length - 1] ^= 1;
+  fs.writeFileSync(f.executable, altered); fs.utimesSync(f.executable, before.atime, before.mtime);
+  assert.throws(() => changed.assertCurrent(), /verification_artifact_changed/u);
+  fs.writeFileSync(f.executable, bytes); fs.utimesSync(f.executable, before.atime, before.mtime);
+  assert.throws(() => changed.finish(), /verification_artifact_changed/u);
+
+  const rebound = holdCargoTestArtifactEpoch(artifactPin(f.executable, f.root), f.root);
+  t.after(() => rebound.close());
+  fs.renameSync(f.executable, moved);
+  fs.writeFileSync(f.executable, bytes, { mode: 0o755 });
+  assert.throws(() => rebound.finish(), /verification_artifact_changed/u);
+});
 
 function command(root, program, args) {
   const output = spawnSync(program, args, { cwd: root, encoding: 'utf8', shell: false,

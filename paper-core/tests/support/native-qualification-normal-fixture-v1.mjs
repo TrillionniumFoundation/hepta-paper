@@ -5,20 +5,18 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { before, after, test } from 'node:test';
-import { buildNativeOwners, safeEnvironment } from '../../docs/tools/node-rust-route-acceptance.mjs';
-import { resolveHeptaPaperCommand } from '../src/command-registry.mjs';
-import { qualificationFixtures } from '../../rust/oracle/journal-qualification-fixtures-v1.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-// Normal frontend observations on owned synthetic sources and authorities.
-// They do not accept a whole route, a live portal, or an installed supervisor.
-const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const routes = ['journal-connector-coverage', 'autonomous-supervisor-health'];
+import { buildNativeOwners, safeEnvironment } from '../../../docs/tools/node-rust-route-acceptance.mjs';
+import { resolveHeptaPaperCommand } from '../../src/command-registry.mjs';
+import { relativeModuleSpecifiers } from '../../verification/javascript-module-specifiers.mjs';
+// Source qualification fixtures only: physically copied ordinary frontends and
+// original Node graph, no product fallback or live actor/portal authority.
+const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+export function createNormalQualificationFixtureV1(routeNames) {
 let fixture, root, caller, binary, unknown, graph, shippedPin, unknownPin, markerPin;
 let keepFixture = false;
 const dependencies = new Map();
 const immutableCopyPins = new Map();
+let copiedBytes = 0, copiedEntries = 0;
 const identity = s => [s.dev, s.ino, s.mode, s.uid, s.gid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String);
 function pin(file) {
   const before = fs.lstatSync(file, { bigint: true }); assert.ok(before.isFile()); assert.ok(before.size <= 512n * 1024n * 1024n, 'bounded input required');
@@ -43,6 +41,12 @@ function env(additions = {}) {
     GIT_TERMINAL_PROMPT: '0', ...additions };
 }
 function copy(from, to, mode = 0o440) {
+  if (immutableCopyPins.has(to)) {
+    assert.deepEqual(pin(to), immutableCopyPins.get(to));
+    assert.equal(pin(from).sha256, immutableCopyPins.get(to).sha256); return { source: pin(from), copy: immutableCopyPins.get(to) };
+  }
+  assert.ok(++copiedEntries <= 10000, 'bounded fixture entries');
+  if (mode !== 0o550) { copiedBytes += Number(fs.lstatSync(from).size); assert.ok(copiedBytes <= 192 * 1024 * 1024, 'bounded original Node fixture graph'); }
   const original = pin(from); fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o700 });
   fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL); fs.chmodSync(to, mode);
   const copied = pin(to); assert.equal(copied.sha256, original.sha256); assert.equal(copied.identity[5], '1');
@@ -103,12 +107,53 @@ function snapshot(directory) {
   }
   visit(directory); return rows;
 }
-async function run(engine, args, additions = {}, executable = binary, interruptSignal = null) {
-  const program = engine === 'node' ? process.execPath : executable;
+// Inserted only after the current source guard closes. Qualification harness.
+async function waitForJournalRead(primary, watched, expected, remember, settled, failed) {
+  const until=Date.now()+30_000;
+  const firstCounters=new Map();
+  while(!settled()&&!failed()&&Date.now()<until){
+    remember();
+    const members=groupMembers(primary.group,primary.session);
+    for(const member of members){
+      assert.equal(member.uid,primary.uid);
+      let names;try{names=fs.readdirSync(`/proc/${member.pid}/fd`);}catch(error){if(['ENOENT','ESRCH','EACCES'].includes(error.code))continue;throw error;}
+      for(const name of names){
+        const descriptor=`/proc/${member.pid}/fd/${name}`;
+        try{
+          if(fs.readlinkSync(descriptor)!==watched)continue;
+          const offset=/^pos:\s*(\d+)$/mu.exec(fs.readFileSync(`/proc/${member.pid}/fdinfo/${name}`,'utf8'));
+          if(!offset)continue;
+          // The original descriptor owner uses position-neutral read_at/pread.
+          // Require actual read-counter progress while the same original FD
+          // remains held; its fdinfo offset correctly stays zero.
+          const io=/^rchar:\s*(\d+)$/mu.exec(fs.readFileSync(`/proc/${member.pid}/io`,'utf8'));
+          assert.ok(io,'actual owned read counter required');
+          const key=`${member.pid}:${name}`;const currentRead=BigInt(io[1]);
+          if(!firstCounters.has(key)){firstCounters.set(key,currentRead);continue;}
+          const initialRead=firstCounters.get(key);
+          assert.ok(currentRead>=initialRead,'owned read counter reset');
+          if(currentRead-initialRead<64n*1024n)continue;
+          assert.deepEqual(identity(fs.statSync(descriptor,{bigint:true})),expected.identity);
+          assert.deepEqual(identity(fs.lstatSync(watched,{bigint:true})),expected.identity);
+          const now=processPin(member.pid);assert.ok(!stopped(now));
+          for(const field of ['uid','group','session','start'])assert.equal(now[field],member[field]);
+          return {definition:'actual owned original journal FD with read counter progress; position-neutral pread, no SQL instruction claim',pid:member.pid,descriptor:Number(name),offset:offset[1],readCounters:{before:String(initialRead),after:String(currentRead),delta:String(currentRead-initialRead)},identity:expected.identity,observedAt:Date.now()};
+        }catch(error){if(['ENOENT','ESRCH','EACCES'].includes(error.code))continue;throw error;}
+      }
+    }
+    await new Promise(resolve=>setImmediate(resolve));
+  }
+  throw new Error('actual journal FD with read progress barrier not observed');
+}
+async function run(engine, args, additions = {}, executable = binary, interruptSignal = null, input = null, expectedTerminalSignal = null, requireNaturalGroupTermination = false, watchedJournal = null) {
+  const program = ['node', 'oracle'].includes(engine) ? process.execPath : executable;
   const argv = engine === 'node' ? [path.join(root, 'paper-core/bin/hepta-paper.mjs'), ...args] : args;
+  if (input !== null) assert.ok(Buffer.byteLength(input) <= 64 * 1024, 'bounded fixture oracle stdin');
+  const watchedPin = watchedJournal === null ? null : pin(watchedJournal);
+  let readBarrier = null;
   const beganAt = Date.now();
   const child = spawn(program, argv, { cwd: caller, env: env(additions), shell: false,
-    detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    detached: true, stdio: [input === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
   const primary = processPin(child.pid); assert.ok(primary); assert.equal(primary.group, child.pid);
   assert.equal(primary.session, child.pid); assert.equal(primary.uid, process.getuid());
   const pins = new Map([[primary.pid, primary]]); let failure, result, settled = false;
@@ -118,6 +163,7 @@ async function run(engine, args, additions = {}, executable = binary, interruptS
     child.once('close', (code, signal) => { settled = true; result = { status: code, signal,
       stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8'), beganAt, endedAt: Date.now() }; resolve(result); });
   });
+  if (input !== null) { child.stdin.on('error', () => {}); child.stdin.end(input); }
   function remember() {
     for (const member of groupMembers(primary.group, primary.session)) {
       assert.equal(member.uid, primary.uid);
@@ -139,7 +185,11 @@ async function run(engine, args, additions = {}, executable = binary, interruptS
   child.stdout.on('data', bytes => consume(bytes, 'stdout')); child.stderr.on('data', bytes => consume(bytes, 'stderr'));
   try {
     if (interruptSignal) {
-      // Deliberately an unknown execution point, not a claim about a read or
+      if (watchedJournal !== null) {
+        assert.equal(engine, 'native', 'journal read progress barrier is a native held read observation');
+        readBarrier = await waitForJournalRead(primary, watchedJournal, watchedPin, remember, () => settled, () => failure);
+      }
+      // With no watched journal this deliberately remains an unknown execution point, not a claim about a read or
       // durable dispatch phase. Both engines retry from the same namespace.
       // Signal the already pinned live primary before /proc group discovery;
       // an already completed fast native command is not a cancellation proof.
@@ -152,11 +202,15 @@ async function run(engine, args, additions = {}, executable = binary, interruptS
     for (;;) {
       remember(); const live = [...pins.values()].filter(value => !stopped(processPin(value.pid)));
       if (!live.length) break;
+      // Accepted active-cancellation proofs must observe production cleanup
+      // before this harness can repair a leftover process with a signal.
+      assert.equal(requireNaturalGroupTermination, false, 'production left an owned group member live before harness cleanup');
       assert.ok(Date.now() < deadline, 'owned group did not stop within cleanup bound');
       for (const member of live) signalPinned(member, 'SIGKILL'); await delay(5);
     }
     if (failure) throw failure;
-    if (!interruptSignal) assert.equal(result.signal, null, result.stderr);
+    if (!interruptSignal) assert.equal(result.signal, expectedTerminalSignal, result.stderr);
+    if (readBarrier !== null) result.readBarrier = readBarrier;
     return result;
   } catch (error) {
     keepFixture = true;
@@ -165,62 +219,36 @@ async function run(engine, args, additions = {}, executable = binary, interruptS
     throw error;
   } finally { assert.ok(settled || keepFixture); }
 }
-function canonical(value, beganAt, endedAt) {
-  if (value?.residentPrerequisites) {
-    assert.equal(value.residentPrerequisites.inspectedAt, value.inspectedAt);
-    const payload = { ...value.residentPrerequisites };
-    const receipt = payload.autonomousResearchResidentPrerequisiteReceiptHash;
-    delete payload.autonomousResearchResidentPrerequisiteReceiptHash;
-    assert.equal(receipt, hashRecord('AutonomousResearchResidentPrerequisiteReceipt', payload),
-      'validate actual receipt BEFORE comparing independent command times');
-    if (value.strictMachineIntakeReconciliation != null) {
-      assert.equal(value.strictMachineIntakeReconciliation.inspectedAt, value.inspectedAt);
-    }
-    value = { ...value, residentPrerequisites: { ...value.residentPrerequisites,
-      autonomousResearchResidentPrerequisiteReceiptHash: '$VALIDATED_ACTUAL_CLOCK_RECEIPT' } };
-  }
-  if (Array.isArray(value)) return value.map(entry => canonical(entry, beganAt, endedAt));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
-    if (key === 'inspectedAt') {
-      assert.match(entry, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
-      assert.ok(beganAt <= Date.parse(entry) && Date.parse(entry) <= endedAt,
-        'actual report timestamp outside its command interval');
-      return [key, '$ACTUAL_COMMAND_TIME'];
-    }
-    return [key, canonical(entry, beganAt, endedAt)];
-  }));
-  return value;
-}
-async function pair(name, forwarded = [], additions = {}) {
-  const args = ['operator', name, ...(forwarded.length ? ['--', ...forwarded] : [])];
-  const before = snapshot(root), node = await run('node', args, additions), native = await run('native', args, additions);
-  assert.equal(native.status, node.status, `${name}: ${forwarded}: ${native.stderr} / ${node.stderr}`);
-  assert.equal(native.stdout.endsWith('\n'), node.stdout.endsWith('\n'));
-  if (node.stdout) assert.deepEqual(canonical(JSON.parse(native.stdout), native.beganAt, native.endedAt), canonical(JSON.parse(node.stdout), node.beganAt, node.endedAt));
-  else { assert.equal(native.stdout, ''); assert.ok(node.stderr.includes(native.stderr.trim()), `${native.stderr} / ${node.stderr}`); }
-  assert.deepEqual(snapshot(root), before); return JSON.parse(node.stdout || 'null');
-}
-before(() => {
+function prepare() {
   const owners = buildNativeOwners().owners;
-  fixture = fs.mkdtempSync(path.join(fs.realpathSync(os.userInfo().homedir), '.hepta-readonly-normal-'));
+  fixture = fs.mkdtempSync(path.join(fs.realpathSync(os.userInfo().homedir), '.hepta-qualification-normal-'));
   root = path.join(fixture, 'deployment'); caller = path.join(fixture, 'caller');
   fs.mkdirSync(caller, { mode: 0o700 }); fs.mkdirSync(path.join(root, 'paper-core/config'), { recursive: true, mode: 0o700 });
   binary = path.join(root, 'bin/hepta-paper-rust'); shippedPin = copy(owners['hepta-paper-rust'].path, binary, 0o550).copy;
   assert.equal(`sha256:${shippedPin.sha256}`, owners['hepta-paper-rust'].sha256);
   unknown = path.join(fixture, 'unknown/debug/deps/hepta-paper-rust'); unknownPin = copy(binary, unknown, 0o550).copy;
-  const pending = ['paper-core/bin/hepta-paper.mjs', 'paper-core/bin/journal-connector-coverage.mjs',
-    'paper-core/bin/autonomous-research-supervisor-health.mjs',
-    'paper-adapters/automation/autonomous-research-supervisor-instance-repository.mjs']; graph = new Map();
+  const pending = ['paper-core/bin/hepta-paper.mjs', ...routeNames.map(name => resolveHeptaPaperCommand('operator', name).argv[1])]; graph = new Map();
+  if (routeNames.includes('campaign')) {
+    // The original scoped bootstrap hashes these physical migration inputs.
+    // They belong to the actual Node closure, even though they are not imports.
+    for (const name of ['021_job_lease_fencing', '022_campaign_attempt_fencing', '023_workspace_retention_qualification', '024_submission_outbox_delivery_kind', '025_external_autonomous_submission_handoff']) {
+      pending.push(`store/migrations/${name}.sql`);
+    }
+  }
   while (pending.length) {
     const relative = pending.pop(); if (graph.has(relative)) continue;
     const from = path.join(source, relative), to = path.join(root, relative); graph.set(relative, copy(from, to));
     if (!relative.endsWith('.mjs')) continue;
-    for (const match of fs.readFileSync(from, 'utf8').matchAll(/(?:from\s+|import\s+|import\s*\()\s*['"]([^'"]+)['"]/gu)) {
-      const name = match[1]; if (name.startsWith('node:')) continue;
-      if (['espree', 'eslint-scope'].includes(name)) continue;
-      assert.ok(name.startsWith('.'), `unbound import: ${name}`);
+    const text = fs.readFileSync(from, 'utf8');
+    for (const name of relativeModuleSpecifiers(text)) {
       const selected = path.relative(source, path.resolve(path.dirname(from), name));
       assert.ok(selected && !selected.startsWith(`..${path.sep}`) && !path.isAbsolute(selected)); pending.push(selected);
+    }
+    for (const match of text.matchAll(/new URL\(\s*(['"])([^'"\r\n]+)\1\s*,\s*import\.meta\.url\s*\)/gu)) {
+      const selected = path.resolve(path.dirname(from), match[2]);
+      if (fs.existsSync(selected) && fs.lstatSync(selected).isFile()) {
+        const relative = path.relative(source, selected); assert.ok(relative && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)); pending.push(relative);
+      }
     }
   }
   // Module initialization observes these actual fixed image inputs even on
@@ -261,14 +289,14 @@ before(() => {
     }
     visit(selected);
   }
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'hepta-paper-workspace', version: '0.21.0' }), { flag: 'wx', mode: 0o440 });
+  graph.set('package.json', copy(path.join(source, 'package.json'), path.join(root, 'package.json')));
   markerPin = pin(path.join(root, 'package.json'));
   immutableCopyPins.set(path.join(root, 'package.json'), markerPin);
   fs.mkdirSync(path.join(root, 'relative-runtime'), { mode: 0o700 });
   fs.mkdirSync(path.join(caller, 'relative-runtime'), { mode: 0o700 });
   fs.writeFileSync(path.join(caller, 'package.json'), JSON.stringify({ name: 'hepta-paper-workspace', version: '999' }), { mode: 0o600 });
-});
-after(() => {
+}
+function close() {
   if (!fixture) return;
   try {
     assert.deepEqual(pin(binary), shippedPin); assert.deepEqual(pin(unknown), unknownPin);
@@ -283,89 +311,15 @@ after(() => {
     }
   } catch (error) { keepFixture = true; throw error; }
   finally { if (!keepFixture) fs.rmSync(fixture, { recursive: true, force: false }); }
-});
-
-test('normal_readonly_registry_grammar_validates_every_actual_flag_before_io', async () => {
-  for (const name of routes) {
-    const route = resolveHeptaPaperCommand('operator', name);
-    assert.equal(route.forwardingPolicy, 'registry'); assert.equal(route.forwardedArgumentSchema.positional, false);
-    const { booleanFlags, valueFlags } = route.forwardedArgumentSchema;
-    const cases = [['unexpected'], ['--'], ['--=x'], ['--unknown'], ['--action=run'], ['-'], ['-h']];
-    for (const flag of booleanFlags) cases.push([`--${flag}=true`], [`--${flag}=`], [`--${flag}`, `--${flag}`]);
-    for (const flag of valueFlags) cases.push([`--${flag}`], [`--${flag}=`], [`--${flag}`, ''],
-      [`--${flag}`, '--help'], [`--${flag}=one`, `--${flag}=two`], [`--${flag}=one`, `--${flag}`]);
-    for (const forwarded of cases) {
-      const before = snapshot(root), args = ['operator', name, '--', ...forwarded];
-      const node = await run('node', args), native = await run('native', args);
-      assert.equal(node.status, 2, node.stderr); assert.equal(native.status, 2, native.stderr);
-      assert.equal(node.stdout, ''); assert.equal(native.stdout, '');
-      assert.equal(JSON.parse(native.stderr).error, JSON.parse(node.stderr).error);
-      const unmarked = await run('native', args, {}, unknown);
-      assert.equal(unmarked.status, 2); assert.equal(unmarked.stdout, '');
-      assert.equal(JSON.parse(unmarked.stderr).error, JSON.parse(node.stderr).error,
-        'the shared normal grammar must refuse before an unknown copied layout');
-      assert.deepEqual(snapshot(root), before);
-    }
-    for (const args of [['operator', name, '--help'], ['operator', name, '--', '--help']]) {
-      const node = await run('node', args), native = await run('native', args);
-      assert.equal(native.status, node.status, `${native.stderr} / ${node.stderr}`);
-      if (node.stdout) assert.deepEqual(JSON.parse(native.stdout), JSON.parse(node.stdout));
-      else assert.equal(JSON.parse(native.stderr).error, JSON.parse(node.stderr).error);
-    }
-    for (const flag of valueFlags) for (const input of [[`--${flag}=missing`], [`--${flag}`, 'missing']]) {
-      await pair(name, ['--help', ...input]);
-    }
-  }
-});
-
-test('normal_journal_full_values_venues_gates_and_kind_refusals_match_node', async () => {
-  const report = await pair(routes[0]); await pair(routes[0], ['--summary']);
-  for (const kind of ['journal', 'conference']) await pair(routes[0], [`--kind=${kind}`]);
-  for (const entry of report.entries) await pair(routes[0], ['--venue', entry.venueId]);
-  for (const flag of resolveHeptaPaperCommand('operator', routes[0]).forwardedArgumentSchema.booleanFlags.filter(flag => flag.startsWith('require-'))) {
-    await pair(routes[0], [`--${flag}`]); await pair(routes[0], ['--venue=tmlr', `--${flag}`]);
-  }
-  for (const forwarded of [['--kind=invalid'], ['--venue=missing'], ['--venue=tmlr', '--kind=conference']]) await pair(routes[0], forwarded);
-});
-
-test('normal_health_modes_defaults_relative_runtime_and_unknown_copy_match_node', async () => {
-  const modes = [[], ...resolveHeptaPaperCommand('operator', routes[1]).forwardedArgumentSchema.booleanFlags
-    .filter(flag => flag.startsWith('require-')).map(flag => [`--${flag}`]),
-    ['--require-fully-autonomous', '--require-strict-machine-intake-reconciliation']];
-  for (const mode of modes) {
-    await pair(routes[1], mode); await pair(routes[1], [...mode, '--runtime-root=relative-runtime']);
-    await pair(routes[1], mode, { HEPTA_PAPER_RUNTIME_ROOT: './relative-runtime' });
-  }
-  for (const name of routes) {
-    const selected = await run('native', ['operator', name], {}, unknown);
-    assert.equal(selected.status, 1); assert.equal(selected.stdout, ''); assert.match(selected.stderr, /native_workspace_root_required/u);
-    const explicit = await run('native', ['operator', name], { HEPTA_PAPER_WORKSPACE_ROOT: root }, unknown);
-    const deployed = await run('native', ['operator', name]); assert.equal(explicit.status, deployed.status);
-    assert.deepEqual(canonical(JSON.parse(explicit.stdout), explicit.beganAt, explicit.endedAt), canonical(JSON.parse(deployed.stdout), deployed.beganAt, deployed.endedAt));
-  }
-});
-
-test('normal_journal_actual_synthetic_signed_inputs_are_readonly_and_relative_to_worker', async () => {
-  const directory = path.join(root, 'qualification'); fs.mkdirSync(directory, { mode: 0o700 });
-  for (const [index, input] of qualificationFixtures(Date.now()).entries()) {
-    const registry = `qualification/registry-${index}.json`, trust = `qualification/trust-${index}.json`;
-    fs.writeFileSync(path.join(root, registry), input.registryText, { flag: 'wx', mode: 0o600 });
-    fs.writeFileSync(path.join(root, trust), input.trustText, { flag: 'wx', mode: 0o600 });
-    const flags = ['--venue=tmlr', '--qualification-registry', registry,
-      '--qualification-trust-store', trust, `--qualification-registry-hash=${input.expectedRegistryHash}`,
-      `--qualification-trust-store-hash=${input.expectedTrustStoreHash}`];
-    await pair(routes[0], flags);
-    await pair(routes[0], ['--venue=tmlr'], {
-      HEPTA_PORTAL_TARGET_QUALIFICATION_REGISTRY: registry, HEPTA_PORTAL_TARGET_QUALIFICATION_REGISTRY_HASH: input.expectedRegistryHash,
-      HEPTA_PORTAL_TARGET_QUALIFICATION_TRUST_STORE: trust, HEPTA_PORTAL_TARGET_QUALIFICATION_TRUST_STORE_HASH: input.expectedTrustStoreHash,
-    });
-  }
-});
-
-test('normal_readonly_term_kill_unknown_execution_and_same_namespace_fresh_retry', async () => {
-  for (const name of routes) for (const engine of ['node', 'native']) for (const signal of ['SIGTERM', 'SIGKILL']) {
-    const before = snapshot(root), result = await run(engine, ['operator', name], {}, binary, signal);
-    assert.equal(result.signal, signal); assert.equal(result.status, null); assert.deepEqual(snapshot(root), before);
-    await pair(name);
-  }
-});
+}
+prepare();
+const oracleScratch = path.join(fixture, 'oracle-scratch'); fs.mkdirSync(oracleScratch, { mode: 0o700 });
+async function runOracle(name, input) {
+  assert.ok(/^[a-z0-9-]+\.mjs$/u.test(name));
+  const script = path.join(source, 'rust/oracle', name), before = pin(script);
+  const observed = await run('oracle', [script], { TMPDIR: oracleScratch }, binary, null, JSON.stringify(input));
+  assert.deepEqual(pin(script), before); return observed;
+}
+return { root, caller, binary, unknown, run, runOracle, snapshot, pin, close,
+  preparation: { copiedEntries, copiedBytes, maximumBytes: 192 * 1024 * 1024, maximumEntries: 10000 } };
+}

@@ -1,6 +1,9 @@
 //! Bounded JSON command interface for the durable Rust composition.
 #[path = "shared/ordinary_readonly.rs"]
 mod ordinary_readonly;
+use hepta_paper_service::personal_self_hosted_gpu::cli::{
+    PERSONAL_GPU_USAGE, parse_personal_gpu_arguments, safe_personal_gpu_token,
+};
 use hepta_paper_service::{
     LegacyDeletionDrillAttestationRequestV1, LegacyNodeFreezeSubjectV1, ObjectStoreV1,
     ServiceRunV1,
@@ -411,27 +414,6 @@ fn current_unix_millis() -> Result<i64, Box<dyn std::error::Error>> {
     Ok(i64::try_from(millis).map_err(|_| "current clock exceeds signed millisecond range")?)
 }
 
-fn safe_personal_gpu_token(value: &str) -> String {
-    let token = value
-        .encode_utf16()
-        .take(180)
-        .map(|unit| {
-            if unit <= 127 {
-                let character = char::from(unit as u8);
-                if character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':' | '-') {
-                    return character;
-                }
-            }
-            '_'
-        })
-        .collect::<String>();
-    if token.is_empty() {
-        "error".to_owned()
-    } else {
-        token
-    }
-}
-
 fn workspace_commit_for_personal_gpu(root: &Path) -> Option<String> {
     hepta_paper_service::operational_status::current_operational_code_provenance_v1(root)
         .ok()?
@@ -475,63 +457,6 @@ fn personal_gpu_check_fallback(
         workspace_commit_for_personal_gpu(workspace_root).as_deref(),
         &failure_token,
     )
-}
-
-const PERSONAL_GPU_USAGE: &str = "personal-gpu-operational-gate [--write] [--check] [--root PATH] [--runtime-root PATH]\n  Runs the local single-host GPU/PDE/DL gate. Green is personal-only and non-promotable.";
-
-fn parse_personal_gpu_arguments(args: &[String]) -> Result<BTreeMap<String, String>, String> {
-    let mut parsed = BTreeMap::new();
-    let mut index = 0;
-    while index < args.len() {
-        let token = args[index].as_str();
-        if token == "--" {
-            return Err("unexpected_cli_argument_separator".into());
-        }
-        let raw = token
-            .strip_prefix("--")
-            .ok_or_else(|| format!("unexpected_cli_positional:{token}"))?;
-        let (key, inline) = raw
-            .split_once('=')
-            .map_or((raw, None), |(key, value)| (key, Some(value)));
-        if key.is_empty() {
-            return Err("empty_cli_option".into());
-        }
-        let boolean = matches!(key, "check" | "help" | "write");
-        let value = if boolean {
-            if inline.is_some() {
-                return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
-            }
-            "true".to_owned()
-        } else {
-            if !matches!(
-                key,
-                "root" | "runtime-root" | "receipt" | "output-root" | "run-id" | "deadline-ms"
-            ) {
-                return Err(format!("unknown_cli_option:--{key}"));
-            }
-            let value = match inline {
-                Some(value) => value,
-                None => {
-                    index += 1;
-                    let value = args
-                        .get(index)
-                        .filter(|value| !value.starts_with("--"))
-                        .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?;
-                    value.as_str()
-                }
-            };
-            if value.is_empty() {
-                return Err(format!("empty_cli_option_value:--{key}"));
-            }
-            value.to_owned()
-        };
-        // The Node parser validates the value before reporting duplication.
-        if parsed.insert(key.to_owned(), value).is_some() {
-            return Err(format!("duplicate_cli_option:--{key}"));
-        }
-        index += 1;
-    }
-    Ok(parsed)
 }
 
 fn parse_dispatcher_challenge_arguments(
@@ -657,7 +582,9 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Ok(Some(arguments)) => arguments,
         Ok(None) => args,
         Err(error) => {
-            eprintln!("{}", serde_json::json!({"error": error}));
+            let report =
+                hepta_paper_service::canonical_cli::canonical_cli_error_report_v1(&args, &error)?;
+            eprintln!("{}", serde_json::to_string_pretty(&report)?);
             std::process::exit(2);
         }
     };
@@ -740,6 +667,145 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             io::stderr().lock().write_all(&output.stderr)?;
             if output.exit_code != 0 {
                 std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryExternalAuthorityIntake) => {
+            let mut environment = std::collections::BTreeMap::new();
+            for key in hepta_paper_service::external_authority_intake::EXTERNAL_AUTHORITY_INTAKE_ENVIRONMENT_KEYS.into_iter()
+                .chain(hepta_paper_service::external_authority_intake::PASSIVE_RELEASE_ATTESTOR_ENVIRONMENT_KEYS) {
+                if let Some(value) = env::var_os(key) {
+                    environment.insert(key.to_owned(), value.into_string().map_err(|_| "external_authority_intake_environment_invalid")?);
+                }
+            }
+            let workspace =
+                hepta_paper_service::native_workspace::resolve_native_command_workspace_root_v1(
+                    &env::current_dir()?,
+                    &std::collections::BTreeMap::new(),
+                    None,
+                )?;
+            let cancelled = command_cancellation_flag()?;
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(120))
+                .ok_or("external_authority_intake_deadline_invalid")?;
+            let output =
+                hepta_paper_service::external_authority_intake::external_authority_intake_cli_v1(
+                    &args[1..],
+                    &environment,
+                    &workspace,
+                    &cancelled,
+                    deadline,
+                )?;
+            println!("{}", serde_json::to_string_pretty(&output.value)?);
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryAutonomousEmpiricalPluginTemplate) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                Ok(hepta_paper_service::autonomous_empirical_plugin_release::run_ordinary_autonomous_empirical_plugin_template_v1(&args[1..],&cancelled,deadline)?)
+            })?;
+            use std::io::Write;
+            std::io::stdout().write_all(&output.stdout)?;
+            std::io::stderr().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryAdvancedNumericalPluginStatus) => {
+            let exit_code = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                let output = hepta_paper_service::ordinary_advanced_numerical_plugin::run_ordinary_advanced_numerical_plugin_status_v1(&args[1..], &cancelled, deadline)?;
+                use std::io::Write;
+                std::io::stdout()
+                    .write_all(&output.stdout)
+                    .map_err(|e| e.to_string())?;
+                std::io::stderr()
+                    .write_all(&output.stderr)
+                    .map_err(|e| e.to_string())?;
+                Ok(output.exit_code)
+            })?;
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryRuntimeImageReproducibility) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                let mut environment = std::collections::BTreeMap::new();
+                for (key, value) in env::vars_os() {
+                    let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
+                        return Err("runtime_reproducibility_environment_encoding_invalid".into());
+                    };
+                    if environment.len() >= 256 || key.len() > 128 || value.len() > 65536 {
+                        return Err("runtime_reproducibility_environment_invalid".into());
+                    }
+                    environment.insert(key.to_owned(), value.to_owned());
+                }
+                Ok(hepta_paper_service::runtime_image_reproducibility::runtime_image_reproducibility_cli_with_control_v1(
+                    &args[1..], &environment, &cancelled, deadline,
+                )?)
+            })?;
+            if let Some(text) = output.text {
+                println!("{text}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&output.value)?);
+            }
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryReleaseIntegrityKey) => {
+            let mut environment = std::collections::BTreeMap::new();
+            for key in [
+                "HEPTA_PAPER_WORKSPACE_ROOT",
+                "HEPTA_PAPER_RUNTIME_ROOT",
+                "HEPTA_PAPER_ASSET_ROOT",
+                "PAPER_FACTORY_LEGACY_ROOT",
+                "HEPTA_PAPER_RUNTIME_ISOLATED",
+            ] {
+                match env::var(key) {
+                    Ok(value) => {
+                        environment.insert(key.to_owned(), value);
+                    }
+                    Err(env::VarError::NotPresent) => (),
+                    Err(env::VarError::NotUnicode(_)) => {
+                        eprintln!("release_integrity_key_environment_encoding_invalid:{key}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            let cancelled = command_cancellation_flag()?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            match hepta_paper_service::release_integrity_key::release_integrity_key_cli_with_cancellation_v1(
+                &args[1..], &environment, &cancelled, deadline,
+            ) {
+                Ok(output) => {
+                    if let Some(text) = output.text {
+                        println!("{text}");
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&output.value)?);
+                    }
+                    if output.exit_code != 0 {
+                        std::process::exit(output.exit_code);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(CommandV1::OrdinaryReleaseTrustGate) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(hepta_paper_service::release_trust_normal::run_ordinary_release_trust_gate_with_control_v1(
+                    &args[1..], &cancelled, deadline,
+                )?)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code)
             }
         }
         Some(CommandV1::OrdinaryOwnerAcceptanceStatus) if args.len() == 1 => {
@@ -1749,6 +1815,21 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        Some(CommandV1::OrdinaryPersonalGpuOperationalGate) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(
+                    hepta_paper_service::normal_personal_gpu::inspect_normal_personal_gpu_v1(
+                        &args[1..],
+                        cancelled,
+                    )?,
+                )
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
         Some(CommandV1::PersonalGpuOperationalGate) => {
             let options = match parse_personal_gpu_arguments(&args[1..]) {
                 Ok(options) => options,
@@ -2143,6 +2224,101 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string(&result.report)?);
             if result.exit_code != 0 {
                 std::process::exit(result.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryStateBackupStatus) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(hepta_paper_service::ordinary_state_backup_status::run_ordinary_state_backup_status_with_control_v1(&args[1..], &cancelled, deadline)?)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryOneShotStatus) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_one_shot::inspect_ordinary_one_shot_status_v1(
+                    &args[1..],
+                    cancelled,
+                )
+                .map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryRuntimeRSourceCas) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_runtime_r_source_cas::inspect_ordinary_runtime_r_source_cas_v1(&args[1..], cancelled).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryCampaignQuery) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_campaign_query::inspect_ordinary_campaign_query_v1(
+                    &args[1..],
+                    cancelled,
+                )
+                .map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryReconcile) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_reconcile::inspect_ordinary_reconcile_v1(
+                    &args[1..],
+                    cancelled,
+                )
+                .map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryPortalTargetQualification) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_portal_target::inspect_ordinary_portal_target_qualification_v1(&args[1..], cancelled).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryNestedRuntimeQualification) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_nested_runtime::inspect_ordinary_nested_runtime_qualification_v1(&args[1..], cancelled).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryPersonalSelfHostedReadiness) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::personal_self_hosted_cli::inspect_ordinary_personal_readiness_v1(
+                    &args[1..], cancelled,
+                ).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
             }
         }
         Some(CommandV1::PersonalSelfHostedReadiness) => {

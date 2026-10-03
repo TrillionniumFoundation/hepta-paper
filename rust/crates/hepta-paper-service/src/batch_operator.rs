@@ -193,9 +193,6 @@ fn preview(
     if options.execute {
         return Err("native_batch_operator_execute_requires_bound_mutation_coordinator_v1".into());
     }
-    if options.write_report {
-        return Err("native_batch_operator_local_report_persistence_v1_not_implemented".into());
-    }
     if options.dataset_root.is_some()
         || options.benchmark_id.is_some()
         || options.apply_manuscript
@@ -279,10 +276,22 @@ fn preview(
     check(cancelled, deadline)?;
     let result = report::build(options, &scan, &results, target, provenance, &now()?)?;
     observation.verify_unchanged()?;
-    report::bounded_pretty_json(&result)?;
+    let report_wire = report::bounded_pretty_json(&result)?;
+    // Release the immutable business input observation only after its final
+    // proof. Local report publication legitimately creates runtime entries; it
+    // has no business-store, release, submission or provider authority handle.
     drop(observation);
+    if options.write_report {
+        check(cancelled, deadline)?;
+        crate::batch_local_reports::persist_native_local_batch_report_v1(
+            &runtime,
+            &report_wire,
+            cancelled,
+            deadline,
+        )?;
+    }
     Ok(result)
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

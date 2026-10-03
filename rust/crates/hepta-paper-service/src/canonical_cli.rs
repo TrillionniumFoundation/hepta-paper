@@ -23,6 +23,45 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
         // explicit execute flag in its fixed argv.
         return Ok(Some(vec!["release-evidence".into(), "--execute".into()]));
     }
+    if (group, name) == ("operator", "campaign") {
+        if args.len() > 2 && args[2] != "--" {
+            return Err("command_arguments_require_separator".into());
+        }
+        // The registry delegates its strict-child grammar and errors to the child.
+        return Ok(Some(
+            std::iter::once("ordinary-campaign-query".to_owned())
+                .chain(args.get(3..).unwrap_or_default().iter().cloned())
+                .collect(),
+        ));
+    }
+    if (group, name) == ("operator", "autonomous-empirical-plugin-release") {
+        if args.len() > 2 && args[2] != "--" {
+            return Err("command_arguments_require_separator".into());
+        }
+        let forwarded = args.get(3..).unwrap_or_default();
+        crate::autonomous_empirical_plugin_release::validate_ordinary_template_grammar_v1(
+            forwarded,
+        )?;
+        return Ok(Some(
+            std::iter::once("ordinary-autonomous-empirical-plugin-template".to_owned())
+                .chain(forwarded.iter().cloned())
+                .collect(),
+        ));
+    }
+    if (group, name) == ("operator", "advanced-numerical-plugin") {
+        if args.len() > 2 && args[2] != "--" {
+            return Err("command_arguments_require_separator".into());
+        }
+        let forwarded = args.get(3..).unwrap_or_default();
+        crate::ordinary_advanced_numerical_plugin::validate_ordinary_numerical_grammar_v1(
+            forwarded,
+        )?;
+        return Ok(Some(
+            std::iter::once("ordinary-advanced-numerical-plugin-status".to_owned())
+                .chain(forwarded.iter().cloned())
+                .collect(),
+        ));
+    }
     if (group, name) == ("operator", "batch") {
         if args.len() > 2 && args[2] != "--" {
             return Err("command_arguments_require_separator".into());
@@ -55,6 +94,135 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
         Option<usize>,
         bool,
     ) = match (group, name) {
+        ("operator", "portal-target-qualification") => (
+            "ordinary-portal-target-qualification",
+            &["execute", "help", "require-ready"],
+            &[
+                "action",
+                "candidate",
+                "candidate-hash",
+                "plan-hash",
+                "registry",
+                "registry-hash",
+                "trust-store",
+                "trust-store-hash",
+            ],
+            None,
+            false,
+        ),
+        ("operator", "nested-runtime-platform-qualification") => (
+            "ordinary-nested-runtime-qualification",
+            &["help"],
+            &[
+                "config",
+                "config-content-hash",
+                "qualification-content-hash",
+                "conformance-content-hash",
+                "pod-uid",
+                "plan-hash",
+                "profile-id",
+                "runtime-class-name",
+                "parent-pod-cpu-millis",
+                "parent-pod-memory-bytes",
+                "parent-pod-pids",
+                "qualification-key-id",
+                "qualification-subject-id",
+                "qualification-public-key-spki-hash",
+                "conformance-key-id",
+                "conformance-subject-id",
+                "conformance-public-key-spki-hash",
+            ],
+            None,
+            false,
+        ),
+        ("operator", "personal-gpu-operational-gate") => (
+            "ordinary-personal-gpu-operational-gate",
+            &["check", "help", "write"],
+            &[
+                "root",
+                "runtime-root",
+                "output-root",
+                "receipt",
+                "run-id",
+                "deadline-ms",
+            ],
+            None,
+            false,
+        ),
+        ("operator", "personal-self-hosted-readiness") => (
+            "ordinary-personal-self-hosted-readiness",
+            &["gpu-enabled", "help", "json", "require-ready"],
+            &["gpu-receipt", "now", "root", "runtime-root"],
+            None,
+            false,
+        ),
+        ("operator", "runtime-image-reproducibility") => (
+            "ordinary-runtime-image-reproducibility",
+            &["help"],
+            &["action", "config", "receipt", "runtime-root", "root"],
+            None,
+            false,
+        ),
+        ("operator", "external-authority-intake") => (
+            "ordinary-external-authority-intake",
+            &["help", "require-ready"],
+            &[
+                "author-config",
+                "author-config-hash",
+                "release-attestor-config",
+                "release-attestor-config-hash",
+            ],
+            None,
+            false,
+        ),
+        ("maintenance", "release-integrity-key") => (
+            "ordinary-release-integrity-key",
+            &["execute", "help"],
+            &["action", "runtime-root"],
+            None,
+            false,
+        ),
+        ("operator", "autonomous-state-backup") => (
+            "ordinary-state-backup-status",
+            &["help"],
+            &[
+                "action",
+                "runtime-root",
+                "authority-config",
+                "online-authority-process-config",
+                "bundle",
+            ],
+            None,
+            false,
+        ),
+        ("operator", "autonomous-research-one-shot-campaign-attempt") => (
+            "ordinary-one-shot-status",
+            &["help"],
+            &[
+                "action",
+                "root",
+                "runtime-root",
+                "control-root",
+                "dataset-mount-file",
+                "attempt-id",
+            ],
+            None,
+            false,
+        ),
+        ("operator", "runtime-r-source-cas") => (
+            "ordinary-runtime-r-source-cas",
+            &["help"],
+            &["action", "seed", "concurrency", "root"],
+            None,
+            false,
+        ),
+        ("operator", "reconcile") => (
+            "ordinary-reconcile",
+            &["legacy-terminal-active-residue"],
+            &["campaign-id"],
+            None,
+            false,
+        ),
         ("operator", "workspace") => ("workspace-status", &["require-decoupled"], &[], None, false),
         ("operator", "store") => (
             "store-status",
@@ -76,6 +244,7 @@ pub fn resolve_canonical_cli_arguments_v1(args: &[String]) -> Result<Option<Vec<
         ("verify", "store") => ("ordinary-store-integrity", &[], &[], Some(1), false),
         ("verify", "owner") => ("ordinary-owner-acceptance-status", &[], &[], None, true),
         ("verify", "operational") => ("ordinary-operational-proof-status", &[], &[], None, true),
+        ("verify", "trust") => ("ordinary-release-trust-gate", &[], &[], None, true),
         ("retirement", "reference") => ("ordinary-retirement-reference", &[], &[], None, true),
         ("operator", "journal-connector-coverage") => (
             "ordinary-journal-connector-coverage",
@@ -303,4 +472,20 @@ fn canonical_research_arguments_v1(args: &[String]) -> Result<Vec<String>, Strin
         index += 1;
     }
     Ok(normalized)
+}
+
+/// Parameter failures use the incumbent ordinary wrapper's complete generated
+/// help report. This path performs no filesystem read before refusing arguments.
+pub fn canonical_cli_error_report_v1(
+    args: &[String],
+    error: &str,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let mut report: serde_json::Value =
+        serde_json::from_str(include_str!("data/command-surface-usage.v1.json"))?;
+    report["error"] = serde_json::json!(error);
+    report["requested"] = serde_json::json!({
+        "group": args.first(),
+        "name": args.get(1).filter(|name| !name.is_empty()),
+    });
+    Ok(report)
 }

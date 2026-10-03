@@ -11,9 +11,9 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 static FIXTURE_LIFECYCLE: Mutex<()> = Mutex::new(());
-struct Fixture {
-    base: PathBuf,
-    code: PathBuf,
+pub(crate) struct Fixture {
+    pub(crate) base: PathBuf,
+    pub(crate) code: PathBuf,
     _lifecycle: MutexGuard<'static, ()>,
 }
 fn run(
@@ -117,8 +117,51 @@ fn copy(source: &Path, target: &Path, entries: &mut usize, bytes: &mut u64) {
         );
     }
 }
+fn copy_runtime_registry_metadata(
+    original: &Path,
+    target: &Path,
+    entries: &mut usize,
+    bytes: &mut u64,
+) {
+    let rows = run(
+        "/usr/bin/git".into(),
+        ["ls-files", "--stage", "-z", "--", "runtime-images"]
+            .into_iter()
+            .map(OsString::from)
+            .collect(),
+        original,
+        None,
+    );
+    for row in rows.split(|byte| *byte == 0).filter(|row| !row.is_empty()) {
+        let row = std::str::from_utf8(row).unwrap();
+        let (header, name) = row.split_once('\t').unwrap();
+        let header = header.split(' ').collect::<Vec<_>>();
+        assert_eq!(header.len(), 3);
+        assert_eq!(header[2], "0");
+        let relative = Path::new(name);
+        assert!(relative.starts_with("runtime-images"));
+        assert!(
+            relative
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+        );
+        if header[0] == "160000" {
+            assert_eq!(name, "runtime-images/r-scientific/source-cas");
+            // Deliberately uninitialized scientific input, with no scientific
+            // execution/qualification claim. Do not recurse into materialized
+            // dataset bytes when comparing local report component functions.
+            continue;
+        }
+        assert!(matches!(header[0], "100644" | "100755"));
+        let selected = original.join(relative);
+        let destination = target.join(relative);
+        assert!(selected.symlink_metadata().unwrap().is_file());
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        copy(&selected, &destination, entries, bytes);
+    }
+}
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let lifecycle = FIXTURE_LIFECYCLE.lock().unwrap_or_else(|e| e.into_inner());
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -195,6 +238,66 @@ impl Fixture {
             code,
             _lifecycle: lifecycle,
         }
+    }
+    pub(crate) fn new_with_actual_node_packages() -> Self {
+        let fixture = Self::new();
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        fs::create_dir(fixture.code.join("node_modules")).unwrap();
+        let (mut entries, mut bytes) = (0, 0);
+        for package in [
+            "acorn",
+            "acorn-jsx",
+            "eslint-scope",
+            "eslint-visitor-keys",
+            "espree",
+            "esrecurse",
+            "estraverse",
+        ] {
+            copy(
+                &source.join("node_modules").join(package),
+                &fixture.code.join("node_modules").join(package),
+                &mut entries,
+                &mut bytes,
+            );
+        }
+        // These component oracles use the ordinary registry's committed metadata.
+        // Scientific source datasets are separately observed by the normal-entry
+        // owners; this fixture cannot execute or qualify a scientific runtime.
+        copy_runtime_registry_metadata(&source, &fixture.code, &mut entries, &mut bytes);
+        for name in ["migration", "docs", "package-lock.json"] {
+            copy(
+                &source.join(name),
+                &fixture.code.join(name),
+                &mut entries,
+                &mut bytes,
+            );
+        }
+        for args in [
+            vec!["add", "--all"],
+            vec![
+                "-c",
+                "user.name=Native test fixture",
+                "-c",
+                "user.email=fixture@localhost",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "Actual fixed Node package graph",
+            ],
+        ] {
+            run(
+                "/usr/bin/git".into(),
+                args.into_iter().map(OsString::from).collect(),
+                &fixture.code,
+                None,
+            );
+        }
+        fixture
     }
     fn request(&self) -> NativeInventoryRequestV1 {
         NativeInventoryRequestV1 {

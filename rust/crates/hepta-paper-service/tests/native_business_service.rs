@@ -2,6 +2,8 @@
 mod cas_submission;
 #[path = "native_business_service/dispatch_recovery.rs"]
 mod dispatch_recovery;
+#[path = "native_business_service/research_assessment.rs"]
+mod research_assessment;
 #[path = "native_business_service/research_data.rs"]
 mod research_data;
 #[path = "native_business_service/research_workflow.rs"]

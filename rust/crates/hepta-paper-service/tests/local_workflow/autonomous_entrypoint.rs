@@ -179,6 +179,7 @@ fn non_authorizing_research_profile() -> ResearchWorkflowProfileV1 {
         qualification_trust_store_generation: 7,
         qualification_expires_at_unix_ms: i64::MAX as u64 - 1,
         qualified_codex_runtime_identity_hash: format!("sha256:{:064x}", 42).parse().unwrap(),
+        qualified_codex_role_runtime_identity_hashes_v2: Default::default(),
         automatic_activation: false,
         production_activation: false,
         release_authority: false,

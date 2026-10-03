@@ -1,13 +1,14 @@
 //! Differential corpus for the Rust repository-asset verifier.
 
+use hepta_codex_runtime::{
+    BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1, ProcessTerminationReason,
+    run_bounded_process_capturing_stdout_with_cancellation,
+};
 use hepta_paper_service::repository_assets::{
     build_repository_asset_externalization_handoff_v1, inspect_repository_asset_externalization_v1,
 };
 use serde_json::Value;
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::atomic::AtomicBool};
 
 fn oracle_requests(root: &str, manifests: Vec<(Value, bool)>) -> Value {
     let requests = Value::Array(manifests.into_iter().map(|(manifest, handoff)| {
@@ -17,24 +18,52 @@ fn oracle_requests(root: &str, manifests: Vec<(Value, bool)>) -> Value {
         .join("../../..")
         .join("rust/oracle/repository-assets-v1.mjs");
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let mut child = Command::new("node")
-        .arg(oracle)
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("Node 22.23.1 oracle runtime is required");
-    child
-        .stdin
-        .take()
-        .expect("oracle stdin")
-        .write_all(requests.to_string().as_bytes())
-        .expect("oracle request");
-    let output = child.wait_with_output().expect("oracle process");
+    let selected_node =
+        PathBuf::from(std::env::var_os("HEPTA_TEST_NODE").unwrap_or_else(|| "node".into()));
+    let node = if selected_node.components().count() == 1 {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|p| p.join(&selected_node))
+            .find(|p| p.is_file())
+            .expect("qualified Node oracle")
+    } else {
+        selected_node
+    }
+    .canonicalize()
+    .unwrap();
+    let request = BoundedProcessRequestV1 {
+        executable: node,
+        arguments: vec![oracle.into_os_string()],
+        working_directory: root.canonicalize().unwrap(),
+        environment: EnvironmentPolicyV1::new(
+            "repository-assets-oracle-v1",
+            ["PATH", "TZ"],
+            ["PATH"],
+        )
+        .unwrap()
+        .build(std::env::vars_os(), &BTreeMap::new())
+        .unwrap(),
+        stdin: Some(serde_json::to_vec(&requests).unwrap()),
+    };
+    let output = run_bounded_process_capturing_stdout_with_cancellation(
+        &request,
+        ProcessLimitsV1 {
+            timeout_ms: 60_000,
+            maximum_stdin_bytes: 4 * 1024 * 1024,
+            maximum_stdout_bytes: 4 * 1024 * 1024,
+            maximum_stderr_bytes: 1024 * 1024,
+            maximum_tail_bytes: 64 * 1024,
+            ..ProcessLimitsV1::default()
+        },
+        &AtomicBool::new(false),
+    )
+    .unwrap();
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        output.process.termination_reason == ProcessTerminationReason::Exited
+            && output.process.exit_code == Some(0)
+            && output.process.signal.is_none()
+            && output.process.process_group_cleanup_verified,
+        "{:?}",
+        output.process
     );
     let response: Value = serde_json::from_slice(&output.stdout).expect("oracle JSON");
     assert_eq!(response["profile"]["node"], "v22.23.1");
@@ -103,3 +132,6 @@ fn repository_asset_inspection_and_handoff_match_node_oracle() {
         );
     }
 }
+
+#[path = "repository_assets_parity/domains.rs"]
+mod domains;

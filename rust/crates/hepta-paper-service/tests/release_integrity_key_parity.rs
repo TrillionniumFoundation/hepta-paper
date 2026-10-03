@@ -103,6 +103,26 @@ fn compare_status(fixture: &Fixture) {
     safe_report(&native);
     assert_eq!(native, expected[0]["value"]);
 }
+// Only freshly copied, owned fixture executables can transiently retain a
+// kernel text-busy state. Other spawn errors fail immediately; the original
+// whole-owner deadline includes this bounded retry and every assertion below.
+fn copied_fixture_output(command: &mut Command) -> std::process::Output {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        match command.output() {
+            Ok(output) => return output,
+            Err(error)
+                if error.raw_os_error() == Some(26) && std::time::Instant::now() < deadline =>
+            {
+                eprintln!(
+                    "owned copied executable transient ETXTBSY; retrying within original owner"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!("owned copied executable spawn failed: {error}"),
+        }
+    }
+}
 fn leftovers(fixture: &Fixture) -> Vec<String> {
     let mut values = fs::read_dir(&fixture.root)
         .unwrap()
@@ -1095,16 +1115,16 @@ fn copied_deployed_key_frontend_uses_exact_root_bin_marker_without_cwd_or_source
     let frontend = bin.join("hepta-release-integrity-key");
     fs::copy(env!("CARGO_BIN_EXE_hepta-release-integrity-key"), &frontend).unwrap();
     let invoke = |selected: &Path| {
-        Command::new(selected)
+        let mut command = Command::new(selected);
+        command
             .args(["--action=status"])
             .current_dir(&fixture.root)
             .env_clear()
             .env("PATH", "/nonexistent")
             .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
             .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
-            .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
-            .output()
-            .unwrap()
+            .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root);
+        copied_fixture_output(&mut command)
     };
     let accepted = invoke(&frontend);
     assert_eq!(accepted.status.code(), Some(2));

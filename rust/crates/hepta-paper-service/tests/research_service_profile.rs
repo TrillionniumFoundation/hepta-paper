@@ -220,6 +220,102 @@ fn configuration(
 }
 
 #[test]
+fn per_role_runtime_profile_v2_is_versioned_and_cannot_reinterpret_legacy_diagnostics() {
+    let mut template = ResearchWorkflowProfileTemplateV1 {
+        version: 2,
+        stage: "canary".into(),
+        repository: "TrillionniumFoundation/hepta-paper".into(),
+        commit: "a".repeat(40),
+        tree: "b".repeat(40),
+        qualification_binding_hash: digest(1).to_string(),
+        qualification_trust_store_generation: 7,
+        qualification_expires_at_unix_ms: 90_000,
+        qualified_codex_runtime_identity_hash: digest(2).to_string(),
+        qualified_codex_role_runtime_identity_hashes_v2: BTreeMap::from([
+            ("author".into(), digest(3).to_string()),
+            ("reviewer".into(), digest(4).to_string()),
+        ]),
+        automatic_activation: false,
+        production_activation: false,
+        release_authority: false,
+        submission_authority: false,
+    };
+    let profile = ResearchWorkflowProfileV1::from_template(&template).unwrap();
+    assert_eq!(profile.version, 2);
+    assert_eq!(
+        profile.qualified_runtime_for_role_v2("author"),
+        Some(&digest(3))
+    );
+    assert_eq!(
+        profile.qualified_runtime_for_role_v2("reviewer"),
+        Some(&digest(4))
+    );
+    assert!(profile.qualified_runtime_for_role_v2("repairer").is_none());
+    assert_eq!(
+        serde_json::to_value(&profile).unwrap(),
+        serde_json::to_value(&template).unwrap()
+    );
+    let restored: ResearchWorkflowProfileV1 =
+        serde_json::from_slice(&serde_json::to_vec(&profile).unwrap()).unwrap();
+    assert_eq!(profile, restored);
+    assert_eq!(
+        profile.qualification_expectation().workflow_profile_version,
+        2
+    );
+    assert_eq!(
+        profile
+            .qualification_expectation()
+            .qualified_codex_role_runtime_identity_hashes_v2,
+        template.qualified_codex_role_runtime_identity_hashes_v2
+    );
+    for case in 0..6 {
+        let mut changed = template.clone();
+        match case {
+            0 => changed.version = 3,
+            1 => changed.version = 1,
+            2 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .remove("reviewer");
+            }
+            3 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .insert("reviewer".into(), digest(3).to_string());
+            }
+            4 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .insert("other".into(), digest(5).to_string());
+            }
+            5 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .clear();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            ResearchWorkflowProfileV1::from_template(&changed).is_err(),
+            "case {case}"
+        );
+    }
+    template.version = 1;
+    template
+        .qualified_codex_role_runtime_identity_hashes_v2
+        .clear();
+    let legacy = ResearchWorkflowProfileV1::from_template(&template).unwrap();
+    assert!(legacy.is_well_formed());
+    assert!(legacy.qualified_runtime_for_role_v2("author").is_none());
+    assert!(legacy.qualified_runtime_for_role_v2("reviewer").is_none());
+    assert!(
+        !serde_json::to_string(&legacy)
+            .unwrap()
+            .contains("qualifiedCodexRoleRuntimeIdentityHashesV2")
+    );
+}
+
+#[test]
 fn canonical_receipt_profile_template_is_directly_reusable_and_non_authorizing() {
     let template = ResearchWorkflowProfileTemplateV1 {
         version: 1,
@@ -231,6 +327,7 @@ fn canonical_receipt_profile_template_is_directly_reusable_and_non_authorizing()
         qualification_trust_store_generation: 7,
         qualification_expires_at_unix_ms: 90_000,
         qualified_codex_runtime_identity_hash: digest(2).to_string(),
+        qualified_codex_role_runtime_identity_hashes_v2: BTreeMap::new(),
         automatic_activation: false,
         production_activation: false,
         release_authority: false,

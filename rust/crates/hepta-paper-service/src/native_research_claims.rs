@@ -35,7 +35,7 @@ fn or<'a>(v: &'a Value, names: &[&str]) -> &'a Value {
         .find(|v| truthy(v))
         .unwrap_or(&Value::Null)
 }
-fn raw_string(v: &Value) -> Result<String, String> {
+pub(crate) fn raw_string(v: &Value) -> Result<String, String> {
     fn custom(v: &Value) -> bool {
         match v {
             Value::Object(o) => o.contains_key("toString") || o.contains_key("valueOf"),
@@ -49,7 +49,7 @@ fn raw_string(v: &Value) -> Result<String, String> {
         Ok(crate::release_state::javascript_string(v))
     }
 }
-fn json_boundary(v: &Value) -> Value {
+pub(crate) fn json_boundary(v: &Value) -> Value {
     match v {
         Value::Number(n) => crate::release_state::javascript_json_number(n),
         Value::Array(a) => Value::Array(a.iter().map(json_boundary).collect()),
@@ -73,7 +73,7 @@ fn hash(kind: &str, v: &Value) -> Result<String, String> {
         .map(|h| h.as_str().to_owned())
         .map_err(|_| refused())
 }
-fn number(v: &Value) -> Result<f64, String> {
+pub(crate) fn number(v: &Value) -> Result<f64, String> {
     Ok(match v {
         Value::Null => 0.0,
         Value::Bool(b) => {
@@ -89,7 +89,7 @@ fn number(v: &Value) -> Result<f64, String> {
         Value::Object(_) => f64::NAN,
     })
 }
-fn number_value(n: f64) -> Value {
+pub(crate) fn number_value(n: f64) -> Value {
     serde_json::Number::from_f64(if n == 0.0 { 0.0 } else { n })
         .as_ref()
         .map(crate::release_state::javascript_json_number)
@@ -123,7 +123,7 @@ fn sha(v: &Value) -> Result<bool, String> {
             .is_some_and(|v| v.eq_ignore_ascii_case("sha256:"))
         && text.as_bytes()[7..].iter().all(u8::is_ascii_hexdigit))
 }
-fn manuscript_hash(id: &str, text: &str, locator: &Value) -> Result<String, String> {
+pub(crate) fn manuscript_hash(id: &str, text: &str, locator: &Value) -> Result<String, String> {
     let mut normalized = String::new();
     for ch in text.nfkc() {
         if normalized.len() + ch.len_utf8() > 64 * 1024 {
@@ -420,6 +420,155 @@ pub fn transition_native_research_claim_v1(
     next["transitionReceipt"] = receipt;
     check(c)?;
     Ok(next)
+}
+
+/// Describe the incumbent claim-contract readiness policy over bounded JSON.
+/// This calculation verifies no claim evidence and grants no execution authority.
+pub fn evaluate_native_claim_contract_readiness_v1(
+    registry: &Value,
+    cancelled: &AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<Value, String> {
+    use crate::native_business::local_submission_preflight::local_submission_projected_values_budget_v1 as reserve;
+    let check_current = || {
+        check(cancelled)?;
+        if std::time::Instant::now() >= deadline {
+            Err("native_claim_contract_readiness_deadline_exceeded".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    check_current()?;
+    local_submission_values_budget_v1([registry])?;
+    let claims = registry["claims"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut blockers = Vec::<Value>::new();
+    let mut results = Vec::<Value>::new();
+    let mut seen = BTreeSet::new();
+    for (condition, name) in [
+        (
+            registry["status"] != "claim_graph_valid",
+            "claim_registry_not_valid",
+        ),
+        (claims.is_empty(), "claim_registry_empty"),
+    ] {
+        if condition {
+            blockers.push(json!(name));
+            seen.insert(name.to_owned());
+        }
+    }
+    for claim in claims {
+        check_current()?;
+        // The original property reads on a null claim throw. Do not replace
+        // that refusal with a fabricated missing-field policy result.
+        if claim.is_null() {
+            return Err(refused());
+        }
+        let mut issues = Vec::new();
+        let id = &claim["claimId"];
+        if !truthy(id) {
+            issues.push("claim_id_missing");
+        }
+        for (field, issue) in [
+            ("text", "claim_text_missing"),
+            ("sourceLocator", "claim_source_locator_missing"),
+        ] {
+            let value = &claim[field];
+            if !truthy(value) || trim(&raw_string(value)?).is_empty() {
+                issues.push(issue);
+            }
+        }
+        if !truthy(&claim["verificationPlan"]) {
+            issues.push("claim_verification_plan_missing");
+        }
+        if claim["claimKind"] == "worker_bound_claim" {
+            issues.push("worker_synthesized_claim_forbidden");
+        }
+        let kind = or(claim, &["claimKind", "riskClass"]);
+        let kind = if truthy(kind) {
+            raw_string(kind)?
+        } else {
+            String::new()
+        };
+        let kind = kind.to_ascii_lowercase();
+        if ["theorem", "proof", "formal"]
+            .iter()
+            .any(|term| kind.contains(term))
+            && !claim["proofObligations"]
+                .as_array()
+                .is_some_and(|values| !values.is_empty())
+        {
+            issues.push("claim_proof_obligations_missing");
+        }
+        let prefix = if truthy(id) {
+            raw_string(id)?
+        } else {
+            "unknown".to_owned()
+        };
+        let bytes = issues.iter().try_fold(0_usize, |total, issue| {
+            total
+                .checked_add(prefix.len() + issue.len() + 1)
+                .ok_or_else(refused)
+        })?;
+        // Reserve the complete derived record and every repeated identifier
+        // before cloning them. All projections share the existing 1 MiB policy.
+        reserve(
+            std::iter::once(registry)
+                .chain(results.iter())
+                .chain(blockers.iter()),
+            10 + issues.len() * 2,
+            bytes + 32,
+        )?;
+        for issue in &issues {
+            let value = format!("{prefix}:{issue}");
+            if seen.insert(value.clone()) {
+                blockers.push(json!(value));
+            }
+        }
+        reserve(
+            std::iter::once(registry)
+                .chain(results.iter())
+                .chain(blockers.iter())
+                .chain([id]),
+            5 + issues.len(),
+            22 + issues.iter().map(|issue| issue.len()).sum::<usize>(),
+        )?;
+        results.push(json!({
+            "claimId": nullable(id),
+            "valid": issues.is_empty(),
+            "issues": issues,
+        }));
+    }
+    check_current()?;
+    reserve(
+        std::iter::once(registry)
+            .chain(results.iter())
+            .chain(blockers.iter())
+            .chain([&registry["claimRegistryHash"]]),
+        11,
+        256,
+    )?;
+    let mut payload = json!({
+        "version": 1,
+        "kind": "ClaimContractReadinessPolicy",
+        "status": if blockers.is_empty() { "claim_contract_readiness_ready" } else { "claim_contract_readiness_blocked" },
+        "claimRegistryHash": nullable(&registry["claimRegistryHash"]),
+        "claimCount": claims.len(),
+        "claimResults": results,
+        "blockers": blockers,
+    });
+    local_submission_values_budget_v1([&payload])?;
+    let digest = hash("ClaimContractReadinessPolicy", &payload)?;
+    check_current()?;
+    payload
+        .as_object_mut()
+        .ok_or_else(refused)?
+        .insert("claimContractReadinessPolicyHash".into(), json!(digest));
+    local_submission_values_budget_v1([&payload])?;
+    check_current()?;
+    Ok(payload)
 }
 
 #[cfg(test)]

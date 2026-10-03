@@ -89,6 +89,24 @@ impl NativeInventoryObservationV1<'_> {
     pub fn scan(&self) -> &Value {
         &self.scan
     }
+    pub(crate) fn require_control_context_v1(
+        &self,
+        cancelled: &AtomicBool,
+        deadline: Instant,
+    ) -> Result<(), String> {
+        self.source
+            .require_control_context_v1(cancelled, deadline)?;
+        for child in [
+            self.database_observation.as_ref(),
+            self.staging_observation.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            child.require_control_context_v1(cancelled, deadline)?;
+        }
+        self.verify_unchanged()
+    }
     pub fn verify_unchanged(&self) -> Result<(), String> {
         self.source.assert_current()?;
         if let Some(staging) = &self.staging_observation {

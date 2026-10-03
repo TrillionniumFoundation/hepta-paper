@@ -5,6 +5,15 @@ use crate::{
         local_submission_projected_values_budget_v1 as projected_budget,
         local_submission_truthy as truthy, local_submission_values_budget_v1 as values_budget,
     },
+    native_research_canonical::{
+        NativeCanonicalFormalClaimRegistryObservationV1,
+        inspect_native_canonical_formal_claim_registry_with_context_v1,
+    },
+    native_research_empirical_assertion::{
+        NativeEmpiricalAssertionUniverseObservationV1, NativeEmpiricalAssertionUniverseRequestV1,
+        inspect_native_empirical_assertion_universe_with_context_v1,
+    },
+    native_research_manuscript::NativeResearchReadContextV1,
     runtime_source_cas::observation::SourceObservation,
 };
 use hepta_legacy_compatibility::{
@@ -15,25 +24,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
     borrow::Cow,
-    collections::BTreeSet,
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
+#[cfg(test)]
 const MAX_BYTES: u64 = 4 * 1024 * 1024;
-struct ReaderBudget {
-    remaining: u64,
-    charged: BTreeSet<PathBuf>,
-}
-impl ReaderBudget {
-    fn charge(&mut self, path: &Path, size: u64) -> Result<(), String> {
-        if !self.charged.contains(path) {
-            self.remaining = self.remaining.checked_sub(size).ok_or_else(refused)?;
-            self.charged.insert(path.to_owned());
-        }
-        Ok(())
-    }
-}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeResearchEvidenceRequestV1 {
@@ -46,14 +42,27 @@ pub struct NativeResearchEvidenceRequestV1 {
 }
 pub struct NativeResearchEvidenceObservationV1<'a> {
     source: SourceObservation<'a>,
+    runtime: Option<runtime::RuntimeEvidenceSourceV2<'a>>,
     observed: Value,
+    canonical: Option<NativeCanonicalFormalClaimRegistryObservationV1<'a>>,
+    empirical: Option<NativeEmpiricalAssertionUniverseObservationV1<'a>>,
 }
 impl NativeResearchEvidenceObservationV1<'_> {
     pub fn observed(&self) -> &Value {
         &self.observed
     }
     pub fn verify_unchanged(&self) -> Result<(), String> {
-        self.source.assert_current()
+        self.source.assert_current()?;
+        if let Some(runtime) = &self.runtime {
+            runtime.verify_unchanged()?;
+        }
+        if let Some(canonical) = &self.canonical {
+            canonical.verify_unchanged()?;
+        }
+        if let Some(empirical) = &self.empirical {
+            empirical.verify_unchanged()?;
+        }
+        Ok(())
     }
 }
 fn refused() -> String {
@@ -139,23 +148,28 @@ fn record(
     relative: &Path,
     scoped_root: &Path,
     role: &str,
-    budget: &mut ReaderBudget,
+    display_root: &Path,
+    budget: &mut NativeResearchReadContextV1<'_>,
 ) -> Result<Value, String> {
     let metadata = source.inventory_probe(relative)?.ok_or_else(refused)?;
     if metadata.link_count != 1 {
         return Err(refused());
     }
-    let displayed = relative.to_str().ok_or_else(refused)?;
-    if displayed.contains('\\') || normalize(displayed) != displayed {
+    let displayed = runtime::display_path(display_root, &source.root().join(relative))?;
+    if displayed.contains('\\') || normalize(&displayed) != displayed {
         return Err(refused());
     }
-    budget.charge(relative, metadata.size)?;
+    budget.charge(source, relative)?;
     let (digest, bytes) = source.archive(relative, metadata.size.max(1))?;
     if bytes != metadata.size {
         return Err(refused());
     }
     let absolute = source.root().join(relative);
-    let root = source.root().join(scoped_root);
+    let root = if scoped_root.as_os_str().is_empty() {
+        source.root().to_path_buf()
+    } else {
+        source.root().join(scoped_root)
+    };
     let mtime_ns =
         i128::from(metadata.mtime_seconds) * 1_000_000_000 + i128::from(metadata.mtime_nanoseconds);
     let identity = json!({"version":1,"kind":"ScopedFileIdentity","status":"scoped_file_identity_verified","scopeRoot":root,"path":absolute,"rootRealPath":root,"realPath":absolute,"identity":{"device":metadata.device.to_string(),"inode":metadata.inode.to_string(),"mode":metadata.mode.to_string(),"size":metadata.size,"mtimeNs":mtime_ns.to_string(),"linkCount":metadata.link_count},"symlinkComponents":[],"blockers":[]});
@@ -253,7 +267,7 @@ fn finite(v: &ProductionJsonValue) -> bool {
 fn read_json(
     source: &mut SourceObservation<'_>,
     path: &Path,
-    budget: &mut ReaderBudget,
+    budget: &mut NativeResearchReadContextV1<'_>,
     c: &AtomicBool,
 ) -> Result<Value, String> {
     let Some(metadata) = source.inventory_probe(path)? else {
@@ -265,12 +279,15 @@ fn read_json(
     if metadata.size > 1024 * 1024 {
         return Err(refused());
     }
-    budget.charge(path, metadata.size)?;
+    budget.charge(source, path)?;
     let bytes = source.inventory_document(path, 1024 * 1024)?;
-    if std::str::from_utf8(&bytes).is_err() {
+    parse_record_json_bytes(&bytes, c)
+}
+fn parse_record_json_bytes(bytes: &[u8], c: &AtomicBool) -> Result<Value, String> {
+    if bytes.len() > 1024 * 1024 || std::str::from_utf8(bytes).is_err() {
         return Err(refused());
     }
-    let Ok(parsed) = parse_production_json_v1(&bytes) else {
+    let Ok(parsed) = parse_production_json_v1(bytes) else {
         return Ok(Value::Null);
     };
     production_json_resources_v1(
@@ -456,8 +473,53 @@ fn experiment_projection(value: &Value, c: &AtomicBool) -> Result<(usize, usize)
 fn extract(
     source: &mut SourceObservation<'_>,
     records: &[Value],
-    budget: &mut ReaderBudget,
+    budget: &mut NativeResearchReadContextV1<'_>,
     c: &AtomicBool,
+    runtime: &mut Option<runtime::RuntimeEvidenceSourceV2<'_>>,
+) -> Result<Structured, String> {
+    extract_records(records, c, &mut |path| {
+        if let Some(runtime) = runtime.as_mut()
+            && let Some(relative) = runtime.member(path)?
+        {
+            read_json(&mut runtime.source, &relative, budget, c)
+        } else {
+            read_json(source, path, budget, c)
+        }
+    })
+}
+/// Same original record extraction, with bytes selected from a closed CAS map.
+/// Paths here are display/member keys; they never cause filesystem access.
+pub(crate) fn extract_native_research_record_bytes_v1(
+    records: &[Value],
+    raw: &std::collections::BTreeMap<String, &[u8]>,
+    c: &AtomicBool,
+    deadline: Instant,
+) -> Result<Value, String> {
+    values_budget(records)?;
+    if records.len() > 96 || raw.len() > 128 {
+        return Err(refused());
+    }
+    let result = extract_records(records, c, &mut |path| {
+        check(c)?;
+        if Instant::now() >= deadline {
+            return Err(refused());
+        }
+        let bytes = raw
+            .get(path.to_str().ok_or_else(refused)?)
+            .ok_or_else(refused)?;
+        parse_record_json_bytes(bytes, c)
+    })?
+    .value();
+    check(c)?;
+    if Instant::now() >= deadline {
+        return Err(refused());
+    }
+    Ok(result)
+}
+fn extract_records(
+    records: &[Value],
+    c: &AtomicBool,
+    read: &mut impl FnMut(&Path) -> Result<Value, String>,
 ) -> Result<Structured, String> {
     let mut out = Structured::default();
     for record in records.iter().take(96) {
@@ -467,7 +529,7 @@ fn extract(
             .as_str()
             .is_some_and(|v| v.to_ascii_lowercase().ends_with(".json"))
         {
-            read_json(source, path, budget, c)?
+            read(path)?
         } else {
             Value::Null
         };
@@ -862,13 +924,32 @@ fn extract(
     }
     Ok(out)
 }
-/// First version admits ordinary non-canonical evidence records; canonical
-/// manuscript universe parsing is a separately implemented input domain.
+/// Actual evidence and formal-plan observations share one fixed read aggregate.
+/// This composition grants no scientific or submission authority.
 pub fn inspect_native_research_evidence_v1<'a>(
     request: NativeResearchEvidenceRequestV1,
     c: &'a AtomicBool,
     deadline: Instant,
 ) -> Result<NativeResearchEvidenceObservationV1<'a>, String> {
+    check(c)?;
+    let mut context = NativeResearchReadContextV1::new(c, deadline);
+    inspect_native_research_evidence_with_context_v1(request, &mut context)
+}
+pub(crate) fn inspect_native_research_evidence_with_context_v1<'a>(
+    request: NativeResearchEvidenceRequestV1,
+    context: &mut NativeResearchReadContextV1<'a>,
+) -> Result<NativeResearchEvidenceObservationV1<'a>, String> {
+    context.require_active()?;
+    let result = inspect_evidence(request, context, None);
+    context.finish(result)
+}
+fn inspect_evidence<'a>(
+    request: NativeResearchEvidenceRequestV1,
+    budget: &mut NativeResearchReadContextV1<'a>,
+    runtime_root: Option<PathBuf>,
+) -> Result<NativeResearchEvidenceObservationV1<'a>, String> {
+    let c = budget.cancelled();
+    let deadline = budget.deadline();
     check(c)?;
     if request.version != 1 || !request.root.is_absolute() {
         return Err(refused());
@@ -891,21 +972,25 @@ pub fn inspect_native_research_evidence_v1<'a>(
     if !profiles.is_null() && !profiles.is_array() {
         return Err(refused());
     }
-    if request.paper_task["paperQualityProfile"] == "empirical_or_experiment"
+    let empirical_profile = request.paper_task["paperQualityProfile"] == "empirical_or_experiment"
         || request.paper_task["paperQualityProfiles"]
             .as_array()
-            .is_some_and(|a| a.iter().any(|v| v == "empirical_or_experiment"))
-    {
-        return Err("native_research_empirical_universe_port_required".into());
-    }
+            .is_some_and(|a| a.iter().any(|v| v == "empirical_or_experiment"));
     let mut source = SourceObservation::new_with_deadline(&request.root, c, deadline)?;
     if source.root() != request.root {
         return Err(refused());
     }
-    let mut budget = ReaderBudget {
-        remaining: MAX_BYTES,
-        charged: BTreeSet::new(),
-    };
+    let mut runtime = runtime_root
+        .map(|root| {
+            runtime::RuntimeEvidenceSourceV2::new(
+                &request.root,
+                &root,
+                &request.paper_task,
+                c,
+                deadline,
+            )
+        })
+        .transpose()?;
     let mut sets = Vec::new();
     for (absolute, role) in [
         (&request.source_root, "source"),
@@ -913,7 +998,10 @@ pub fn inspect_native_research_evidence_v1<'a>(
         (&request.empirical_root, "empirical"),
     ] {
         let mut records = Vec::new();
-        if let Some(absolute) = absolute {
+        if role == "empirical" && runtime.is_some() {
+            let held = runtime.as_mut().ok_or_else(refused)?;
+            records = held.records(&request.root, budget)?;
+        } else if let Some(absolute) = absolute {
             let relative = scope(&request.root, absolute)?;
             if let Some(metadata) = source.inventory_probe(&relative)?
                 && metadata.directory
@@ -921,21 +1009,102 @@ pub fn inspect_native_research_evidence_v1<'a>(
                 let mut selected = Vec::new();
                 walk(&mut source, &relative, 0, &mut selected, c)?;
                 for path in selected.into_iter().take(128) {
-                    records.push(record(&mut source, &path, &relative, role, &mut budget)?);
+                    records.push(record(
+                        &mut source,
+                        &path,
+                        &relative,
+                        role,
+                        &request.root,
+                        budget,
+                    )?);
                 }
             }
         }
         sets.push(records);
     }
+    let records = sets.iter().flatten().cloned().collect::<Vec<_>>();
+    let mut structured = extract(&mut source, &records, budget, c, &mut runtime)?;
+    let mut canonical = None;
+    let mut canonical_claims = None;
+    let mut formal_worker = false;
+    let mut empirical = None;
     if let Some(absolute) = &request.source_root {
         let relative = scope(&request.root, absolute)?.join("RESEARCH_WORKER_PLAN.json");
-        let plan = read_json(&mut source, &relative, &mut budget, c)?;
+        let plan = read_json(&mut source, &relative, budget, c)?;
         if truthy(&plan) {
-            return Err("native_research_canonical_universe_port_required".into());
+            let workers = &plan["workers"];
+            if truthy(workers) && !workers.is_array() {
+                return Err(refused());
+            }
+            let observed = inspect_native_canonical_formal_claim_registry_with_context_v1(
+                absolute,
+                &request.paper_task,
+                &plan,
+                1,
+                budget,
+            )?;
+            let claims = &observed.observed()["claims"];
+            formal_worker = workers.as_array().is_some_and(|workers| {
+                workers
+                    .iter()
+                    .any(|worker| worker["type"] == "formal_verifier_lake")
+            });
+            if formal_worker && claims.as_array().is_some_and(|claims| !claims.is_empty()) {
+                structured.claims.clear();
+                values_budget(structured.all().chain(records.iter()).chain([
+                    observed.observed(),
+                    claims,
+                    &plan,
+                ]))?;
+                canonical_claims = Some(claims.clone());
+            }
+            values_budget(
+                structured
+                    .all()
+                    .chain(records.iter())
+                    .chain([observed.observed()])
+                    .chain(canonical_claims.iter()),
+            )?;
+            canonical = Some(observed);
         }
     }
-    let records = sets.iter().flatten().cloned().collect::<Vec<_>>();
-    let structured = extract(&mut source, &records, &mut budget, c)?;
+    if empirical_profile {
+        // Original empirical profile replaces observed claims even when the
+        // canonical claim array is empty. No caller universe or hash is used.
+        structured.claims.clear();
+        if !formal_worker {
+            canonical_claims = None;
+        }
+        if let Some(absolute) = &request.source_root {
+            let default_main = json!("main.tex");
+            let empty = json!("");
+            let path_task = json!({
+                "mainTex": if truthy(&request.paper_task["mainTex"]) { &request.paper_task["mainTex"] } else { &default_main },
+                "sourceWorkspace": if truthy(&request.paper_task["sourceWorkspace"]) { &request.paper_task["sourceWorkspace"] } else { &empty },
+            });
+            let manuscript =
+                crate::native_research_canonical::path(absolute, &path_task, c, deadline)?
+                    .ok_or_else(refused)?;
+            let observed = inspect_native_empirical_assertion_universe_with_context_v1(
+                NativeEmpiricalAssertionUniverseRequestV1 {
+                    version: 1,
+                    source_root: absolute.clone(),
+                    manuscript_path: manuscript,
+                    maximum_files: 128,
+                    derive_claim_universe: true,
+                },
+                budget,
+            )?;
+            values_budget(
+                structured
+                    .all()
+                    .chain(records.iter())
+                    .chain([observed.observed()])
+                    .chain(observed.claim_observation_v1().map(|v| v.observed())),
+            )?;
+            empirical = Some(observed);
+        }
+    }
     values_budget(
         structured
             .all()
@@ -966,13 +1135,99 @@ pub fn inspect_native_research_evidence_v1<'a>(
     }
     observed.insert("evidenceRecords".into(), Value::Array(records));
     observed.insert("proposalSeedEvidence".into(), Value::Array(seeds));
-    observed.insert("structured".into(), structured.value());
+    let mut structured_value = structured.value();
+    if let Some(canonical) = &canonical {
+        values_budget(
+            [canonical.observed(), &structured_value]
+                .into_iter()
+                .chain(canonical_claims.iter())
+                .chain(observed.values()),
+        )?;
+        structured_value["canonicalClaimRegistry"] = canonical.observed().clone();
+    }
+    if let Some(claims) = canonical_claims {
+        structured_value["claims"] = claims;
+    }
+    if let Some(empirical) = &empirical {
+        let claim = empirical.claim_observation_v1().ok_or_else(refused)?;
+        let universe = claim.observed();
+        let assertion = empirical.observed();
+        values_budget(
+            [
+                universe,
+                assertion,
+                claim.canonical_claims(),
+                &structured_value,
+            ]
+            .into_iter()
+            .chain(observed.values()),
+        )?;
+        let registry = json!({"status": if universe["status"] == "empirical_claim_universe_verified" { "canonical_empirical_claim_registry_verified" } else { "canonical_empirical_claim_registry_blocked" }, "empiricalClaimUniverse": universe, "empiricalClaimUniverseHash": universe["empiricalClaimUniverseHash"], "manuscriptCorpusHash": universe["manuscriptCorpusHash"], "claims": claim.canonical_claims(), "blockers": universe["blockers"]});
+        let assertion = json!({"status": if assertion["status"] == "empirical_assertion_universe_verified" { "canonical_empirical_assertion_universe_verified" } else { "canonical_empirical_assertion_universe_blocked" }, "empiricalAssertionUniverse": assertion, "empiricalAssertionUniverseHash": assertion["empiricalAssertionUniverseHash"], "manuscriptCorpusHash": assertion["manuscriptCorpusHash"], "blockers": assertion["blockers"]});
+        let existing = structured_value["claims"].as_array().ok_or_else(refused)?;
+        let extra = claim.canonical_claims().as_array().ok_or_else(refused)?;
+        values_budget(
+            [&structured_value, &registry, &assertion]
+                .into_iter()
+                .chain(observed.values())
+                .chain(extra.iter()),
+        )?;
+        let mut claims = Vec::with_capacity(existing.len() + extra.len());
+        claims.extend_from_slice(existing);
+        claims.extend_from_slice(extra);
+        structured_value["claims"] = Value::Array(claims);
+        structured_value["canonicalEmpiricalClaimRegistry"] = registry;
+        structured_value["canonicalEmpiricalAssertionUniverse"] = assertion;
+    }
+    observed.insert("structured".into(), structured_value);
+    values_budget(observed.values())?;
     source.assert_current()?;
+    if let Some(canonical) = &canonical {
+        canonical.verify_unchanged()?;
+    }
+    if let Some(empirical) = &empirical {
+        empirical.verify_unchanged()?;
+    }
+    if let Some(runtime) = &runtime {
+        runtime.verify_unchanged()?;
+    }
+    budget.require_active()?;
     check(c)?;
     Ok(NativeResearchEvidenceObservationV1 {
         source,
+        runtime,
         observed: Value::Object(observed),
+        canonical,
+        empirical,
     })
 }
 #[cfg(test)]
 mod tests;
+
+mod runtime;
+pub use runtime::{
+    NativeResearchEvidenceRuntimeRequestV2, inspect_native_research_evidence_for_current_runtime_v2,
+};
+
+#[cfg(test)]
+mod runtime_tests;
+
+pub(crate) mod intake;
+pub use intake::build_native_research_evidence_intake_v1;
+mod candidates;
+pub use candidates::build_native_evidence_verification_candidates_v1;
+mod observed_inputs;
+#[cfg(test)]
+mod observed_inputs_tests;
+pub use observed_inputs::{
+    NativeResearchObservedInputsObservationV1, NativeResearchObservedInputsRequestV1,
+    inspect_native_research_observed_inputs_v1,
+};
+mod verification;
+pub use verification::{
+    NativeEvidenceArtifactVerificationObservationV1, NativeEvidenceArtifactVerificationRequestV1,
+    verify_native_evidence_artifacts_v1,
+};
+
+#[cfg(test)]
+mod verification_tests;

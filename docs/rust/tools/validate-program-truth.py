@@ -89,6 +89,42 @@ def load(path: Path) -> dict[str, Any]:
     return obj(json.loads(path.read_text(encoding="utf-8")), str(path))
 
 
+def validate_package_schema_declaration(package_id: str, schemas: list[Any]) -> list[int]:
+    """Check the canonical map's current-first version list, not runtime authority.
+
+    Each schema declares its signed payload version. A retained older schema
+    describes diagnostic ingestion only; this documentation check grants no
+    BrokerExecute or qualification permit.
+    """
+    if not 1 <= len(schemas) <= 4:
+        fail(f"missing or unbounded package schema declaration: {package_id}")
+    versions: list[int] = []
+    family: str | None = None
+    for name in schemas:
+        match = re.fullmatch(r"([a-z0-9-]+)-v([1-9][0-9]{0,4})\.schema\.json", name) if isinstance(name, str) else None
+        if match is None:
+            fail(f"invalid package schema filename: {package_id}")
+        schema_family, raw_version = match.groups()
+        version = int(raw_version)
+        if version > 65535 or (family is not None and schema_family != family):
+            fail(f"package schema family/version drift: {package_id}")
+        path = QUAL / name
+        if not path.is_file() or path.is_symlink():
+            fail(f"missing package schema: {package_id}")
+        schema = load(path)
+        properties = obj(schema.get("properties"), f"schema properties: {name}")
+        signed_version = obj(properties.get("schemaVersion"), f"signed version: {name}").get("const")
+        if (type(signed_version) is not int or signed_version != version
+                or obj(properties.get("packageId"), f"package subject: {name}").get("const") != package_id
+                or schema.get("additionalProperties") is not False):
+            fail(f"signed package schema subject/version drift: {package_id}")
+        if versions and version >= versions[-1]:
+            fail(f"package schemas must declare current then distinct older versions: {package_id}")
+        family = schema_family
+        versions.append(version)
+    return versions
+
+
 def sha256_file(path: Path) -> str:
     return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
@@ -384,8 +420,7 @@ def main() -> int:
         if row.get("automaticActivation") is not False:
             fail(f"package may auto-activate: {package_id}")
         schemas = arr(row.get("schemas"), f"schemas for {package_id}")
-        if len(schemas) != 1 or not (QUAL / schemas[0]).is_file():
-            fail(f"missing package schema: {package_id}")
+        validate_package_schema_declaration(package_id, schemas)
         package_ids.add(package_id)
         mapped.add(str(gap_id))
     if mapped != set(external):

@@ -76,7 +76,12 @@ function copy(from, to, limit) {
   assert.deepEqual(pin(from), original); inputPins.set(from, original); graphPins.set(to, copied);
 }
 function runRaw(program, args, options = {}) {
-  const out = spawnSync(program, args, { cwd: code, env: environment(), encoding: 'utf8', shell: false,
+  // This fixture's original Git bytes are evidence. Disable automatic packing
+  // from its first init and every explicit fixture Git call; normal subprocess
+  // commands also inherit the persisted local settings configured below.
+  const actualArgs = program === '/usr/bin/git'
+    ? ['-c', 'gc.auto=0', '-c', 'maintenance.auto=false', ...args] : args;
+  const out = spawnSync(program, actualArgs, { cwd: code, env: environment(), encoding: 'utf8', shell: false,
     timeout: 30000, maxBuffer: 16 * 1024 * 1024, ...options });
   assert.equal(out.error, undefined, out.error?.message); assert.equal(out.signal, null, out.stderr);
   return out;
@@ -201,8 +206,12 @@ before(async () => {
   assert.equal(executableCopy.entries, 1); assert.ok(executableCopy.bytes <= 128 * 1024 * 1024);
   assert.equal(`sha256:${pin(binary).sha256}`, built.owners['hepta-paper-rust'].sha256);
   fs.writeFileSync(path.join(code, '.gitignore'), '/bin/\n/node_modules/\n', { flag: 'wx', mode: 0o640 });
-  for (const args of [['init', '--quiet'], ['add', '--all'], ['-c', 'user.name=Normal batch test', '-c', 'user.email=fixture@localhost', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Actual copied Node ordinary graph']]) {
+  for (const args of [['init', '--quiet'], ['config', '--local', 'gc.auto', '0'], ['config', '--local', 'maintenance.auto', 'false'], ['add', '--all'], ['-c', 'user.name=Normal batch test', '-c', 'user.email=fixture@localhost', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Actual copied Node ordinary graph']]) {
     const result = runRaw('/usr/bin/git', args); assert.equal(result.status, 0, result.stderr);
+  }
+  for (const [name, expected] of [['gc.auto', '0'], ['maintenance.auto', 'false']]) {
+    const result = runRaw('/usr/bin/git', ['config', '--local', '--get', name]);
+    assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout.trim(), expected);
   }
   const from = relative => import(pathToFileURL(path.join(code, relative)).href);
   const { createDefaultPaperStore } = await from('paper-adapters/persistence/store-provider.mjs');

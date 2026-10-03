@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { observePublicRSourceContent } from './source-evidence-public-r-inputs.mjs';
 
 export function fail(code, detail = '') {
   const suffix = detail ? `: ${detail}` : '';
@@ -89,6 +90,9 @@ export function captureCommittedSourceSubject(root) {
   try {
     for (const [relative, expected] of selected) {
       if (expected.mode === '160000') {
+        const content = observePublicRSourceContent(realRoot, relative, expected, selected,
+          { fail, git, readPinnedSource, readPinnedSourceBatch, assertSourceBatchInputsCurrent });
+        if (content) { references.push(content); subject.publicRSourceContentProfile = content.value; continue; }
         const reference = observeGitlinkReference(realRoot, relative, expected.blob);
         references.push(reference);
         if (reference.value.state !== 'empty_directory') fail('source_gitlink_missing', relative);
@@ -109,10 +113,11 @@ export function captureCommittedSourceSubject(root) {
     }
     assertSourceBatchInputsCurrent(batchInputs);
     for (const reference of references) reference.assertCurrent();
-    if (references.length) subject.gitlinkReferenceProfile = {
+    const emptyReferences = references.filter(reference => reference.value.mode === '160000');
+    if (emptyReferences.length) subject.gitlinkReferenceProfile = {
       version: 1, kind: 'UnmaterializedGitlinkReferences',
       observationScope: 'selected_tree_and_index_commits_without_nested_source_bytes',
-      references: references.map(reference => reference.value),
+      references: emptyReferences.map(reference => reference.value),
     };
   } finally {
     for (const reference of references) reference.close();

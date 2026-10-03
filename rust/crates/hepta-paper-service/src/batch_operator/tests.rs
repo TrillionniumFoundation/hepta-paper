@@ -72,6 +72,32 @@ fn node() -> PathBuf {
         .canonicalize()
         .unwrap()
 }
+fn actual_node_packages_root(source: &Path) -> PathBuf {
+    // CI installs its locked observer graph in the candidate's exclusive
+    // parent. The package bytes still enter the private fixture and the same
+    // existing exact 64-file policy; no production source policy is relaxed.
+    let candidates = [
+        source.join("node_modules"),
+        source.parent().unwrap().join("node_modules"),
+    ];
+    let mut selected = None;
+    for candidate in candidates {
+        match candidate.symlink_metadata() {
+            Ok(metadata) => {
+                assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+                assert_eq!(candidate.canonicalize().unwrap(), candidate);
+                assert!(
+                    selected.is_none(),
+                    "ambiguous actual locked Node package directories"
+                );
+                selected = Some(candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("actual Node package directory: {error}"),
+        }
+    }
+    selected.expect("actual locked Node package directory")
+}
 fn copy(source: &Path, target: &Path, entries: &mut usize, bytes: &mut u64) {
     *entries += 1;
     assert!(*entries <= 10_000);
@@ -248,6 +274,7 @@ impl Fixture {
             .canonicalize()
             .unwrap();
         fs::create_dir(fixture.code.join("node_modules")).unwrap();
+        let packages = actual_node_packages_root(&source);
         let (mut entries, mut bytes) = (0, 0);
         for package in [
             "acorn",
@@ -259,7 +286,7 @@ impl Fixture {
             "estraverse",
         ] {
             copy(
-                &source.join("node_modules").join(package),
+                &packages.join(package),
                 &fixture.code.join("node_modules").join(package),
                 &mut entries,
                 &mut bytes,

@@ -227,6 +227,10 @@ const ROOTS: &[&str] = &[
     "numerical-plugins",
     "provider-sandbox",
 ];
+#[cfg(test)]
+pub(super) fn fixture_roots() -> &'static [&'static str] {
+    ROOTS
+}
 pub(super) fn graph_paths(owner: &mut Owner<'_>) -> Result<Vec<String>, String> {
     let root = owner.request.source.workspace_root.clone();
     struct Selection {

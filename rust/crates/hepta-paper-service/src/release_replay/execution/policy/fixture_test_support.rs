@@ -14,18 +14,33 @@ use super::{
     facts::Matrix, measured_profile::SourceLimits,
 };
 use crate::release_attest::ReleaseAttestationSourceRequestV2;
+mod policy_graph;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 pub(super) const FIXTURE_HASH: &str =
     "sha256:ada0ec432d84023155c38815f5576af7c1fc24dfbf3d685d78aa6214ec5022d6";
+// Share only the immutable copied test inputs while live observers overlap.
+// A weak reference owns no files: the final real observer drops/cleans the
+// private tree. Each observer retains its original independent controls and
+// rechecks the full private input values; no SourceGraph/authority is cached.
+struct SharedPolicyGraphFixture {
+    source_root: PathBuf,
+    fixture: Weak<policy_graph::FixtureGraph>,
+}
+static POLICY_GRAPH_FIXTURE: Mutex<Option<SharedPolicyGraphFixture>> = Mutex::new(None);
+
 pub(super) struct FixtureOwner {
     request: ReleaseAttestationReplayRequestV3,
     cancelled: AtomicBool,
+    graph_fixture: Option<Arc<policy_graph::FixtureGraph>>,
 }
 impl FixtureOwner {
     pub(super) fn new() -> Self {
@@ -53,16 +68,54 @@ impl FixtureOwner {
                 timeout_ms: 120000,
             },
             cancelled: AtomicBool::new(false),
+            graph_fixture: None,
+        }
+    }
+    pub(super) fn for_policy_graph() -> Self {
+        let mut helper = Self::new();
+        let source_root = helper.root().to_path_buf();
+        let fixture = {
+            let mut shared = POLICY_GRAPH_FIXTURE.lock().unwrap();
+            if let Some(fixture) = shared
+                .as_ref()
+                .filter(|cached| cached.source_root == source_root)
+                .and_then(|cached| cached.fixture.upgrade())
+            {
+                fixture
+            } else {
+                let fixture = Arc::new(policy_graph::FixtureGraph::capture(&helper).unwrap());
+                *shared = Some(SharedPolicyGraphFixture {
+                    source_root,
+                    fixture: Arc::downgrade(&fixture),
+                });
+                fixture
+            }
+        };
+        helper.request.source.workspace_root = fixture.root();
+        eprintln!("{}", fixture.report());
+        helper.graph_fixture = Some(fixture);
+        helper
+    }
+    pub(super) fn fresh_observer(&self) -> Self {
+        assert!(self.graph_fixture.is_some());
+        Self {
+            request: self.request.clone(),
+            cancelled: AtomicBool::new(false),
+            graph_fixture: self.graph_fixture.clone(),
         }
     }
     pub(super) fn owner(&self) -> Owner<'_> {
-        Owner {
+        let mut owner = Owner {
             request: &self.request,
             cancelled: &self.cancelled,
             started: Instant::now(),
             environment: environment(BTreeMap::new()).unwrap(),
             read_bytes: 0,
+        };
+        if let Some(fixture) = &self.graph_fixture {
+            fixture.assert_current(&mut owner).unwrap();
         }
+        owner
     }
     pub(super) fn root(&self) -> &Path {
         &self.request.source.workspace_root

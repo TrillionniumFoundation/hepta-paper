@@ -66,6 +66,80 @@ os.execv('/usr/bin/git',['/usr/bin/git']+args)
 }
 function restored() { process.env.PATH = originalEnvironment.PATH; }
 
+function publicRFixture() {
+  const input = fixture(4), original = fileURLToPath(new URL('../../', import.meta.url));
+  const relative = 'docs/rust/qualification/r-source-route.v1.json';
+  const route = JSON.parse(fs.readFileSync(path.join(original, relative)));
+  fs.mkdirSync(path.dirname(path.join(input.root, relative)), { recursive: true });
+  fs.copyFileSync(path.join(original, relative), path.join(input.root, relative));
+  // Only the disposable fixture writes Git objects. Historical authority
+  // objects are read through an alternate, without touching the real index.
+  const objectDirectory = command(original, ['rev-parse', '--git-path', 'objects']);
+  fs.mkdirSync(path.join(input.root, '.git/objects/info'), { recursive: true });
+  fs.writeFileSync(path.join(input.root, '.git/objects/info/alternates'),
+    path.resolve(original, objectDirectory) + '\n', { flag: 'wx' });
+  command(input.root, ['add', relative]);
+  command(input.root, ['update-index', '--add', '--cacheinfo',
+    `160000,${route.originalGitlink.commit},${route.targetPath}`]);
+  command(input.root, ['-c', 'user.name=Private Batch Fixture', '-c', 'user.email=batch@example.invalid',
+    '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '--quiet', '-m', 'Exact public R content fixture']);
+  const rows = command(original, ['ls-tree', '-r', '-z', route.publicHistoricalRoute.subtree]).slice(0, -1).split('\0');
+  for (const row of rows) {
+    const [, blob, name] = /^100644 blob ([0-9a-f]{40})\t(.+)$/u.exec(row);
+    const file = path.join(input.root, route.targetPath, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
+    const raw = spawnSync('/usr/bin/git', ['-C', original, 'cat-file', 'blob', blob],
+      { env: originalEnvironment, shell: false, timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
+    assert.equal(raw.status, 0, raw.stderr.toString());
+    fs.writeFileSync(file, raw.stdout, { flag: 'wx', mode: 0o644 });
+  }
+  return { ...input, route };
+}
+
+test('canonical_git_batches_observe_actual_public_107_blob_content_without_qualifying_gitlink_or_runtime', () => {
+  const input = publicRFixture();
+  try {
+    const before = fdCount(), subject = captureCommittedSourceSubject(input.root);
+    assert.equal(subject.committedClean, true);
+    const profile = subject.publicRSourceContentProfile;
+    assert.equal(profile.sourceTree, input.route.publicHistoricalRoute.subtree);
+    assert.equal(profile.manifestBlob, input.route.publicHistoricalRoute.manifestBlob);
+    assert.equal(profile.fileCount, 107);
+    assert.equal(profile.physicalInputs.filter(row => row.blob).length, 107);
+    assert.equal(profile.gitlinkCommitQualified, false);
+    assert.equal(profile.productionAuthorized, false);
+    assert.equal(profile.packageExecutionAllowed, false);
+    assert.equal(profile.physicalAfterMatched, true);
+    assert.equal(fdCount(), before);
+  } finally { restored(); fs.rmSync(input.directory, { recursive: true, force: true }); }
+});
+
+function assertPublicRRefusal(operation) {
+  const input = publicRFixture(), leaf = path.join(input.root, input.route.targetPath);
+  const manifest = path.join(leaf, 'manifest.json'), raw = fs.readFileSync(manifest);
+  const before = fdCount();
+  try {
+    const extra = path.join(leaf, operation === 'extra' ? '.git' : 'unexpected-link');
+    if (operation === 'extra') fs.mkdirSync(extra);
+    else if (operation === 'missing') fs.unlinkSync(manifest);
+    else if (operation === 'mode') fs.chmodSync(manifest, 0o755);
+    else if (operation === 'symlink') { fs.unlinkSync(manifest); fs.symlinkSync(path.join(input.directory, 'external'), manifest); }
+    else if (operation === 'hardlink') fs.linkSync(manifest, extra);
+    else { const changed = Buffer.from(raw); changed[0] ^= 1; fs.writeFileSync(manifest, changed); }
+    const refusal = operation === 'extra' ? /git_command_failed: status.*not recognized as a git repository/u
+      : /public_r_|source_worktree_blob_mismatch/u;
+    assert.throws(() => captureCommittedSourceSubject(input.root), refusal, operation);
+    assert.equal(fdCount(), before, operation);
+  } finally { restored(); fs.rmSync(input.directory, { recursive: true, force: true }); }
+}
+
+test('canonical_git_batches_refuse_public_R_extra', () => assertPublicRRefusal('extra'));
+test('canonical_git_batches_refuse_public_R_missing', () => assertPublicRRefusal('missing'));
+test('canonical_git_batches_refuse_public_R_mode', () => assertPublicRRefusal('mode'));
+test('canonical_git_batches_refuse_public_R_symlink', () => assertPublicRRefusal('symlink'));
+test('canonical_git_batches_refuse_public_R_hardlink', () => assertPublicRRefusal('hardlink'));
+test('canonical_git_batches_refuse_public_R_bytes', () => assertPublicRRefusal('bytes'));
+
 test('canonical_git_batches_recompute_all_actual_bytes_and_modes_in_fixed_128_fd_groups', () => {
   const input = fixture();
   try {

@@ -167,6 +167,58 @@ impl PrivateTree {
         }
         Ok(bytes)
     }
+    #[cfg(test)]
+    pub(super) fn fixture_source(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        original_mode: u32,
+    ) -> Result<(), String> {
+        if original_mode & !0o777 != 0 || original_mode & 0o400 == 0 {
+            return Err(error("policy_fixture_mode_invalid"));
+        }
+        self.source(name, bytes)?;
+        self.root_current()?;
+        let source = self.sources.get_mut(name).unwrap();
+        let named = fs::symlink_metadata(self.root.join("sources").join(name))
+            .map_err(|_| error("policy_source_changed"))?;
+        if !super::super::same(&named, &source.metadata)
+            || !super::super::same(
+                &source
+                    .file
+                    .metadata()
+                    .map_err(|_| error("policy_source_changed"))?,
+                &source.metadata,
+            )
+        {
+            return Err(error("policy_source_changed"));
+        }
+        source
+            .file
+            .set_permissions(fs::Permissions::from_mode(original_mode))
+            .map_err(|_| error("policy_source_write_failed"))?;
+        source
+            .file
+            .sync_all()
+            .map_err(|_| error("policy_source_write_failed"))?;
+        source.metadata = source
+            .file
+            .metadata()
+            .map_err(|_| error("policy_source_changed"))?;
+        if !super::super::same(
+            &fs::symlink_metadata(self.root.join("sources").join(name))
+                .map_err(|_| error("policy_source_changed"))?,
+            &source.metadata,
+        ) || source.metadata.nlink() != 1
+        {
+            return Err(error("policy_source_changed"));
+        }
+        // Copying retains value provenance, not an execution/source owner. The
+        // real SourceGraph will open and hold the private files itself. Avoid
+        // keeping a second full set of candidate-sized file descriptors here.
+        self.sources.remove(name);
+        Ok(())
+    }
     pub(super) fn assert_sources(
         &self,
         matrix: &Matrix,

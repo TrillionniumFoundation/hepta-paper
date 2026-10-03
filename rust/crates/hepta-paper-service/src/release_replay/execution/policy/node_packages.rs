@@ -339,6 +339,14 @@ fn validate_lock(lock: &Value) -> Result<(), String> {
     }
     Ok(())
 }
+#[cfg(test)]
+pub(super) fn fixture_files() -> &'static [(&'static str, &'static str)] {
+    FILES
+}
+#[cfg(test)]
+pub(super) fn validate_fixture_lock(lock: &Value) -> Result<(), String> {
+    validate_lock(lock)
+}
 pub(super) fn inspect(owner: &mut Owner<'_>, graph: &mut SourceGraph) -> Result<Value, String> {
     let lock_bytes = graph.read_input(owner, "package-lock.json")?;
     let lock: Value = serde_json::from_slice(&lock_bytes)

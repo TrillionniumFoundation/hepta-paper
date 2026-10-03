@@ -77,6 +77,10 @@ pub(super) struct Assets {
     cas_metadata: Metadata,
     report: Value,
 }
+#[cfg(test)]
+pub(super) fn fixture_files() -> &'static [(&'static str, &'static str)] {
+    FILES
+}
 pub(super) fn validate_paths(paths: &BTreeSet<String>) -> Result<(), String> {
     let actual = paths
         .iter()

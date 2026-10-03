@@ -14,7 +14,8 @@
     "publicHistoricalRoute",
     "materializer",
     "acceptance",
-    "authority"
+    "authority",
+    "contentObservation"
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
@@ -95,6 +96,18 @@
         "originalGitlinkVerified": { "const": false },
         "productionAuthorized": { "const": false },
         "externalAuthorityClaimed": { "const": false }
+      }
+    },
+    "contentObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximumFileBytes", "maximumTotalBytes", "gitlinkCommitQualified", "productionAuthorized", "packageExecutionAllowed"],
+      "properties": {
+        "maximumFileBytes": { "const": 16777216 },
+        "maximumTotalBytes": { "const": 134217728 },
+        "gitlinkCommitQualified": { "const": false },
+        "productionAuthorized": { "const": false },
+        "packageExecutionAllowed": { "const": false }
       }
     }
   }

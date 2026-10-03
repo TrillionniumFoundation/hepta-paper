@@ -53,7 +53,7 @@ fn full_node_summary_must_match_whole_value_before_complete_policy_receipt() {
 #[test]
 fn actual_36_selected_archive_sources_native_ast_and_complete_original_node_suite_match() {
     use super::super::fixture_test_support::{self, FixtureOwner};
-    let helper = FixtureOwner::new();
+    let helper = FixtureOwner::for_policy_graph();
     let mut owner = helper.owner();
     let mut tree = PrivateTree::new().unwrap();
     let matrix = fixture_test_support::sources(&mut owner, &mut tree);
@@ -122,7 +122,7 @@ fn actual_36_selected_archive_sources_native_ast_and_complete_original_node_suit
 #[test]
 fn cancelled_component_and_invalid_materializer_clean_the_same_private_tree_without_authority() {
     use super::super::fixture_test_support::{self, FixtureOwner};
-    let helper = FixtureOwner::new();
+    let helper = FixtureOwner::for_policy_graph();
     let mut owner = helper.owner();
     let mut tree = PrivateTree::new().unwrap();
     let matrix = fixture_test_support::sources(&mut owner, &mut tree);

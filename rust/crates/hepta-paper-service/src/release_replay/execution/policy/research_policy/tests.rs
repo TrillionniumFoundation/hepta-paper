@@ -77,7 +77,7 @@ fn exact_research_catalog_and_retired_local_harness_domains_are_source_bound() {
 #[test]
 fn actual_155_native_ast_original_python_and_whole_node_retirement_suite_match_without_execution_authority()
  {
-    let helper = fixture_test_support::FixtureOwner::new();
+    let helper = fixture_test_support::FixtureOwner::for_policy_graph();
     let mut owner = helper.owner();
     let mut tree = PrivateTree::new().unwrap();
     let matrix = sources(&mut owner, &mut tree);
@@ -162,7 +162,7 @@ fn actual_155_native_ast_original_python_and_whole_node_retirement_suite_match_w
 }
 #[test]
 fn absent_fixture_creation_symlink_and_cancelled_fresh_retry_refuse_without_authority() {
-    let helper = fixture_test_support::FixtureOwner::new();
+    let helper = fixture_test_support::FixtureOwner::for_policy_graph();
     let mut owner = helper.owner();
     let mut tree = PrivateTree::new().unwrap();
     let matrix = sources(&mut owner, &mut tree);
@@ -186,7 +186,10 @@ fn absent_fixture_creation_symlink_and_cancelled_fresh_retry_refuse_without_auth
             .unwrap()
             .contains("cancelled")
     );
-    let retry_helper = fixture_test_support::FixtureOwner::new();
+    // The cancelled observation is finished. Release its held source graph
+    // before a fresh observer opens the same full source namespace again.
+    drop(graph);
+    let retry_helper = helper.fresh_observer();
     let mut retry_owner = retry_helper.owner();
     let retry_paths = super::super::graph_paths(&mut retry_owner).unwrap();
     let mut retry_graph = SourceGraph::capture_paths(&mut retry_owner, retry_paths).unwrap();

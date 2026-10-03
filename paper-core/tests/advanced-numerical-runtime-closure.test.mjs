@@ -12,13 +12,16 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 function actualRun(f) {
   const args=[path.join(root,'paper-core/bin/hepta-paper.mjs'),'operator','advanced-numerical-plugin','--','--action','run','--config',f.configurationPath,'--request',f.requestPath,'--output-directory',f.outputDirectory];
   const actual=spawnSync(process.execPath,args,{cwd:root,env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',LANG:'C.UTF-8',LC_ALL:'C.UTF-8'},encoding:'utf8',timeout:30_000,maxBuffer:4*1024*1024});
-  assert.equal(actual.error,undefined);assert.equal(actual.signal,null);assert.equal(actual.stderr,'');
-  return {exit:actual.status,report:JSON.parse(actual.stdout),stdout:actual.stdout};
+  const diagnostic=JSON.stringify({exit:actual.status,signal:actual.signal,error:actual.error?.message??null,stdout:actual.stdout,stderr:actual.stderr});
+  assert.equal(actual.error,undefined,diagnostic);assert.equal(actual.signal,null,diagnostic);assert.equal(actual.stderr,'',diagnostic);
+  let report;
+  try {report=JSON.parse(actual.stdout);} catch(error) {throw new Error(`actual_cpu_report_invalid:${diagnostic}`,{cause:error});}
+  return {exit:actual.status,report,stdout:actual.stdout,stderr:actual.stderr};
 }
 test('actual numerical CPU run binds observed BOM and refuses result replay',context=>{
   const f=createActualCpuNumericalFixture();
   context.after(()=>fs.rmSync(f.root,{recursive:true,force:true}));
-  const first=actualRun(f);assert.equal(first.exit,0);
+  const first=actualRun(f);assert.equal(first.exit,0,JSON.stringify({report:first.report,stderr:first.stderr}));
   assert.equal(first.report.status,'advanced_numerical_plugin_execution_completed_unqualified');
   assert.equal(first.report.productionQualified,false);assert.equal(first.report.result.estimate.estimate,6);
   const w=first.report.workerReceipt;
@@ -28,7 +31,7 @@ test('actual numerical CPU run binds observed BOM and refuses result replay',con
   assert.equal(w.environmentBom.runtime.packageClosure.observedPackageCount,0);
   assert.deepEqual(verifyEmpiricalEnvironmentBom(w.environmentBom),{valid:true,blockers:[]});
   const resultPath=path.join(f.outputDirectory,'result.json'), bytes=fs.readFileSync(resultPath), before=fs.lstatSync(resultPath,{bigint:true});
-  const retry=actualRun(f);assert.equal(retry.exit,1);
+  const retry=actualRun(f);assert.equal(retry.exit,1,JSON.stringify({report:retry.report,stderr:retry.stderr}));
   assert.deepEqual(retry.report.blockers,['advanced_numerical_plugin_result_preexists']);
   assert.equal(retry.report.requestHash,first.report.requestHash);assert.equal(retry.report.workerReceipt,undefined);
   assert.deepEqual(fs.readFileSync(resultPath),bytes);const after=fs.lstatSync(resultPath,{bigint:true});

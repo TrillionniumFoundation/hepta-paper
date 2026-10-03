@@ -80,22 +80,21 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           python3 -B docs/rust/tools/materialize-public-r-source-cas.py
-          npm ci --ignore-scripts --no-audit --fund=false
           git diff --exit-code -- package.json package-lock.json
-          node paper-core/tests/source-implementation-evidence-hardening.mjs \
-            --base "$base" \
-            --target "$head" \
-            --receipt /tmp/repository-source-evidence-hardening-head.json
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --expected-head "$head" \
-            --expected-tree "$tree" \
-            --execute \
-            --receipt /tmp/repository-source-evidence-head.json
-          test -s /tmp/repository-source-evidence-hardening-head.json
+          export HEPTA_EVIDENCE_BASE="$base" HEPTA_EVIDENCE_TARGET="$head" HEPTA_EVIDENCE_HEAD="$head" HEPTA_EVIDENCE_TREE="$tree"
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/repository-node-oracle-head.json -- /bin/bash -euc '
+            node paper-core/tests/source-implementation-evidence-hardening.mjs \
+              --base "$HEPTA_EVIDENCE_BASE" \
+              --target "$HEPTA_EVIDENCE_HEAD" \
+              --receipt /tmp/repository-source-evidence-hardening-head.json
+            node paper-core/bin/verify-source-implementation-evidence.mjs \
+              --expected-head "$HEPTA_EVIDENCE_HEAD" \
+              --expected-tree "$HEPTA_EVIDENCE_TREE" \
+              --execute \
+              --receipt /tmp/repository-source-evidence-head.json
+            test -s /tmp/repository-source-evidence-hardening-head.json
+          '
           test -s /tmp/repository-source-evidence-head.json
-          # Remove only this job's newly installed oracle dependencies.
-          test -d node_modules && test ! -L node_modules
-          rm -rf -- node_modules
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           sha256sum /tmp/repository-source-evidence-hardening-head.json
@@ -120,17 +119,16 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           python3 -B docs/rust/tools/materialize-public-r-source-cas.py
-          npm ci --ignore-scripts --no-audit --fund=false
           git diff --exit-code -- package.json package-lock.json
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --expected-head "$head" \
-            --expected-tree "$tree" \
-            --execute \
-            --receipt /tmp/repository-source-evidence-head.json
+          export HEPTA_EVIDENCE_HEAD="$head" HEPTA_EVIDENCE_TREE="$tree"
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/repository-node-oracle-push.json -- /bin/bash -euc '
+            node paper-core/bin/verify-source-implementation-evidence.mjs \
+              --expected-head "$HEPTA_EVIDENCE_HEAD" \
+              --expected-tree "$HEPTA_EVIDENCE_TREE" \
+              --execute \
+              --receipt /tmp/repository-source-evidence-head.json
+          '
           test -s /tmp/repository-source-evidence-head.json
-          # Remove only this job's newly installed oracle dependencies.
-          test -d node_modules && test ! -L node_modules
-          rm -rf -- node_modules
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           sha256sum /tmp/repository-source-evidence-head.json
@@ -143,6 +141,7 @@ jobs:
           path: |
             /tmp/repository-source-evidence-head.json
             /tmp/repository-source-evidence-hardening-head.json
+            /tmp/repository-node-oracle-head.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
@@ -152,7 +151,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: repository-source-evidence-head-${{ github.sha }}
-          path: /tmp/repository-source-evidence-head.json
+          path: |
+            /tmp/repository-source-evidence-head.json
+            /tmp/repository-node-oracle-push.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
@@ -217,22 +218,21 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           python3 -B docs/rust/tools/materialize-public-r-source-cas.py
-          npm ci --ignore-scripts --no-audit --fund=false
           git diff --exit-code -- package.json package-lock.json
-          node paper-core/tests/source-implementation-evidence-hardening.mjs \
-            --base "$base" \
-            --target "$target" \
-            --receipt /tmp/repository-source-evidence-hardening-merge.json
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --expected-head "$merge" \
-            --expected-tree "$tree" \
-            --execute \
-            --receipt /tmp/repository-source-evidence-merge.json
-          test -s /tmp/repository-source-evidence-hardening-merge.json
+          export HEPTA_EVIDENCE_BASE="$base" HEPTA_EVIDENCE_TARGET="$target" HEPTA_EVIDENCE_HEAD="$merge" HEPTA_EVIDENCE_TREE="$tree"
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/repository-node-oracle-merge.json -- /bin/bash -euc '
+            node paper-core/tests/source-implementation-evidence-hardening.mjs \
+              --base "$HEPTA_EVIDENCE_BASE" \
+              --target "$HEPTA_EVIDENCE_TARGET" \
+              --receipt /tmp/repository-source-evidence-hardening-merge.json
+            node paper-core/bin/verify-source-implementation-evidence.mjs \
+              --expected-head "$HEPTA_EVIDENCE_HEAD" \
+              --expected-tree "$HEPTA_EVIDENCE_TREE" \
+              --execute \
+              --receipt /tmp/repository-source-evidence-merge.json
+            test -s /tmp/repository-source-evidence-hardening-merge.json
+          '
           test -s /tmp/repository-source-evidence-merge.json
-          # Remove only this job's newly installed oracle dependencies.
-          test -d node_modules && test ! -L node_modules
-          rm -rf -- node_modules
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           sha256sum /tmp/repository-source-evidence-hardening-merge.json
@@ -245,6 +245,7 @@ jobs:
           path: |
             /tmp/repository-source-evidence-merge.json
             /tmp/repository-source-evidence-hardening-merge.json
+            /tmp/repository-node-oracle-merge.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

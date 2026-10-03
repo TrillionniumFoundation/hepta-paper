@@ -103,6 +103,74 @@ export function artifactPin(executable, root) {
   } finally { fs.closeSync(descriptor); }
 }
 
+// One in-process lifetime for the test ELF actually pinned by Cargo discovery.
+// Every owner still executes independently. Intermediate checks retain all nine
+// FD/named-file identity fields; successful closure reuses the original complete
+// byte-hash check. A failure is sticky and this owner cannot be rebaselined.
+class CargoTestArtifactEpoch {
+  #descriptor;
+  #expected;
+  #root;
+  #failure = null;
+  #closed = false;
+
+  constructor(pin, root) {
+    if (!pin || !Array.isArray(pin.identity) || pin.identity.length !== 9
+        || typeof pin.sha256 !== 'string' || !/^sha256:[0-9a-f]{64}$/u.test(pin.sha256)) {
+      fail('verification_artifact_epoch_pin_invalid');
+    }
+    this.#expected = Object.freeze({ path: pin.path, sha256: pin.sha256,
+      identity: Object.freeze(pin.identity.map(String)) });
+    this.#root = root;
+    if (typeof pin.path !== 'string' || !path.isAbsolute(pin.path)
+        || fs.realpathSync(pin.path) !== pin.path || pin.path === root
+        || pin.path.startsWith(`${root}${path.sep}`)) {
+      fail('verification_artifact_path_invalid', pin.path);
+    }
+    this.#descriptor = fs.openSync(pin.path,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try { this.assertCurrent(); } catch (error) { this.close(); throw error; }
+  }
+
+  assertCurrent() {
+    if (this.#failure) throw this.#failure;
+    try {
+      if (this.#closed) fail('verification_artifact_epoch_closed', this.#expected.path);
+      const held = fs.fstatSync(this.#descriptor, { bigint: true });
+      const named = fs.lstatSync(this.#expected.path, { bigint: true });
+      if (!held.isFile() || !named.isFile() || named.isSymbolicLink()
+          || fs.realpathSync(this.#expected.path) !== this.#expected.path
+          || artifactIdentity(held).some((value, index) => value !== this.#expected.identity[index])
+          || artifactIdentity(named).some((value, index) => value !== this.#expected.identity[index])) {
+        fail('verification_artifact_changed', this.#expected.path);
+      }
+    } catch (error) { this.#failure = error; throw error; }
+  }
+
+  finish() {
+    try {
+      this.assertCurrent();
+      if (JSON.stringify(artifactPin(this.#expected.path, this.#root))
+          !== JSON.stringify(this.#expected)) {
+        fail('verification_artifact_changed', this.#expected.path);
+      }
+      this.assertCurrent();
+    } catch (error) { this.#failure = error; throw error; }
+    finally { this.close(); }
+  }
+
+  close() {
+    if (!this.#closed) {
+      this.#closed = true;
+      fs.closeSync(this.#descriptor);
+    }
+  }
+}
+
+export function holdCargoTestArtifactEpoch(pin, root) {
+  return new CargoTestArtifactEpoch(pin, root);
+}
+
 export function cargoTargetObservation(root, binding, stdout, label) {
   const artifacts = [];
   const binaryArtifacts = [];

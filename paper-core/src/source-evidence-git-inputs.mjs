@@ -19,19 +19,24 @@ export function run(program, args, options = {}) {
     maxBuffer: 16 * 1024 * 1024,
     shell: false,
     timeout: options.timeout,
+    ...(options.stdio ? { stdio: options.stdio } : {}),
   });
   if (result.error) fail('process_spawn_failed', `${program}: ${result.error.message}`);
   return result;
 }
 
-export function git(root, args, input) {
+function runGit(root, args, input, stdio) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   Object.assign(env, { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
     GIT_NO_REPLACE_OBJECTS: '1', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0' });
   const result = run('git', ['--no-pager', '-c', 'core.fsmonitor=false', '-C', root, ...args],
-    { input, env, timeout: 60_000 });
+    { input, env, timeout: 60_000, stdio });
   if (result.status !== 0) fail('git_command_failed', `${args.join(' ')}: ${result.stderr.trim()}`);
   return result.stdout.trim();
+}
+
+export function git(root, args, input) {
+  return runGit(root, args, input);
 }
 
 // One committed input observation for evidence producers and local CLI replay.
@@ -80,7 +85,7 @@ export function captureCommittedSourceSubject(root) {
     fail('source_index_hidden_input_flag');
   }
   git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling', commit]);
-  const references = [];
+  const references = [], files = [], batchInputs = [];
   try {
     for (const [relative, expected] of selected) {
       if (expected.mode === '160000') {
@@ -88,13 +93,21 @@ export function captureCommittedSourceSubject(root) {
         references.push(reference);
         if (reference.value.state !== 'empty_directory') fail('source_gitlink_missing', relative);
       }
-      else readPinnedSource(root, relative, expected);
+      else files.push([relative, expected]);
     }
+    // The index has already been observed as an exact map of the selected
+    // tree. Fixed batches retain actual files and let Git hash their raw FDs;
+    // no repeated per-path index query or independent object hash is needed.
+    for (let offset = 0; offset < files.length; offset += 128) {
+      batchInputs.push(readPinnedSourceBatch(root, files.slice(offset, offset + 128)));
+    }
+    assertSourceBatchInputsCurrent(batchInputs);
     for (const reference of references) reference.assertCurrent();
     if (git(root, ['rev-parse', 'HEAD', 'HEAD^{tree}']) !== `${commit}\n${tree}`
       || git(root, ['status', '--porcelain=v1', '--untracked-files=all']) !== '') {
       fail('source_subject_changed', 'after_complete_input_observation');
     }
+    assertSourceBatchInputsCurrent(batchInputs);
     for (const reference of references) reference.assertCurrent();
     if (references.length) subject.gitlinkReferenceProfile = {
       version: 1, kind: 'UnmaterializedGitlinkReferences',
@@ -183,6 +196,99 @@ function observeGitlinkReference(root, relative, commit) {
   }
 }
 
+
+// Internal complete-subject observation only. Caller-provided digests never
+// initialize it. Each invocation recomputes canonical Git hashes of at most
+// 128 held source files, preserving the individual 16 MiB source limit.
+function readPinnedSourceBatch(root, selected) {
+  if (!selected.length || selected.length > 128) fail('source_batch_count_limit');
+  const realRoot = fs.realpathSync(root), files = [], parents = new Map();
+  const fields = ['dev', 'ino', 'mode', 'uid', 'gid', 'nlink', 'size', 'mtimeNs', 'ctimeNs'];
+  const same = (left, right) => fields.every(key => left[key] === right[key]);
+  const directoryFlags = fs.constants.O_RDONLY | fs.constants.O_DIRECTORY
+    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  const pinDirectory = (named, selectedPath) => {
+    if (parents.has(named)) return parents.get(named);
+    if (parents.size >= 4096) fail('source_batch_ancestor_count_limit');
+    const descriptor = fs.openSync(selectedPath, directoryFlags);
+    try {
+      const metadata = fs.fstatSync(descriptor, { bigint: true }), current = fs.lstatSync(named, { bigint: true });
+      if (!metadata.isDirectory() || !current.isDirectory() || !same(metadata, current)) fail('source_batch_path_invalid', named);
+      const names = fs.readdirSync(`/proc/self/fd/${descriptor}`).sort();
+      if (names.length > 16384) fail('source_batch_namespace_count_limit');
+      const entry = { named, descriptor, metadata, names }; parents.set(named, entry); return entry;
+    } catch (cause) { fs.closeSync(descriptor); throw cause; }
+  };
+  const assertCurrent = () => {
+    for (const entry of [...parents.values(), ...files]) {
+      const metadata = fs.fstatSync(entry.descriptor, { bigint: true }), current = fs.lstatSync(entry.named, { bigint: true });
+      if (!same(entry.metadata, metadata) || !same(entry.metadata, current)
+          || (entry.expected ? !current.isFile() : !current.isDirectory())
+          || (!entry.expected && JSON.stringify(fs.readdirSync(`/proc/self/fd/${entry.descriptor}`).sort()) !== JSON.stringify(entry.names))) {
+        fail('source_subject_changed', entry.named);
+      }
+    }
+  };
+  try {
+    const heldRoot = pinDirectory(realRoot, realRoot);
+    for (const [relative, expected] of selected) {
+      const absolute = path.resolve(realRoot, relative), parts = relative.split('/');
+      if (relative.includes('\\') || parts.some(part => !part || part === '.' || part === '..')
+          || parts.length > 4096 || absolute === realRoot || !absolute.startsWith(realRoot + path.sep)) fail('path_escape', relative);
+      let named = realRoot, parent = heldRoot;
+      for (const component of parts.slice(0, -1)) {
+        named = path.join(named, component);
+        parent = pinDirectory(named, `/proc/self/fd/${parent.descriptor}/${component}`);
+      }
+      const descriptor = fs.openSync(`/proc/self/fd/${parent.descriptor}/${parts.at(-1)}`,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      try {
+        const metadata = fs.fstatSync(descriptor, { bigint: true }), current = fs.lstatSync(absolute, { bigint: true });
+        if (!metadata.isFile() || metadata.size > 16n * 1024n * 1024n || !current.isFile() || !same(metadata, current)) {
+          fail('regular_bounded_source_required', relative);
+        }
+        const mode = (metadata.mode & 0o111n) === 0n ? '100644' : '100755';
+        if (mode !== expected.mode) fail('source_worktree_blob_mismatch', relative);
+        files.push({ named: absolute, descriptor, metadata, expected, relative });
+      } catch (cause) { fs.closeSync(descriptor); throw cause; }
+    }
+    assertCurrent();
+    // Child descriptors are explicit stdio slots, never caller path input.
+    // Git reopens each held inode through /proc at byte zero; parent descriptor
+    // offsets and named replacement cannot silently select different bytes.
+    const output = runGit(root, ['hash-object', '--no-filters', '--stdin-paths'],
+      files.map((_, index) => `/proc/self/fd/${index + 3}\n`).join(''),
+      ['pipe', 'pipe', 'pipe', ...files.map(entry => entry.descriptor)]);
+    assertCurrent();
+    const hashes = output.split('\n');
+    if (hashes.length !== files.length || hashes.some(value => !/^[0-9a-f]{40}$/u.test(value))) {
+      fail('source_batch_git_output_invalid');
+    }
+    for (const [index, entry] of files.entries()) {
+      if (hashes[index] !== entry.expected.blob) fail('source_worktree_blob_mismatch', entry.relative);
+    }
+    assertCurrent();
+    // FDs are released between fixed batches. Preserve each initial raw
+    // identity and directory namespace for a complete final source recheck.
+    return [...parents.values(), ...files].map(({ named, metadata, names, expected }) => ({ named, metadata, names, file: Boolean(expected) }));
+  } finally {
+    for (const entry of files.reverse()) fs.closeSync(entry.descriptor);
+    for (const entry of [...parents.values()].reverse()) fs.closeSync(entry.descriptor);
+  }
+}
+
+function assertSourceBatchInputsCurrent(batches) {
+  const fields = ['dev', 'ino', 'mode', 'uid', 'gid', 'nlink', 'size', 'mtimeNs', 'ctimeNs'];
+  for (const batch of batches) for (const entry of batch) {
+    const current = fs.lstatSync(entry.named, { bigint: true });
+    if (fs.realpathSync(entry.named) !== entry.named
+        || fields.some(key => current[key] !== entry.metadata[key])
+        || (entry.file ? !current.isFile() : !current.isDirectory())
+        || (!entry.file && JSON.stringify(fs.readdirSync(entry.named).sort()) !== JSON.stringify(entry.names))) {
+      fail('source_subject_changed', entry.named);
+    }
+  }
+}
 
 export function trackedBlob(root, relative) {
   const output = git(root, ['ls-files', '-s', '--', relative]);

@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseStrictJson } from '../src/source-evidence-strict-json.mjs';
 import {
-  SAFE_RUST_TEST_PATTERN, artifactPin, assertExactCargoOwnerExecution,
+  SAFE_RUST_TEST_PATTERN, artifactPin, holdCargoTestArtifactEpoch, assertExactCargoOwnerExecution,
   cargoTargetObservation, cargoEnvironmentObservation, exactCargoTestInventory, assertCargoBinaryArtifactsCurrent, assertCargoBuildScriptsCurrent,
 } from '../src/source-evidence-cargo-observations.mjs';
 import { hashBytes, producerPin } from '../src/source-evidence-producer.mjs';
@@ -529,6 +529,7 @@ export function executeCommands(root, bundles, source) {
   const observations = [];
   const targets = [];
   const inventories = new Map();
+  const artifactOwners = new Map();
   const binaryImages = new Map();
   const buildImages = new Map();
   const env = safeExecutionEnvironment();
@@ -536,6 +537,7 @@ export function executeCommands(root, bundles, source) {
   let runtime;
   let producer;
   let finalRemaining;
+  try {
   for (const [bundleId, bundle] of bundles.entries()) {
     for (const [index, command] of bundle.commands.entries()) {
       const label = `${bundleId}:${index}`;
@@ -594,6 +596,8 @@ export function executeCommands(root, bundles, source) {
           const captured = run(runtime.cargo.path, discoveryArgs, { cwd: cwdReal, env, timeout: discoveryTimeoutMs });
           if (captured.status !== 0) fail('verification_discovery_failed', label);
           const actual = cargoTargetObservation(rootReal, binding, captured.stdout ?? '', label);
+          const artifactOwner = holdCargoTestArtifactEpoch(actual.artifact, rootReal);
+          artifactOwners.set(key, artifactOwner);
           const capture = cargoEnvironmentObservation(rootReal, binding, actual.artifact, captured.stdout ?? '', captured.pid, runtime, label, env, actual.binaryArtifacts, actual.buildScripts);
           assertCargoBinaryArtifactsCurrent(rootReal, actual.binaryArtifacts);
           assertCargoBuildScriptsCurrent(rootReal, actual.buildScripts);
@@ -605,6 +609,7 @@ export function executeCommands(root, bundles, source) {
           }
           const listTimeoutMs = remaining();
           const listed = run(actual.artifact.path, ['--list'], { cwd: capture.cwd, env: capture.environment, timeout: listTimeoutMs });
+          artifactOwner.assertCurrent();
           if (listed.status !== 0) fail('verification_discovery_failed', label);
           const tests = exactCargoTestInventory(listed.stdout ?? '', label);
           const targetId = `cargo-target-${targets.length}`;
@@ -619,16 +624,14 @@ export function executeCommands(root, bundles, source) {
               stdoutSha256: hashBytes(Buffer.from(listed.stdout ?? '')), stderrSha256: hashBytes(Buffer.from(listed.stderr ?? '')), tests },
             firstLogicalOwner: { bundleId, index }, elapsedMs: Number((process.hrtime.bigint() - started) / 1000000n) };
           targets.push(target);
-          inventories.set(key, { target, environment: capture.environment });
+          inventories.set(key, { target, environment: capture.environment, artifactOwner });
         }
         inventory = inventories.get(key);
         if (!inventory.target.inventory.tests.includes(binding.selector)) fail('verification_discovery_selector_missing', label);
         const artifact = inventory.target.artifact;
         assertCargoBinaryArtifactsCurrent(rootReal, inventory.target.binaryArtifacts);
         assertCargoBuildScriptsCurrent(rootReal, inventory.target.buildScripts);
-        if (JSON.stringify(artifactPin(artifact.path, rootReal)) !== JSON.stringify({ path: artifact.path, sha256: artifact.sha256, identity: artifact.identity })) {
-          fail('verification_artifact_changed', label);
-        }
+        inventory.artifactOwner.assertCurrent();
         executable = artifact.path;
         args = [binding.selector, '--exact', ...(command.args.includes('--ignored') ? ['--ignored'] : []), '--nocapture'];
         executionCwd = inventory.target.capture.cwd;
@@ -645,12 +648,9 @@ export function executeCommands(root, bundles, source) {
       let actualOwner;
       if (binding) {
         actualOwner = assertExactCargoOwnerExecution(binding.selector, result.stdout ?? '', label);
-        const artifact = inventory.target.artifact;
         assertCargoBinaryArtifactsCurrent(rootReal, inventory.target.binaryArtifacts);
         assertCargoBuildScriptsCurrent(rootReal, inventory.target.buildScripts);
-        if (JSON.stringify(artifactPin(artifact.path, rootReal)) !== JSON.stringify({ path: artifact.path, sha256: artifact.sha256, identity: artifact.identity })) {
-          fail('verification_artifact_changed', label);
-        }
+        inventory.artifactOwner.assertCurrent();
       } else assertTestExecution(command, bundle, result.stdout ?? '', label);
       remaining();
       observations.push({ args: command.args, bundleId, expectedExitCode: command.expectedExitCode, index,
@@ -665,6 +665,7 @@ export function executeCommands(root, bundles, source) {
     }
   }
   if (runtime) {
+    for (const owner of artifactOwners.values()) owner.finish();
     assertCargoBinaryArtifactsCurrent(rootReal, [...binaryImages.values()], true);
     assertCargoBuildScriptsCurrent(rootReal, [...buildImages.values()], true);
     for (const pin of [runtime.cargo, runtime.node]) {
@@ -675,6 +676,9 @@ export function executeCommands(root, bundles, source) {
     observations.at(-1).elapsedMs = bundles.get(observations.at(-1).bundleId).commands[observations.at(-1).index].timeoutSeconds * 1000 - lastBudgetRemaining;
   }
   return { observations, targets };
+  } finally {
+    for (const owner of artifactOwners.values()) owner.close();
+  }
 }
 
 function captureCargoOwnerEnvironment(argv) {

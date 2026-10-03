@@ -8,12 +8,14 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { before, after, test } from 'node:test';
 import { buildNativeOwners, safeEnvironment } from '../../docs/tools/node-rust-route-acceptance.mjs';
+import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
+import { resolveHeptaPaperCommand } from '../src/command-registry.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hashPaperRecord, hashPaperSemanticIdentity } from '../../paper-domain/contracts/primitives.mjs';
 
-// These ordinary previews exercise a bounded native profile. Execution,
-// publication, Node stack formatting and all oversized Node inputs remain
-// outside acceptance; no preview or test fixture grants external authority.
+// These ordinary previews exercise a bounded native profile. Local report
+// persistence has a separate normal-entry owner. Execution, Node stack formatting
+// and oversized inputs remain partial; no fixture grants external authority.
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(import.meta.url);
 const ids = s => [s.dev, s.ino, s.mode, s.uid, s.gid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String);
@@ -56,6 +58,10 @@ function environment(additions = {}) {
     LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', ...additions };
 }
 function copy(from, to, limit) {
+  if (graphPins.has(to)) {
+    assert.deepEqual(pin(from), inputPins.get(from));
+    assert.deepEqual(pin(to), graphPins.get(to)); return;
+  }
   const named = fs.lstatSync(from, { bigint: true }); assert.equal(named.isSymbolicLink(), false);
   assert.ok(++limit.entries <= 10000);
   if (named.isDirectory()) {
@@ -63,7 +69,7 @@ function copy(from, to, limit) {
     for (const name of fs.readdirSync(from).sort()) copy(path.join(from, name), path.join(to, name), limit);
     assert.deepEqual(ids(fs.lstatSync(from, { bigint: true })), ids(named)); return;
   }
-  const original = pin(from); limit.bytes += Number(named.size); assert.ok(limit.bytes <= 192 * 1024 * 1024);
+  const original = pin(from); limit.bytes += Number(named.size); assert.ok(limit.bytes <= 192 * 1024 * 1024, `fixture_copy_byte_limit:${from}:${limit.bytes}`);
   fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o750 });
   fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL); fs.chmodSync(to, Number(named.mode & 0o7777n));
   const copied = pin(to); assert.equal(copied.identity[5], '1'); assert.equal(copied.sha256, original.sha256);
@@ -152,7 +158,33 @@ before(async () => {
   code = path.join(fixture, 'code'); assets = path.join(fixture, 'assets'); runtimeRoot = path.join(fixture, 'runtime'); caller = path.join(fixture, 'caller');
   for (const directory of [code, caller, assets, runtimeRoot]) fs.mkdirSync(directory, { mode: 0o750 });
   const limit = { entries: 0, bytes: 0 };
-  for (const name of ['paper-core', 'paper-domain', 'paper-application', 'paper-adapters', 'paper-composition', 'paper-ports', 'workflow-kernel', 'store', 'migration', 'runtime-images', 'docs', 'package.json', 'package-lock.json']) copy(path.join(source, name), path.join(code, name), limit);
+  // Copy the actual normal command/import closure, not unrelated tests and
+  // development evidence. Keep all original runtime inputs, including the
+  // public R source closure when CI has materialized it; do not bypass its gate.
+  const command = resolveHeptaPaperCommand('operator', 'batch');
+  assert.equal(command.argv[0], 'node');
+  const pending = ['paper-core/bin/hepta-paper.mjs', command.argv[1],
+    'paper-adapters/persistence/store-provider.mjs', 'paper-adapters/persistence/sqlite-campaign-store.mjs',
+    'paper-domain/contracts/workflow-contracts.mjs', 'paper-domain/automation/campaign-plan.mjs',
+    'paper-adapters/runtime/system-clock.mjs', 'package.json', 'package-lock.json'];
+  const copied = new Set();
+  while (pending.length) {
+    const relative = pending.pop(); if (copied.has(relative)) continue;
+    assert.ok(copied.size < 4096, 'ordinary_module_closure_limit');
+    assert.ok(relative && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    copied.add(relative);
+    const from = path.join(source, relative); copy(from, path.join(code, relative), limit);
+    if (!relative.endsWith('.mjs')) continue;
+    const text = fs.readFileSync(from, 'utf8');
+    for (const specifier of relativeModuleSpecifiers(text)) {
+      pending.push(path.relative(source, path.resolve(path.dirname(from), specifier)));
+    }
+    for (const match of text.matchAll(/new URL\(\s*(['"])([^'"\r\n]+)\1\s*,\s*import\.meta\.url\s*\)/gu)) {
+      const selected = path.resolve(path.dirname(from), match[2]);
+      if (fs.existsSync(selected) && fs.lstatSync(selected).isFile()) pending.push(path.relative(source, selected));
+    }
+  }
+  for (const name of ['runtime-images', 'paper-core/config', 'store/migrations']) copy(path.join(source, name), path.join(code, name), limit);
   const lock = JSON.parse(fs.readFileSync(path.join(source, 'package-lock.json'), 'utf8'));
   for (const name of ['acorn', 'acorn-jsx', 'eslint-scope', 'eslint-visitor-keys', 'espree', 'esrecurse', 'estraverse']) {
     let packageRoot = path.dirname(require.resolve(name));
@@ -161,7 +193,12 @@ before(async () => {
     assert.equal(manifest.name, name); assert.equal(manifest.version, lock.packages[`node_modules/${name}`].version);
     copy(packageRoot, path.join(code, 'node_modules', name), limit);
   }
-  binary = path.join(code, 'bin/hepta-paper-rust'); copy(built.owners['hepta-paper-rust'].path, binary, limit);
+  // The qualified executable is one separate tool slot. The complete
+  // source/R graph retains its original 192 MiB bound; each tool retains
+  // the original 128 MiB regular-file bound and actual build hash.
+  const executableCopy = { entries: 0, bytes: 0 };
+  binary = path.join(code, 'bin/hepta-paper-rust'); copy(built.owners['hepta-paper-rust'].path, binary, executableCopy);
+  assert.equal(executableCopy.entries, 1); assert.ok(executableCopy.bytes <= 128 * 1024 * 1024);
   assert.equal(`sha256:${pin(binary).sha256}`, built.owners['hepta-paper-rust'].sha256);
   fs.writeFileSync(path.join(code, '.gitignore'), '/bin/\n/node_modules/\n', { flag: 'wx', mode: 0o640 });
   for (const args of [['init', '--quiet'], ['add', '--all'], ['-c', 'user.name=Normal batch test', '-c', 'user.email=fixture@localhost', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Actual copied Node ordinary graph']]) {
@@ -215,10 +252,6 @@ test('normal_batch_operator_refusals_and_native_authority_write_profile_remain_p
   const native = run('native', [...absolute(), '--mode', 'local-dry-run', '--execute'], {}, 1);
   assert.match(native.stderr, /native_batch_operator_execute_requires_bound_mutation_coordinator_v1/u);
   assert.deepEqual(namespace(fixture), before, 'native unavailable executor must refuse before any namespace effects');
-  const reportBefore = namespace(fixture);
-  const localReport = run('native', [...absolute(), '--mode', 'local-dry-run', '--write-report'], {}, 1);
-  assert.match(localReport.stderr, /native_batch_operator_local_report_persistence_v1_not_implemented/u);
-  assert.deepEqual(namespace(fixture), reportBefore, 'local report refusal must not create files or acquire authority');
   pair([...absolute(), '--mode', 'local-dry-run', '--json']);
 });
 

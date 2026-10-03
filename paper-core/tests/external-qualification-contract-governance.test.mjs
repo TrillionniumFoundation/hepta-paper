@@ -12,7 +12,7 @@ const expectedPackages = {
   'EXT-HOST-CGROUP-001': ['GAP-HOST-001', 'independent-linux-review-v1.schema.json'],
   'EXT-HOST-STORAGE-001': ['GAP-HOST-002', 'external-host-storage-package-v1.schema.json'],
   'EXT-KEY-OWNER-001': ['GAP-KEY-001', 'external-key-owner-drill-v1.schema.json'],
-  'EXT-CODEX-ROLE-001': ['GAP-CODEX-001', 'authenticated-codex-role-canary-v1.schema.json'],
+  'EXT-CODEX-ROLE-001': ['GAP-CODEX-001', 'authenticated-codex-role-canary-v2.schema.json'],
   'EXT-CUTOVER-SOAK-001': ['GAP-REL-001', 'production-cutover-soak-v1.schema.json'],
   'EXT-AUTHORITY-SET-001': ['GAP-REL-001', 'external-authority-set-v1.schema.json'],
 };
@@ -120,7 +120,8 @@ function validateMapping(mapping, externalGaps) {
     );
     assert.equal(row.gapId, gapId, row.packageId);
     assert.equal(row.issue, externalGaps[gapId], row.packageId);
-    assert.deepEqual(row.schemas, [schema], row.packageId);
+    assert.deepEqual(row.schemas, row.packageId === 'EXT-CODEX-ROLE-001'
+      ? [schema, 'authenticated-codex-role-canary-v1.schema.json'] : [schema], row.packageId);
     assert.match(row.executor, /^[a-z][a-z0-9_]{2,127}$/);
     assert.equal(row.automaticActivation, false);
     covered.add(gapId);
@@ -306,7 +307,7 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
   assert.equal(receipt.properties.automaticActivation.const, false);
   assert.ok(receipt.required.includes('researchWorkflowProfile'));
   const profileSchema = receipt.properties.researchWorkflowProfile;
-  assert.equal(profileSchema.properties.version.const, 1);
+  assert.deepEqual(profileSchema.properties.version.enum, [1, 2]);
   assert.equal(profileSchema.properties.stage.const, 'canary');
   assert.equal(profileSchema.properties.automaticActivation.const, false);
   assert.equal(profileSchema.properties.productionActivation.const, false);
@@ -352,6 +353,12 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
     { name: 'valid', schema, instance: JSON.stringify(valid) },
     { name: 'valid-receipt', schema: JSON.stringify(receipt), instance: JSON.stringify(validReceipt) },
   ];
+  const currentReceipt = structuredClone(validReceipt);
+  currentReceipt.researchWorkflowProfile.version = 2;
+  currentReceipt.researchWorkflowProfile.qualifiedCodexRoleRuntimeIdentityHashesV2 = {
+    author: sha, reviewer: 'sha256:' + 'b'.repeat(64),
+  };
+  rows.push({ name: 'valid-role-v2-receipt', schema: JSON.stringify(receipt), instance: JSON.stringify(currentReceipt) });
   for (const [name, mutate] of [
     ['missing', (value) => value.envelopes.pop()],
     ['duplicate', (value) => { value.envelopes[1].packageId = value.envelopes[0].packageId; }],
@@ -373,6 +380,16 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
     mutate(value);
     rows.push({ name, schema: JSON.stringify(receipt), instance: JSON.stringify(value) });
   }
+  for (const [name, mutate] of [
+    ['role-map-missing', (value) => { delete value.researchWorkflowProfile.qualifiedCodexRoleRuntimeIdentityHashesV2; }],
+    ['role-map-legacy', (value) => { value.researchWorkflowProfile.version = 1; }],
+    ['role-map-unknown-version', (value) => { value.researchWorkflowProfile.version = 3; }],
+    ['role-map-missing-reviewer', (value) => { delete value.researchWorkflowProfile.qualifiedCodexRoleRuntimeIdentityHashesV2.reviewer; }],
+    ['role-map-unknown-role', (value) => { value.researchWorkflowProfile.qualifiedCodexRoleRuntimeIdentityHashesV2.other = sha; }],
+  ]) {
+    const value = structuredClone(currentReceipt); mutate(value);
+    rows.push({ name, schema: JSON.stringify(receipt), instance: JSON.stringify(value) });
+  }
   const result = spawnSync('python3', ['docs/rust/tools/strict_json_schema.py', '--batch-stdin'], {
     cwd: repositoryRoot, input: JSON.stringify(rows), encoding: 'utf8', timeout: 30_000,
   });
@@ -380,7 +397,9 @@ test('research V3 schemas reject full-scope substitution and missing packages', 
   const report = JSON.parse(result.stdout);
   assert.deepEqual(new Set(report.failures.map((failure) => failure.name)),
     new Set(['missing', 'duplicate', 'publication', 'full-profile', 'extra-authority',
-      'receipt-stage', 'receipt-release', 'receipt-submission', 'receipt-missing-profile']));
+      'receipt-stage', 'receipt-release', 'receipt-submission', 'receipt-missing-profile',
+      'role-map-missing', 'role-map-legacy', 'role-map-unknown-version',
+      'role-map-missing-reviewer', 'role-map-unknown-role']));
 });
 
 test('research V4 requires four safety packages and rejects cutover or publication authority', () => {

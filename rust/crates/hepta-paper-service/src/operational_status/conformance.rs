@@ -24,7 +24,7 @@ const PROVENANCE_KEYS: &[&str] = &[
     "evidenceEnvironment",
     "evidenceClass",
 ];
-fn provenance_valid(value: &Value) -> bool {
+pub(super) fn provenance_valid(value: &Value) -> bool {
     exact_keys(value, PROVENANCE_KEYS)
         && value["version"] == 2
         && value["kind"] == "CodeProvenance"
@@ -71,6 +71,15 @@ fn production_subject(
     observation: &mut super::bounded::Observation<'_>,
 ) -> Result<Value> {
     observation.checkpoint()?;
+    let named_root = if observation.observes_node_imports() {
+        Some((
+            root.to_owned(),
+            fs::symlink_metadata(root)
+                .map_err(|_| error("capability_production_asset_root_invalid"))?,
+        ))
+    } else {
+        None
+    };
     let root =
         fs::canonicalize(root).map_err(|_| error("capability_production_asset_root_invalid"))?;
     let relative = "submission/AoM/A_Theory_of__Expectations/main.tex";
@@ -80,6 +89,9 @@ fn production_subject(
         fs::symlink_metadata(&cursor)
             .map_err(|_| error("capability_production_asset_root_invalid"))?,
     )];
+    if let Some(named) = named_root {
+        identities.insert(0, named);
+    }
     for part in Path::new(relative).components() {
         cursor.push(part);
         let meta = fs::symlink_metadata(&cursor)
@@ -94,6 +106,7 @@ fn production_subject(
         identities.push((cursor.clone(), meta));
     }
     let bytes = observation.read_file(&cursor, 128 * 1024 * 1024)?;
+    files::retain_source_identity(&cursor, &identities, observation)?;
     for (path, meta) in identities {
         if !files::same(
             &meta,

@@ -22,7 +22,7 @@ pub(super) const MAX_ENTRIES: usize = 200_000;
 const MAX_OPERATION_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const TIMEOUT_MS: u64 = 120_000;
 
-pub(super) struct Observation<'a> {
+pub(crate) struct Observation<'a> {
     cancelled: &'a AtomicBool,
     started: Instant,
     timeout_ms: u64,
@@ -32,6 +32,10 @@ pub(super) struct Observation<'a> {
     git_file: File,
     git_metadata: Metadata,
     environment: RestrictedEnvironmentV1,
+    inherited_deadline: Option<Instant>,
+    imported: BTreeMap<PathBuf, files::SnapshotIdentity>,
+    imported_path_bytes: usize,
+    imported_metadata_entries: usize,
 }
 
 fn read_error(_: std::io::Error) -> OperationalStatusError {
@@ -43,7 +47,7 @@ impl<'a> Observation<'a> {
         Self::select(cancelled, PathBuf::from("/usr/bin/git"), TIMEOUT_MS, true)
     }
 
-    pub(super) fn with_deadline(cancelled: &'a AtomicBool, deadline: Instant) -> Result<Self> {
+    pub(crate) fn with_deadline(cancelled: &'a AtomicBool, deadline: Instant) -> Result<Self> {
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .ok_or_else(|| error("code_provenance_deadline_exceeded"))?;
@@ -53,7 +57,54 @@ impl<'a> Observation<'a> {
         if millis == 0 {
             return Err(error("code_provenance_deadline_exceeded"));
         }
-        Self::select(cancelled, PathBuf::from("/usr/bin/git"), millis, true)
+        let mut value = Self::select(cancelled, PathBuf::from("/usr/bin/git"), millis, true)?;
+        value.inherited_deadline = Some(deadline);
+        value.checkpoint()?;
+        Ok(value)
+    }
+    pub(super) fn observes_node_imports(&self) -> bool {
+        self.inherited_deadline.is_some()
+    }
+    pub(super) fn retain_imported_identity(
+        &mut self,
+        snapshot: &files::SnapshotIdentity,
+    ) -> Result<()> {
+        self.checkpoint()?;
+        if self.inherited_deadline.is_some() {
+            if let Some(previous) = self.imported.get(snapshot.path()) {
+                if !previous.same_snapshot(snapshot) {
+                    return Err(error("code_provenance_imported_identity_changed"));
+                }
+                return Ok(());
+            }
+            let (bytes, entries) = snapshot.resources()?;
+            let path_bytes = self
+                .imported_path_bytes
+                .checked_add(bytes)
+                .filter(|n| *n <= 4 * 1024 * 1024)
+                .ok_or_else(|| error("code_provenance_imported_identity_budget_exceeded"))?;
+            let metadata_entries = self
+                .imported_metadata_entries
+                .checked_add(entries)
+                .filter(|n| *n <= 65_536)
+                .ok_or_else(|| error("code_provenance_imported_identity_budget_exceeded"))?;
+            if self.imported.len() >= 4096 {
+                return Err(error("code_provenance_imported_identity_budget_exceeded"));
+            }
+            self.entry()?;
+            self.imported
+                .insert(snapshot.path().to_owned(), snapshot.clone());
+            self.imported_path_bytes = path_bytes;
+            self.imported_metadata_entries = metadata_entries;
+        }
+        Ok(())
+    }
+    pub(super) fn assert_imported_current(&self) -> Result<()> {
+        for snapshot in self.imported.values() {
+            self.checkpoint()?;
+            snapshot.assert_current()?;
+        }
+        self.checkpoint()
     }
 
     fn select(
@@ -138,16 +189,24 @@ impl<'a> Observation<'a> {
             git_file,
             git_metadata,
             environment,
+            inherited_deadline: None,
+            imported: BTreeMap::new(),
+            imported_path_bytes: 0,
+            imported_metadata_entries: 0,
         };
         observation.checkpoint()?;
         Ok(observation)
     }
 
-    pub(super) fn checkpoint(&self) -> Result<()> {
+    pub(crate) fn checkpoint(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Acquire) {
             return Err(error("code_provenance_cancelled"));
         }
-        if self.started.elapsed().as_millis() >= u128::from(self.timeout_ms) {
+        if self
+            .inherited_deadline
+            .is_some_and(|limit| Instant::now() >= limit)
+            || self.started.elapsed().as_millis() >= u128::from(self.timeout_ms)
+        {
             return Err(error("code_provenance_deadline_exceeded"));
         }
         let named = fs::symlink_metadata(&self.git_path)
@@ -162,7 +221,7 @@ impl<'a> Observation<'a> {
         Ok(())
     }
 
-    pub(super) fn entry(&mut self) -> Result<()> {
+    pub(crate) fn entry(&mut self) -> Result<()> {
         self.checkpoint()?;
         self.source_entries = self
             .source_entries
@@ -215,7 +274,7 @@ impl<'a> Observation<'a> {
         Ok(file)
     }
 
-    pub(super) fn read_file(&mut self, path: &Path, limit: u64) -> Result<Vec<u8>> {
+    pub(crate) fn read_file(&mut self, path: &Path, limit: u64) -> Result<Vec<u8>> {
         let named = fs::symlink_metadata(path).map_err(read_error)?;
         let mut file = self.open_regular(path)?;
         let before = file.metadata().map_err(read_error)?;
@@ -247,7 +306,7 @@ impl<'a> Observation<'a> {
         Ok(bytes)
     }
 
-    pub(super) fn git(
+    pub(crate) fn git(
         &mut self,
         root: &Path,
         operation: &str,
@@ -553,6 +612,47 @@ mod tests {
         assert!(
             pid_state(&pid).is_none_or(|now| now.1 == "Z"),
             "original owned child remains live"
+        );
+    }
+    #[test]
+    fn ordinary_trust_retained_witnesses_deduplicate_and_reserve_before_cloning() {
+        let fixture = Fixture::new();
+        let c = AtomicBool::new(false);
+        let deadline = Instant::now() + std::time::Duration::from_secs(120);
+        let path = fixture.0.join("empty-source");
+        fs::write(&path, b"").unwrap();
+        let mut observer = Observation::with_deadline(&c, deadline).unwrap();
+        for _ in 0..128 {
+            assert_eq!(
+                files::read_source_hash_with_observation(&fixture.0, &path, &mut observer).unwrap(),
+                super::super::hash(b"")
+            );
+        }
+        assert_eq!(observer.imported.len(), 1);
+        let original_bytes = observer.imported_path_bytes;
+        let original_entries = observer.imported_metadata_entries;
+        assert!(original_bytes > 0 && original_entries > 0);
+        observer.assert_imported_current().unwrap();
+        let other = fixture.0.join("other");
+        fs::write(&other, b"").unwrap();
+        observer.imported_path_bytes = 4 * 1024 * 1024;
+        assert_eq!(
+            files::read_source_hash_with_observation(&fixture.0, &other, &mut observer)
+                .unwrap_err()
+                .0,
+            "code_provenance_imported_identity_budget_exceeded"
+        );
+        assert_eq!(observer.imported.len(), 1);
+        assert_eq!(observer.imported_metadata_entries, original_entries);
+        let mut fresh = Observation::with_deadline(&c, deadline).unwrap();
+        files::read_source_hash_with_observation(&fixture.0, &other, &mut fresh).unwrap();
+        fresh.assert_imported_current().unwrap();
+        fs::write(&other, b"new").unwrap();
+        assert_eq!(
+            files::read_source_hash_with_observation(&fixture.0, &other, &mut fresh)
+                .unwrap_err()
+                .0,
+            "code_provenance_imported_identity_changed"
         );
     }
 }

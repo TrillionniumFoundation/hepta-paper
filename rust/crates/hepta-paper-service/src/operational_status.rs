@@ -5,7 +5,7 @@
 //! Node is used only by the differential test oracle.
 
 pub(crate) mod authority;
-mod bounded;
+pub(crate) mod bounded;
 mod conformance;
 mod files;
 mod ordered;
@@ -13,6 +13,9 @@ mod owner;
 pub(crate) mod production;
 mod provenance;
 mod sealed;
+mod trust;
+pub use trust::inspect_ordinary_release_trust_gate_with_control_v1;
+pub(crate) use trust::observe_ordinary_release_trust_gate_with_control_v1;
 
 pub(crate) use ordered::Ordered;
 pub(crate) use provenance::{ProvenanceObservationV1, current_bounded_code_provenance_v1};
@@ -254,6 +257,21 @@ pub fn capability_operational_proof_status_with_cancellation_v1(
     let mut observation = bounded::Observation::new(cancelled)?;
     let provenance =
         provenance::current_operational_with_observation(workspace_root, &mut observation)?;
+    capability_proof_status_from_observation_v1(
+        workspace_root,
+        runtime_root,
+        asset_root,
+        &provenance,
+        &mut observation,
+    )
+}
+fn capability_proof_status_from_observation_v1(
+    workspace_root: &Path,
+    runtime_root: &Path,
+    asset_root: &Path,
+    provenance: &Value,
+    observation: &mut bounded::Observation<'_>,
+) -> Result<Value> {
     let commit = provenance["commit"]
         .as_str()
         .ok_or_else(|| error("code_provenance_commit_required"))?;
@@ -277,7 +295,7 @@ pub fn capability_operational_proof_status_with_cancellation_v1(
     if let Some(trust) = read_imported_with_observation(
         runtime_root,
         &runtime_root.join("owner-acceptance/OWNER_TRUST_STORE.json"),
-        &mut observation,
+        observation,
     )? {
         let mut accepted = Vec::new();
         let mut enumerated = 0usize;
@@ -310,7 +328,7 @@ pub fn capability_operational_proof_status_with_cancellation_v1(
             for path in paths {
                 observation.checkpoint()?;
                 if let Some(receipt) =
-                    read_imported_with_observation(runtime_root, &path, &mut observation)?
+                    read_imported_with_observation(runtime_root, &path, observation)?
                     && targets_match_json(&receipt, &targets[*capability])
                     && operational_receipt(
                         &receipt.document,
@@ -342,10 +360,10 @@ pub fn capability_operational_proof_status_with_cancellation_v1(
     let conformance = match conformance::load(
         runtime_root,
         asset_root,
-        &provenance,
+        provenance,
         &catalog,
         &targets,
-        &mut observation,
+        observation,
     ) {
         Ok(value) => value,
         Err(failure) if failure.0.starts_with("code_provenance_") => return Err(failure),

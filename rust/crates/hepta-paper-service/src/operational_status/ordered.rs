@@ -72,12 +72,28 @@ impl<'de> Deserialize<'de> for Ordered {
 }
 impl Ordered {
     pub fn value(&self) -> Value {
+        self.project_value(false)
+    }
+    pub(super) fn node_value(&self) -> Value {
+        self.project_value(true)
+    }
+    fn project_value(&self, node_numbers: bool) -> Value {
         match self {
-            Self::Scalar(v) => v.clone(),
-            Self::Array(v) => Value::Array(v.iter().map(Self::value).collect()),
-            Self::Object(v) => {
-                Value::Object(v.iter().map(|(k, v)| (k.clone(), v.value())).collect())
+            Self::Scalar(v) => {
+                if node_numbers {
+                    crate::native_research_claims::json_boundary(v)
+                } else {
+                    v.clone()
+                }
             }
+            Self::Array(v) => {
+                Value::Array(v.iter().map(|v| v.project_value(node_numbers)).collect())
+            }
+            Self::Object(v) => Value::Object(
+                v.iter()
+                    .map(|(k, v)| (k.clone(), v.project_value(node_numbers)))
+                    .collect(),
+            ),
         }
     }
     pub fn get(&self, key: &str) -> Option<&Ordered> {

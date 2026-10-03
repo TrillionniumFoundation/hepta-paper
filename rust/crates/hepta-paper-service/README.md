@@ -70,6 +70,29 @@ and [runtime image handoff](../../../docs/modules/RUNTIME_IMAGE_REPRODUCIBILITY_
 Each describes its complete argument interface, actual Node differential tests,
 write ownership, crash behavior and remaining acceptance boundaries.
 
+The ordinary `operator autonomous-research-one-shot-campaign-attempt` path uses
+the same dispatcher for status, plan and preflight. Plan/preflight retain the
+actual dataset mount document and the existing opaque V4 dataset observation;
+the receipt is only a diagnostic view. Host borrows use the original cancellation
+object and absolute deadline, checking the held mount, dataset, trust and plugin
+inputs before and after an await, including a failed future. Invalidated owners
+cannot be revived by restoring a path, clearing cancellation or extending time.
+See [the consumer](src/ordinary_one_shot/dataset.rs) and its
+[actual normal-entry and await tests](src/ordinary_one_shot/dataset/tests.rs).
+Run the owners with the pinned Node binary in `HEPTA_TEST_NODE` and
+`HEPTA_PRODUCTION_NODE_BINARY`:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --lib ordinary_one_shot:: -- --test-threads=1
+```
+
+These tests compare the incumbent normal arguments and complete output bytes,
+and exercise retained-file, cancellation, expiry and revocation boundaries.
+They use source-only signing fixtures. Ordinary successful one-shot execution,
+real account canaries and installation acceptance remain separate requirements;
+the current normal execute path rejects unsupported execution explicitly.
+
 `ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
 directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,
 verifier hash, initial state hash, writer lease, explicit clock and worker table.

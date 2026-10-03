@@ -458,3 +458,96 @@ fn full_stdout_capture_rejects_overflow_and_cancellation_without_new_authority()
     );
     assert!(!tree.0.join("should-not-exist").exists());
 }
+
+#[test]
+fn actual_combined_output_budget_keeps_exact_boundary_and_legacy_none() {
+    use super::run_bounded_process_capturing_stdout_with_cancellation_and_combined_output_limit_v1 as run;
+    use std::sync::atomic::AtomicBool;
+    let tree = TempTree::new();
+    // Real concurrent writers exercise the shared counter, not caller totals.
+    let script = r#"(printf '%0500d' 0) & (printf '%0524d' 0 >&2) & wait"#;
+    let c = AtomicBool::new(false);
+    let limits = ProcessLimitsV1 {
+        maximum_stdout_bytes: 2048,
+        maximum_stderr_bytes: 2048,
+        maximum_tail_bytes: 2048,
+        ..pressure_limits()
+    };
+    let accepted = run(&shell_request(&tree, script), limits, &c, Some(1024)).unwrap();
+    assert_eq!(
+        accepted.process.termination_reason,
+        ProcessTerminationReason::Exited
+    );
+    assert_eq!(accepted.process.exit_code, Some(0));
+    assert_eq!(
+        accepted.process.stdout_bytes + accepted.process.stderr_bytes,
+        1024
+    );
+    assert_eq!(
+        accepted.stdout.len() + accepted.process.stderr_tail.len(),
+        1024
+    );
+    assert!(accepted.process.process_group_cleanup_verified);
+    let overflow = r#"(printf '%01000d' 0) & (printf '%01000d' 0 >&2) & wait; sleep 30"#;
+    let refused = run(&shell_request(&tree, overflow), limits, &c, Some(1024)).unwrap();
+    assert_eq!(
+        refused.process.termination_reason,
+        ProcessTerminationReason::CombinedOutputLimitExceeded
+    );
+    assert!(refused.process.stdout_bytes + refused.process.stderr_bytes > 1024);
+    assert!(refused.stdout.len() + refused.process.stderr_tail.len() <= 1024);
+    assert!(refused.process.process_group_cleanup_verified);
+    let legacy = run(
+        &shell_request(
+            &tree,
+            r#"(printf '%01000d' 0) & (printf '%01000d' 0 >&2) & wait"#,
+        ),
+        limits,
+        &c,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        legacy.process.termination_reason,
+        ProcessTerminationReason::Exited
+    );
+    assert_eq!(legacy.stdout.len() + legacy.process.stderr_tail.len(), 2000);
+    assert!(legacy.process.process_group_cleanup_verified);
+    for limit in [0, 4097] {
+        let value = shell_request(&tree, "touch forbidden-spawn");
+        assert_eq!(
+            run(&value, limits, &c, Some(limit)).unwrap_err(),
+            BoundedProcessError::InvalidLimits
+        );
+        assert!(!tree.0.join("forbidden-spawn").exists());
+    }
+}
+#[test]
+fn actual_combined_output_cancellation_cleans_the_existing_group_owner() {
+    use super::run_bounded_process_capturing_stdout_with_cancellation_and_combined_output_limit_v1 as run;
+    use std::{
+        sync::{Arc, atomic::AtomicBool},
+        time::Duration,
+    };
+    let tree = TempTree::new();
+    let c = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&c);
+    let thread = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(60));
+        flag.store(true, Ordering::Release);
+    });
+    let observed = run(
+        &shell_request(&tree, "sleep 30"),
+        pressure_limits(),
+        &c,
+        Some(256),
+    )
+    .unwrap();
+    thread.join().unwrap();
+    assert_eq!(
+        observed.process.termination_reason,
+        ProcessTerminationReason::Cancelled
+    );
+    assert!(observed.process.process_group_cleanup_verified);
+    assert!(observed.stdout.len() + observed.process.stderr_tail.len() <= 256);
+}

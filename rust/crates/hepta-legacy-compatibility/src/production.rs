@@ -360,6 +360,7 @@ fn encode_node(value: &NodeJson) -> Result<Vec<u8>, CompatibilityError> {
         value,
         Some(&collator),
         0,
+        false,
         &mut JsonOutput::new(
             Some(&mut output),
             ProductionJsonEncodingLimitsV1::default(),
@@ -377,6 +378,7 @@ pub fn production_json_stringify_v1(
         value,
         None,
         0,
+        false,
         &mut JsonOutput::new(
             Some(&mut output),
             ProductionJsonEncodingLimitsV1::default(),
@@ -393,7 +395,7 @@ pub fn production_json_resources_v1(
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<ProductionJsonEncodedResourcesV1, CompatibilityError> {
     let mut sink = JsonOutput::new(None, limits, Some(cancelled))?;
-    encode(value, None, 0, &mut sink)?;
+    encode(value, None, 0, false, &mut sink)?;
     Ok(sink.resources)
 }
 /// Tighten wire limits and check cancellation before every output append.
@@ -407,14 +409,52 @@ pub fn production_json_stringify_with_limits_v1(
         value,
         None,
         0,
+        false,
         &mut JsonOutput::new(Some(&mut output), limits, Some(cancelled))?,
     )?;
     Ok(output)
 }
+/// JSON.stringify(value, null, 2) over the SAME primitive/order/UTF-16 and
+/// pre-append limits as the compact encoder. Object insertion order comes from
+/// the actual supplied ProductionJsonValue; this never invents sorted source order.
+pub fn production_json_pretty_with_limits_v1(
+    value: &ProductionJsonValue,
+    limits: ProductionJsonEncodingLimitsV1,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, CompatibilityError> {
+    let mut output = Vec::new();
+    encode(
+        value,
+        None,
+        0,
+        true,
+        &mut JsonOutput::new(Some(&mut output), limits, Some(cancelled))?,
+    )?;
+    Ok(output)
+}
+/// Exact pretty-byte/resource preflight, without allocating an encoded buffer.
+pub fn production_json_pretty_resources_v1(
+    value: &ProductionJsonValue,
+    limits: ProductionJsonEncodingLimitsV1,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<ProductionJsonEncodedResourcesV1, CompatibilityError> {
+    let mut sink = JsonOutput::new(None, limits, Some(cancelled))?;
+    encode(value, None, 0, true, &mut sink)?;
+    Ok(sink.resources)
+}
+fn newline_and_indent(output: &mut JsonOutput<'_>, depth: usize) -> Result<(), CompatibilityError> {
+    output.push(b'\n')?;
+    for _ in 0..depth {
+        output.extend(b"  ")?;
+    }
+    Ok(())
+}
+
 fn encode(
     value: &NodeJson,
     collator: Option<&CollatorBorrowed<'_>>,
     depth: usize,
+    pretty: bool,
     output: &mut JsonOutput<'_>,
 ) -> Result<(), CompatibilityError> {
     check_depth(depth)?;
@@ -436,7 +476,13 @@ fn encode(
                 if index != 0 {
                     output.push(b',')?;
                 }
-                encode(value, collator, depth + 1, output)?;
+                if pretty {
+                    newline_and_indent(output, depth + 1)?;
+                }
+                encode(value, collator, depth + 1, pretty, output)?;
+            }
+            if pretty && !values.is_empty() {
+                newline_and_indent(output, depth)?;
             }
             output.push(b']')?;
         }
@@ -466,9 +512,18 @@ fn encode(
                 if index != 0 {
                     output.push(b',')?;
                 }
+                if pretty {
+                    newline_and_indent(output, depth + 1)?;
+                }
                 encode_string(key, output)?;
                 output.push(b':')?;
-                encode(value, collator, depth + 1, output)?;
+                if pretty {
+                    output.push(b' ')?;
+                }
+                encode(value, collator, depth + 1, pretty, output)?;
+            }
+            if pretty && !values.is_empty() {
+                newline_and_indent(output, depth)?;
             }
             output.push(b'}')?;
         }

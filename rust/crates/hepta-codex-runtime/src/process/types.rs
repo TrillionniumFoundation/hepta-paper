@@ -90,6 +90,8 @@ pub enum ProcessTerminationReason {
     Cancelled,
     StdoutLimitExceeded,
     StderrLimitExceeded,
+    /// The opt-in shared stdout/stderr byte budget was exceeded.
+    CombinedOutputLimitExceeded,
     DescendantSurvivedLeader,
 }
 

@@ -23,6 +23,25 @@ use super::{
     },
 };
 
+/// Pure identity composition shared by filesystem inspection and signed role
+/// evidence validation. This does not inspect credentials or grant authority.
+pub fn codex_runtime_identity_hash_v1(
+    executable_identity_hash: &Sha256Digest,
+    home_identity_hash: &Sha256Digest,
+    model_selector: &str,
+    environment_policy_hash: &Sha256Digest,
+    transport_profile_hash: &Sha256Digest,
+) -> Result<Sha256Digest, RuntimeIdentityError> {
+    validate_model_selector(model_selector)?;
+    let mut hasher = DomainHasher::new("CodexRuntimeIdentityV1");
+    hasher.digest("executableIdentityHash", executable_identity_hash);
+    hasher.digest("homeIdentityHash", home_identity_hash);
+    hasher.field("modelSelector", model_selector.as_bytes());
+    hasher.digest("environmentPolicyHash", environment_policy_hash);
+    hasher.digest("transportProfileHash", transport_profile_hash);
+    hasher.finish()
+}
+
 /// Inspects a qualified executable, private Codex home and non-secret credential metadata.
 pub fn inspect_codex_runtime_identity(
     executable: &OsStr,
@@ -44,13 +63,13 @@ pub fn inspect_codex_runtime_identity(
         policy.maximum_executable_bytes,
     )?;
     let home = inspect_codex_home(codex_home, policy)?;
-    let mut hasher = DomainHasher::new("CodexRuntimeIdentityV1");
-    hasher.digest("executableIdentityHash", &executable.identity_hash);
-    hasher.digest("homeIdentityHash", &home.identity_hash);
-    hasher.field("modelSelector", model_selector.as_bytes());
-    hasher.digest("environmentPolicyHash", &environment_policy_hash);
-    hasher.digest("transportProfileHash", &transport_profile_hash);
-    let identity_hash = hasher.finish()?;
+    let identity_hash = codex_runtime_identity_hash_v1(
+        &executable.identity_hash,
+        &home.identity_hash,
+        model_selector,
+        &environment_policy_hash,
+        &transport_profile_hash,
+    )?;
     Ok(CodexRuntimeIdentityV1 {
         executable,
         home,

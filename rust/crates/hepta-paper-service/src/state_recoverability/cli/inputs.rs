@@ -14,11 +14,31 @@ pub(in crate::state_recoverability) fn configuration(
     path: &Path,
     code: &str,
 ) -> Result<(super::super::files::ObservedFile, String, Value)> {
+    configuration_with_control(path, code, None)
+}
+pub(super) fn configuration_with_control(
+    path: &Path,
+    code: &str,
+    control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+) -> Result<(super::super::files::ObservedFile, String, Value)> {
+    if let Some(control) = &control {
+        control.check()?;
+    }
     let observed =
         super::super::files::ObservedFile::open(path, 4 * 1024 * 1024).map_err(|_| error(code))?;
-    let bytes = observed.bytes(4 * 1024 * 1024).map_err(|_| error(code))?;
+    let bytes = observed
+        .bytes_with_control(4 * 1024 * 1024, control.as_ref())
+        .map_err(|cause| {
+            if let Some(control) = &control
+                && let Err(control_failure) = control.check()
+            {
+                return control_failure;
+            }
+            let _ = cause;
+            error(code)
+        })?;
     let pin = hash_bytes(&bytes);
-    let snapshot = Snapshot::load(path, &pin, 4 * 1024 * 1024, code)?;
+    let snapshot = Snapshot::load_with_control(path, &pin, 4 * 1024 * 1024, code, control.clone())?;
     let document = snapshot.json(code)?;
     observed.assert_current().map_err(|_| error(code))?;
     Ok((observed, pin, document))
@@ -44,10 +64,20 @@ pub(crate) struct ManifestFile {
     file: File,
     metadata: Metadata,
     parents: Vec<(PathBuf, File)>,
+    control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
     pub value: Value,
 }
 impl ManifestFile {
     pub fn load(path: &Path) -> Result<Self> {
+        Self::load_with_control(path, None)
+    }
+    pub(super) fn load_with_control(
+        path: &Path,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
+        if let Some(control) = &control {
+            control.check()?;
+        }
         let failed = || error("autonomous_research_state_backup_manifest_file_invalid");
         if !path.is_absolute()
             || path
@@ -67,6 +97,9 @@ impl ManifestFile {
             })
             .peekable();
         while let Some(name) = parts.next() {
+            if let Some(control) = &control {
+                control.check()?;
+            }
             let last = parts.peek().is_none();
             let file = File::from(
                 openat(
@@ -97,12 +130,21 @@ impl ManifestFile {
                     return Err(failed());
                 }
                 let mut bytes = vec![0; usize::try_from(metadata.len()).map_err(|_| failed())?];
-                file.read_exact_at(&mut bytes, 0).map_err(|_| failed())?;
+                if let Some(control) = &control {
+                    for (index, chunk) in bytes.chunks_mut(64 * 1024).enumerate() {
+                        control.check()?;
+                        file.read_exact_at(chunk, (index * 64 * 1024) as u64)
+                            .map_err(|_| failed())?;
+                    }
+                } else {
+                    file.read_exact_at(&mut bytes, 0).map_err(|_| failed())?;
+                }
                 let value = Self {
                     path: cursor,
                     file,
                     metadata,
                     parents,
+                    control,
                     value: parse(
                         &bytes,
                         "autonomous_research_state_backup_manifest_file_invalid",
@@ -116,6 +158,9 @@ impl ManifestFile {
         Err(failed())
     }
     pub fn assert_current(&self) -> Result<()> {
+        if let Some(control) = &self.control {
+            control.check()?;
+        }
         let failed = || error("autonomous_research_state_backup_manifest_file_changed");
         for (path, parent) in &self.parents {
             let held = parent.metadata().map_err(|_| failed())?;

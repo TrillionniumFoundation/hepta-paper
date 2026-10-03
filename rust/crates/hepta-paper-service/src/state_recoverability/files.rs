@@ -123,12 +123,31 @@ impl ObservedFile {
         Ok(())
     }
     pub fn bytes(&self, maximum: u64) -> Result<Vec<u8>> {
+        self.bytes_with_control(maximum, None)
+    }
+    pub(crate) fn bytes_with_control(
+        &self,
+        maximum: u64,
+        control: Option<&crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Vec<u8>> {
+        if let Some(control) = control {
+            control.check()?;
+        }
         self.assert_current()?;
         if self.metadata.len() > maximum {
             return Err(fail());
         }
         let mut bytes = vec![0; usize::try_from(self.metadata.len()).map_err(|_| fail())?];
-        self.file.read_exact_at(&mut bytes, 0).map_err(|_| fail())?;
+        if let Some(control) = control {
+            for (index, chunk) in bytes.chunks_mut(64 * 1024).enumerate() {
+                control.check()?;
+                self.file
+                    .read_exact_at(chunk, (index * 64 * 1024) as u64)
+                    .map_err(|_| fail())?;
+            }
+        } else {
+            self.file.read_exact_at(&mut bytes, 0).map_err(|_| fail())?;
+        }
         if bytes.len() as u64 != self.metadata.len() || bytes.len() as u64 > maximum {
             return Err(fail());
         }

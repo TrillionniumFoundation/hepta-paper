@@ -1,7 +1,7 @@
 use crate::{
     ObjectStoreV1, ServiceError,
     native_business::{
-        NativeBusinessJobV1, execute_native_business_with_objects_for_capability_v1,
+        NativeBusinessJobV1, execute_native_business_with_objects_and_deadline_for_capability_v1,
         native_business_implementation_hash_v1,
     },
 };
@@ -128,6 +128,7 @@ pub struct ServiceExecutorV1 {
     workers: BTreeMap<String, WorkerBindingV1>,
     cancelled: Arc<AtomicBool>,
     broker_context: Option<crate::broker_prepared::BrokerConsumerContextV1>,
+    inherited_native_deadline: Option<std::time::Instant>,
     broker_commit_targets:
         Arc<Mutex<BTreeMap<Sha256Digest, crate::broker_prepared::BrokerCommitTargetV2>>>,
 }
@@ -146,6 +147,7 @@ impl ServiceExecutorV1 {
             workers,
             cancelled: Arc::new(AtomicBool::new(false)),
             broker_context: None,
+            inherited_native_deadline: None,
             broker_commit_targets: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
@@ -155,6 +157,14 @@ impl ServiceExecutorV1 {
         context: crate::broker_prepared::BrokerConsumerContextV1,
     ) -> Self {
         self.broker_context = Some(context);
+        self
+    }
+
+    pub(crate) fn with_inherited_native_deadline(
+        mut self,
+        deadline: Option<std::time::Instant>,
+    ) -> Self {
+        self.inherited_native_deadline = deadline;
         self
     }
 
@@ -446,11 +456,12 @@ impl ServiceExecutorV1 {
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::Business { job }) => {
-                let output = execute_native_business_with_objects_for_capability_v1(
+                let output = execute_native_business_with_objects_and_deadline_for_capability_v1(
                     job,
                     &request.candidate.capability_id,
                     &self.objects,
                     &self.cancelled,
+                    self.inherited_native_deadline,
                 )
                 .map_err(|_| ServiceError::Execution)?;
                 let mut hashes = Vec::with_capacity(output.artifacts.len());

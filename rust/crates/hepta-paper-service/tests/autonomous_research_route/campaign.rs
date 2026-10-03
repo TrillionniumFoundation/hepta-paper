@@ -557,8 +557,7 @@ fn rejected_review_with_no_remaining_rounds_keeps_committed_results_and_budget()
 fn ordinary_research_profile_requires_real_admission_and_independent_principals_before_dispatch() {
     use hepta_paper_service::{ResearchActivationStageV1, ResearchWorkflowProfileV1};
     let mut c = Campaign::new();
-    c.request.reviewer.source.runtime_identity_hash =
-        c.request.author.source.runtime_identity_hash.clone();
+    c.request.reviewer.source.runtime_identity_hash = hash(b"distinct reviewer expected runtime");
     c.request.author.source.broker_uid += 1;
     c.request.author.source.broker_gid += 1;
     c.request.reviewer.source.broker_uid = c.request.author.source.broker_uid + 1;
@@ -570,7 +569,7 @@ fn ordinary_research_profile_requires_real_admission_and_independent_principals_
         role.source.operation_publisher=Some(serde_json::from_value(json!({"version":1,"role":agent_role,"operationDirectory":c.author.root.join(if agent_role==AgentRole::Author {"author-operations"} else {"reviewer-operations"}),"authorityUid":role.source.request_owner_uid,"brokerUid":role.source.broker_uid,"brokerGid":role.source.broker_gid,"workspacePath":c.author.root.join("workspace"),"promptPrefixPath":c.author.root.join("prefix.txt"),"promptPrefixHash":role.prompt_envelope_hash,"outputSchemaPath":c.author.root.join("schema.json"),"outputSchemaHash":role.output_schema_hash,"mutationPolicy":{"version":1,"readOnly":agent_role==AgentRole::Reviewer,"allowedPathPrefixes":["draft.md"],"allowedExtensions":["md"],"maximumChangedEntries":4,"maximumChangedFileBytes":1024}})).unwrap());
     }
     c.request.research_profile = Some(ResearchWorkflowProfileV1 {
-        version: 1,
+        version: 2,
         stage: ResearchActivationStageV1::Canary,
         repository: "TrillionniumFoundation/hepta-paper".into(),
         commit: "a".repeat(40),
@@ -584,11 +583,35 @@ fn ordinary_research_profile_requires_real_admission_and_independent_principals_
             .source
             .runtime_identity_hash
             .clone(),
+        qualified_codex_role_runtime_identity_hashes_v2: std::collections::BTreeMap::from([
+            (
+                "author".into(),
+                c.request.author.source.runtime_identity_hash.clone(),
+            ),
+            (
+                "reviewer".into(),
+                c.request.reviewer.source.runtime_identity_hash.clone(),
+            ),
+        ]),
         automatic_activation: false,
         production_activation: false,
         release_authority: false,
         submission_authority: false,
     });
+    // A legacy same-runtime diagnostic cannot satisfy ordinary role admission.
+    let current_profile = c.request.research_profile.clone();
+    let legacy = c.request.research_profile.as_mut().unwrap();
+    legacy.version = 1;
+    legacy
+        .qualified_codex_role_runtime_identity_hashes_v2
+        .clear();
+    c.write();
+    assert_eq!(
+        c.invoke("prepare", None)["error"],
+        "autonomous_research_campaign_qualification_binding_rejected"
+    );
+    assert!(!c.root.exists());
+    c.request.research_profile = current_profile;
     c.write();
     assert_eq!(c.invoke("prepare", None)["ready"], true);
     assert!(!c.root.exists());
@@ -621,16 +644,67 @@ fn ordinary_research_profile_requires_real_admission_and_independent_principals_
         .as_mut()
         .unwrap()
         .broker_uid = c.request.reviewer.source.broker_uid;
-    c.request
-        .research_profile
-        .as_mut()
-        .unwrap()
-        .release_authority = true;
+    // The public ordinary command must reject each attempted escalation before
+    // initializing workflow state or issuing a signed broker request. These
+    // profiles are untrusted wire data; they are never qualified authority.
+    for authority in ["automatic", "production", "release", "submission"] {
+        let profile = c.request.research_profile.as_mut().unwrap();
+        profile.automatic_activation = false;
+        profile.production_activation = false;
+        profile.release_authority = false;
+        profile.submission_authority = false;
+        match authority {
+            "automatic" => profile.automatic_activation = true,
+            "production" => profile.production_activation = true,
+            "release" => profile.release_authority = true,
+            "submission" => profile.submission_authority = true,
+            _ => unreachable!(),
+        }
+        c.write();
+        for action in ["launch", "converge"] {
+            let report = c.invoke(action, None);
+            assert_eq!(
+                report["error"], "autonomous_research_campaign_qualification_binding_rejected",
+                "{authority}/{action}: {report}"
+            );
+            for field in [
+                "ready",
+                "releaseAuthority",
+                "submissionAuthority",
+                "providerExecutionPerformed",
+                "externalActionPerformed",
+            ] {
+                assert_eq!(
+                    report[field], false,
+                    "{authority}/{action}/{field}: {report}"
+                );
+            }
+            assert!(
+                !c.root.exists(),
+                "{authority}/{action}: workflow was initialized"
+            );
+            for role in [&c.request.author, &c.request.reviewer] {
+                assert_eq!(
+                    fs::read_dir(&role.source.request_directory)
+                        .unwrap()
+                        .count(),
+                    0,
+                    "{authority}/{action}: broker request was issued"
+                );
+            }
+        }
+    }
+    // Restoring the same non-authorizing template must not launder the earlier
+    // refusals into permission: real opaque admission is still mandatory.
+    let profile = c.request.research_profile.as_mut().unwrap();
+    profile.submission_authority = false;
     c.write();
+    let report = c.advance(None);
     assert_eq!(
-        c.advance(None)["error"],
-        "autonomous_research_campaign_qualification_binding_rejected"
+        report["error"],
+        "local_workflow_research_qualification_rejected"
     );
+    assert_eq!(report["researchQualificationAccepted"], false);
     assert!(!c.root.exists());
 }
 

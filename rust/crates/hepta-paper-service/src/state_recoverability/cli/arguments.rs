@@ -34,6 +34,15 @@ pub(super) struct SocketConfiguration {
     pub raw_file_hash: String,
 }
 pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
+    parse_with_extensions(argv, true)
+}
+pub(super) fn parse_original(argv: &[String]) -> std::result::Result<Arguments, String> {
+    parse_with_extensions(argv, false)
+}
+fn parse_with_extensions(
+    argv: &[String],
+    extensions: bool,
+) -> std::result::Result<Arguments, String> {
     let mut parsed = std::collections::BTreeMap::new();
     let mut tokens = argv.iter();
     while let Some(token) = tokens.next() {
@@ -55,18 +64,22 @@ pub(super) fn parse(argv: &[String]) -> std::result::Result<Arguments, String> {
             }
             String::new()
         } else {
-            if ![
+            let original = [
                 "action",
                 "runtime-root",
-                "root",
                 "authority-config",
                 "online-authority-process-config",
-                "authority-socket-config",
-                "authority-socket-config-sha256",
                 "bundle",
             ]
-            .contains(&key)
-            {
+            .contains(&key);
+            let extension = extensions
+                && [
+                    "root",
+                    "authority-socket-config",
+                    "authority-socket-config-sha256",
+                ]
+                .contains(&key);
+            if !original && !extension {
                 return Err(format!("unknown_cli_option:--{key}"));
             }
             let value = inline

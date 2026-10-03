@@ -7,6 +7,19 @@ mod handoff;
 mod sql;
 mod timezone;
 pub use cli::store_status_cli_v1;
+
+/// Passive incumbent Date.parse finite gate; never a signed authorization clock.
+pub(crate) fn passive_node_date_parse_finite_v1(value: &str) -> bool {
+    date::finite(value)
+}
+/// Passive ordinary Date(string) canonicalization; unrelated to authority clocks.
+pub(crate) fn passive_node_date_parse_iso_v1(value: &str) -> Option<String> {
+    date::iso(date::millis(value)?)
+}
+pub(crate) fn passive_node_date_parse_millis_v1(value: &str) -> Option<i64> {
+    date::millis(value)
+}
+
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 use std::{

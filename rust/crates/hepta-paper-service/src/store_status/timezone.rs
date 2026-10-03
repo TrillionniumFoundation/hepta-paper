@@ -87,6 +87,9 @@ struct Rules {
     future: String,
     earliest_offset: Option<i64>,
     fixed: bool,
+    // Actual TZif UTC transitions and offsets, read through the existing held
+    // bounded regular-file owner. Finite-only interior checks still need no IO.
+    transitions: Vec<(i64, i64)>,
 }
 fn counts(bytes: &[u8], header: usize) -> Option<[usize; 6]> {
     if bytes.get(header..header + 4)? != b"TZif" {
@@ -99,7 +102,7 @@ fn counts(bytes: &[u8], header: usize) -> Option<[usize; 6]> {
     }
     Some(out)
 }
-fn selected_rules() -> Option<Rules> {
+fn selected_rules(ordinary_clock: bool) -> Option<Rules> {
     // ICU's Linux host selection accepts Olson IDs; unsupported POSIX strings
     // fall back to the host zone. Alias trees use the same canonical zone rules.
     let selected = std::env::var("TZ").ok().filter(|value| {
@@ -111,16 +114,40 @@ fn selected_rules() -> Option<Rules> {
     });
     let selected = selected.map(|value| {
         let value = value.trim_start_matches(':');
-        value
+        let value = value
             .strip_prefix("posix/")
             .or_else(|| value.strip_prefix("right/"))
-            .unwrap_or(value)
-            .to_owned()
+            .unwrap_or(value);
+        // ICU/CLDR canonicalizes these legacy IDs before Date local-time
+        // lookup. Their libc TZif files can instead be fixed or shortened
+        // histories. The original finite-only API keeps its established
+        // selection; passive ordinary clocks use the same bounded TZif reader
+        // on the actual canonical history, including pre-standard offsets.
+        // Source: unicode-org/icu timezoneTypes.txt typeAlias/timezone.
+        let value = if ordinary_clock {
+            match value {
+                "CET" | "MET" => "Europe/Brussels",
+                "EET" => "Europe/Athens",
+                "WET" => "Europe/Lisbon",
+                "EST" => "America/Panama",
+                "EST5EDT" => "America/New_York",
+                "CST6CDT" => "America/Chicago",
+                "MST" => "America/Phoenix",
+                "MST7MDT" => "America/Denver",
+                "PST8PDT" => "America/Los_Angeles",
+                "HST" => "Pacific/Honolulu",
+                _ => value,
+            }
+        } else {
+            value
+        };
+        value.to_owned()
     });
     let plain = |future: &str| Rules {
         future: future.into(),
         earliest_offset: None,
         fixed: false,
+        transitions: Vec::new(),
     };
     if let Some(value) = selected.as_deref() {
         if ["", "UTC", "Etc/UTC", "GMT", "Etc/GMT"].contains(&value) {
@@ -217,6 +244,30 @@ fn selected_rules() -> Option<Rules> {
         .checked_add(second[3].checked_mul(9)?)?;
     let earliest =
         i32::from_be_bytes(bytes.get(type_begin..type_begin + 4)?.try_into().ok()?) as i64;
+    let transitions_begin = header.checked_add(44)?;
+    let indices_begin = transitions_begin.checked_add(second[3].checked_mul(8)?)?;
+    let mut transitions = Vec::new();
+    for index in 0..second[3] {
+        let begin = transitions_begin.checked_add(index.checked_mul(8)?)?;
+        let at = i64::from_be_bytes(bytes.get(begin..begin + 8)?.try_into().ok()?);
+        if transitions
+            .last()
+            .is_some_and(|(previous, _)| *previous >= at)
+        {
+            return None;
+        }
+        let selected = usize::from(*bytes.get(indices_begin.checked_add(index)?)?);
+        if selected >= second[4] {
+            return None;
+        }
+        let type_offset = type_begin.checked_add(selected.checked_mul(6)?)?;
+        let offset = i64::from(i32::from_be_bytes(
+            bytes.get(type_offset..type_offset + 4)?.try_into().ok()?,
+        ));
+        if historical {
+            transitions.push((at, offset));
+        }
+    }
     let end = bytes.iter().rposition(|b| *b == b'\n')?;
     let start = bytes[..end].iter().rposition(|b| *b == b'\n')?;
     let future = std::str::from_utf8(&bytes[start + 1..end]).ok()?.to_owned();
@@ -227,6 +278,7 @@ fn selected_rules() -> Option<Rules> {
         future,
         earliest_offset: historical.then_some(earliest),
         fixed: !historical,
+        transitions,
     })
 }
 pub(super) fn finite_local(year: i64, month: i64, day: i64, clock_ms: i64) -> Option<bool> {
@@ -237,7 +289,7 @@ pub(super) fn finite_local(year: i64, month: i64, day: i64, clock_ms: i64) -> Op
     if local.abs() > 8_640_000_000_000_000 + 86_400_000 {
         return Some(false);
     }
-    let source = selected_rules()?;
+    let source = selected_rules(false)?;
     if local < 0
         && let Some(offset) = source.earliest_offset
     {
@@ -267,4 +319,68 @@ pub(super) fn finite_local(year: i64, month: i64, day: i64, clock_ms: i64) -> Op
         }
     }
     Some((local - selected * 1000).abs() <= 8_640_000_000_000_000)
+}
+
+// Use the same selected TZif/POSIX rules for actual passive local timestamps.
+// In a fold V8 chooses the earlier UTC instant. In a forward gap it uses the
+// previous offset, advancing the local clock by the gap instead of rejecting it.
+fn future_offset(source: &Rules, year: i64, local: i64) -> Option<i64> {
+    let pattern = Regex::new(r"^(?:<[^>]+>|[A-Za-z]{3,})(?P<std>[+-]?[0-9]+(?::[0-9]+(?::[0-9]+)?)?)(?:(?:<[^>]+>|[A-Za-z]{3,})(?P<dst>[+-]?[0-9]+(?::[0-9]+(?::[0-9]+)?)?)?(?:,(?P<start>[^,]+),(?P<end>[^,]+))?)?$").ok()?;
+    let c = pattern.captures(&source.future)?;
+    let standard = -offset(c.name("std")?.as_str())?;
+    if source.fixed {
+        return Some(standard);
+    }
+    let (Some(start), Some(end)) = (c.name("start"), c.name("end")) else {
+        return Some(standard);
+    };
+    let daylight = c
+        .name("dst")
+        .map(|m| offset(m.as_str()).map(|v| -v))
+        .unwrap_or(Some(standard + 3600))?;
+    let within = local.div_euclid(1000) - days(year, 1, 1) * 86400;
+    // Select the pre-transition offset in both ambiguous transition windows.
+    let begin = rule(start.as_str(), year)? + (daylight - standard).max(0);
+    let finish = rule(end.as_str(), year)? + (standard - daylight).max(0);
+    let summer = if begin < finish {
+        within >= begin && within < finish
+    } else {
+        within >= begin || within < finish
+    };
+    Some(if summer { daylight } else { standard })
+}
+pub(super) fn local_millis(year: i64, month: i64, day: i64, clock_ms: i64) -> Option<i64> {
+    let local = days(year, month, day) * 86_400_000 + clock_ms;
+    let source = selected_rules(true)?;
+    let mut selected = None;
+    if let Some(first_offset) = source.earliest_offset {
+        let mut start = i64::MIN;
+        let mut previous = first_offset;
+        for &(at_seconds, next) in &source.transitions {
+            let at = at_seconds.checked_mul(1000)?;
+            let candidate = local.checked_sub(previous.checked_mul(1000)?)?;
+            if candidate >= start && candidate < at {
+                selected = Some(selected.map_or(candidate, |current: i64| current.min(candidate)));
+            }
+            let before = at.checked_add(previous.checked_mul(1000)?)?;
+            let after = at.checked_add(next.checked_mul(1000)?)?;
+            if after > before && local >= before && local < after {
+                selected = Some(selected.map_or(candidate, |current: i64| current.min(candidate)));
+            }
+            start = at;
+            previous = next;
+        }
+        if source.transitions.is_empty() {
+            let candidate = local.checked_sub(first_offset.checked_mul(1000)?)?;
+            selected = Some(candidate);
+        } else if selected.is_none() && local.checked_sub(previous.checked_mul(1000)?)? < start {
+            return None;
+        }
+    }
+    let utc = if let Some(value) = selected {
+        value
+    } else {
+        local.checked_sub(future_offset(&source, year, local)?.checked_mul(1000)?)?
+    };
+    (utc.abs() <= 8_640_000_000_000_000).then_some(utc)
 }

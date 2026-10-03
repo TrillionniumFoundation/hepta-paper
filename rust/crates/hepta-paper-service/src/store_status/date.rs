@@ -3,36 +3,43 @@
 use regex::Regex;
 
 pub(super) fn finite(value: &str) -> bool {
+    parse(value, false).is_some()
+}
+
+/// Passive ordinary Date(string) observation. This never supplies an authority
+/// clock, a lease lifetime or a signed timestamp.
+pub(super) fn millis(value: &str) -> Option<i64> {
+    parse(value, true)
+}
+fn clipped(value: i64) -> Option<i64> {
+    (value.abs() <= 8_640_000_000_000_000).then_some(value)
+}
+fn local(year: i64, month: i64, day: i64, clock: i64, want_millis: bool) -> Option<i64> {
+    if want_millis {
+        super::timezone::local_millis(year, month, day, clock)
+    } else {
+        super::timezone::finite_local(year, month, day, clock)?.then_some(0)
+    }
+}
+fn parse(value: &str, want_millis: bool) -> Option<i64> {
     let Ok(pattern) = Regex::new(
         r"^(?P<year>[+-][0-9]{6}|[0-9]{4})(?:-(?P<month>[0-9]{2})(?:-(?P<day>[0-9]{2}))?)?(?:[Tt ](?P<hour>[0-9]{2}):(?P<minute>[0-9]{2})(?::(?P<second>[0-9]{2})(?:\.(?P<fraction>[0-9]+))?)?(?P<zone>[Zz]|[+-][0-9]{2}:?[0-9]{2})?)?$",
     ) else {
-        return false;
+        return None;
     };
     let Some(c) = pattern.captures(value) else {
-        return legacy(value);
+        return legacy(value, want_millis);
     };
     let number = |name: &str, default: i64| {
         c.name(name)
             .map_or(Some(default), |m| m.as_str().parse::<i64>().ok())
     };
-    let Some(year) = number("year", 0) else {
-        return false;
-    };
-    let Some(month) = number("month", 1) else {
-        return false;
-    };
-    let Some(day) = number("day", 1) else {
-        return false;
-    };
-    let Some(hour) = number("hour", 0) else {
-        return false;
-    };
-    let Some(minute) = number("minute", 0) else {
-        return false;
-    };
-    let Some(second) = number("second", 0) else {
-        return false;
-    };
+    let year = number("year", 0)?;
+    let month = number("month", 1)?;
+    let day = number("day", 1)?;
+    let hour = number("hour", 0)?;
+    let minute = number("minute", 0)?;
+    let second = number("second", 0)?;
     if value.starts_with("-000000")
         || !(1..=12).contains(&month)
         || !(1..=31).contains(&day)
@@ -46,9 +53,9 @@ pub(super) fn finite(value: &str) -> bool {
                     .is_some_and(|m| m.as_str().bytes().any(|b| b != b'0')))
     {
         return if value.contains(['T', 't']) {
-            false
+            None
         } else {
-            legacy(value)
+            legacy(value, want_millis)
         };
     }
     let offset = if let Some(zone) = c
@@ -60,7 +67,7 @@ pub(super) fn finite(value: &str) -> bool {
         let hours = digits[..2].parse::<i64>().unwrap_or(99);
         let minutes = digits[2..].parse::<i64>().unwrap_or(99);
         if hours > 23 || minutes > 59 {
-            return false;
+            return None;
         }
         (hours * 60 + minutes) * if zone.starts_with('-') { -1 } else { 1 }
     } else {
@@ -85,9 +92,9 @@ pub(super) fn finite(value: &str) -> bool {
         .unwrap_or(0);
     let clock = hour * 3_600_000 + minute * 60_000 + second * 1000 + fraction;
     if c.name("zone").is_none() && c.name("hour").is_some() {
-        return super::timezone::finite_local(year, month, day, clock).unwrap_or(false);
+        return local(year, month, day, clock, want_millis);
     }
-    (days * 86_400_000 + clock - offset * 60_000).abs() <= 8_640_000_000_000_000
+    clipped(days * 86_400_000 + clock - offset * 60_000)
 }
 
 // Legacy composition follows the incumbent V8 12.4 parser's token/day/time
@@ -166,7 +173,7 @@ fn tokens(input: &str) -> Vec<Token> {
     }
     out
 }
-fn legacy(input: &str) -> bool {
+fn legacy(input: &str, want_millis: bool) -> Option<i64> {
     let tokens = tokens(input);
     let mut cursor = 0;
     let mut day = Vec::new();
@@ -193,12 +200,12 @@ fn legacy(input: &str) -> bool {
                     if symbol(&tokens, cursor, ':') {
                         cursor += 1;
                         if !time.is_empty() {
-                            return false;
+                            return None;
                         }
                         time.extend([n, 0]);
                     } else {
                         if time.len() >= 4 {
-                            return false;
+                            return None;
                         }
                         time.push(n);
                         if symbol(&tokens, cursor, '.') {
@@ -210,7 +217,7 @@ fn legacy(input: &str) -> bool {
                     if expecting(&time, n) {
                         time.push(n);
                         let Some(Token::Number(ms, len)) = tokens.get(cursor) else {
-                            return false;
+                            return None;
                         };
                         let ms = if *len < 3 {
                             *ms * 10_i64.pow((3 - len) as u32)
@@ -219,7 +226,7 @@ fn legacy(input: &str) -> bool {
                         };
                         cursor += 1;
                         if time.len() >= 4 {
-                            return false;
+                            return None;
                         }
                         time.push(ms);
                         while time.len() < 4 {
@@ -227,7 +234,7 @@ fn legacy(input: &str) -> bool {
                         }
                     } else {
                         if day.len() >= 3 {
-                            return false;
+                            return None;
                         }
                         day.push(n);
                     }
@@ -243,11 +250,11 @@ fn legacy(input: &str) -> bool {
                         None | Some(Token::Space) | Some(Token::Symbol('+' | '-'))
                     ) && !matches!(tokens.get(cursor),Some(Token::Word(w)) if w=="z")
                     {
-                        return false;
+                        return None;
                     }
                 } else {
                     if day.len() >= 3 {
-                        return false;
+                        return None;
                     }
                     day.push(n);
                     if symbol(&tokens, cursor, '-') {
@@ -283,7 +290,7 @@ fn legacy(input: &str) -> bool {
                     zone_hour = Some(i64::abs(zone));
                     zone_minute = Some(0);
                 } else if has_number || matches!(tokens.get(cursor), Some(Token::Number(_, _))) {
-                    return false;
+                    return None;
                 }
             }
             Token::Symbol(sign @ ('+' | '-'))
@@ -307,15 +314,15 @@ fn legacy(input: &str) -> bool {
                     zone_hour = Some(n / 100);
                     zone_minute = Some(n % 100);
                 } else {
-                    return false;
+                    return None;
                 }
             }
-            Token::Symbol('+' | '-' | ')') if has_number => return false,
+            Token::Symbol('+' | '-' | ')') if has_number => return None,
             _ => (),
         }
     }
     if day.is_empty() {
-        return false;
+        return None;
     }
     let original = day.len();
     while day.len() < 3 {
@@ -343,14 +350,14 @@ fn legacy(input: &str) -> bool {
         || !(1..=12).contains(&month)
         || !(1..=31).contains(&date)
     {
-        return false;
+        return None;
     }
     while time.len() < 4 {
         time.push(0);
     }
     if let Some(offset) = hour_offset {
         if !(0..=12).contains(&time[0]) {
-            return false;
+            return None;
         }
         time[0] = time[0] % 12 + offset;
     }
@@ -360,11 +367,11 @@ fn legacy(input: &str) -> bool {
         || !(0..=999).contains(&time[3]))
         && time != [24, 0, 0, 0]
     {
-        return false;
+        return None;
     }
     let offset = zone_hour.unwrap_or(0) * 3600 + zone_minute.unwrap_or(0) * 60;
     if offset > 1_073_741_823 {
-        return false;
+        return None;
     }
     let y = year - i64::from(month <= 2);
     let era = y.div_euclid(400);
@@ -374,9 +381,43 @@ fn legacy(input: &str) -> bool {
         era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + (153 * mp + 2) / 5 + date - 1 - 719468;
     let clock = time[0] * 3_600_000 + time[1] * 60_000 + time[2] * 1000 + time[3];
     if zone_hour.is_none() {
-        return super::timezone::finite_local(year, month, date, clock).unwrap_or(false);
+        return local(year, month, date, clock, want_millis);
     }
-    (days * 86_400_000 + clock - zone_sign * offset * 1000).abs() <= 8_640_000_000_000_000
+    clipped(days * 86_400_000 + clock - zone_sign * offset * 1000)
+}
+
+/// Date.prototype.toISOString formatting over the already clipped passive value.
+/// The existing signed clock owner keeps its nonnegative and ISO-only contract.
+pub(super) fn iso(value: i64) -> Option<String> {
+    clipped(value)?;
+    let days = value.div_euclid(86_400_000);
+    let clock = value.rem_euclid(86_400_000);
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + i64::from(month <= 2);
+    let year = if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else {
+        format!(
+            "{}{year:06}",
+            if year < 0 { "-" } else { "+" },
+            year = year.abs()
+        )
+    };
+    Some(format!(
+        "{year}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        clock / 3_600_000,
+        (clock / 60_000) % 60,
+        (clock / 1000) % 60,
+        clock % 1000
+    ))
 }
 
 #[cfg(test)]
@@ -508,6 +549,120 @@ mod tests {
                     String::from_utf8_lossy(&child.stderr)
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod ordinary_clock_tests {
+    use super::{iso, millis};
+    use hepta_codex_runtime::{
+        BoundedProcessRequestV1, EnvironmentPolicyV1, ProcessLimitsV1, ProcessTerminationReason,
+        run_bounded_process_capturing_stdout_with_cancellation,
+    };
+    use std::{collections::BTreeMap, path::PathBuf, sync::atomic::AtomicBool};
+    #[test]
+    fn passive_ordinary_date_string_millis_and_iso_match_actual_node() {
+        let mut dates = vec![
+            "".to_owned(),
+            "0".into(),
+            "1".into(),
+            "12".into(),
+            "13".into(),
+            "49".into(),
+            "50".into(),
+            "99".into(),
+            "100".into(),
+            "1969-12-31T23:59:59.999Z".into(),
+            "0000-01-01T00:00:00.000Z".into(),
+            "-000001-01-01T00:00:00.000Z".into(),
+            "+010000-01-01T00:00:00.000Z".into(),
+            "Jan 1, 2026".into(),
+            "Thu, 01 Oct 2026 00:00:00 GMT".into(),
+            "2026-10-01T01:02:03.123456+02:30".into(),
+            "+275760-09-13T00:00:00.000Z".into(),
+            "+275760-09-13T00:00:00.001Z".into(),
+            "-271821-04-20T00:00:00.000Z".into(),
+            "-271821-04-19T23:59:59.999Z".into(),
+            "2026-10-01T24:00:00Z".into(),
+            "2026-10-01T24:00:00.001Z".into(),
+            "not-a-date".into(),
+            "2026-10-01Zgarbage".into(),
+        ];
+        for year in [
+            1840, 1900, 1911, 1930, 1949, 1986, 1991, 2000, 2026, 2037, 2040,
+        ] {
+            for month in [1, 4, 7, 10] {
+                dates.push(format!("{year:04}-{month:02}-01T01:02:03.456"));
+                dates.push(format!("Jan 1 {year} 01:02:03"));
+            }
+        }
+        for date in [
+            "2026-03-08",
+            "2026-11-01",
+            "2040-03-11",
+            "2040-11-04",
+            "1986-05-04",
+            "1991-09-15",
+        ] {
+            for time in [
+                "00:59:59.999",
+                "01:00:00.000",
+                "01:30:00.000",
+                "01:59:59.999",
+                "02:00:00.000",
+                "02:30:00.000",
+                "03:00:00.000",
+            ] {
+                dates.push(format!("{date}T{time}"));
+            }
+        }
+        let node = PathBuf::from(std::env::var_os("HEPTA_TEST_NODE").expect("qualified Node path"));
+        let script = "import fs from 'node:fs'; const a=JSON.parse(fs.readFileSync(0,'utf8'));if(process.version!=='v22.23.1')throw Error('node_version');process.stdout.write(JSON.stringify(a.map(v=>{const d=new Date(v);return Number.isFinite(d.getTime())?{ms:d.getTime(),iso:d.toISOString()}:{ms:null,iso:null};})));";
+        let request = BoundedProcessRequestV1 {
+            executable: node,
+            arguments: vec!["--input-type=module".into(), "--eval".into(), script.into()],
+            working_directory: std::env::current_dir().unwrap(),
+            environment: EnvironmentPolicyV1::new(
+                "passive-ordinary-clock-oracle-v1",
+                ["PATH", "TZ"],
+                ["PATH"],
+            )
+            .unwrap()
+            .build(std::env::vars_os(), &BTreeMap::new())
+            .unwrap(),
+            stdin: Some(serde_json::to_vec(&dates).unwrap()),
+        };
+        let observed = run_bounded_process_capturing_stdout_with_cancellation(
+            &request,
+            ProcessLimitsV1 {
+                timeout_ms: 60_000,
+                maximum_stdin_bytes: 64 * 1024,
+                maximum_stdout_bytes: 1024 * 1024,
+                maximum_stderr_bytes: 1024 * 1024,
+                maximum_tail_bytes: 64 * 1024,
+                ..ProcessLimitsV1::default()
+            },
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            observed.process.termination_reason,
+            ProcessTerminationReason::Exited
+        );
+        assert_eq!(observed.process.exit_code, Some(0));
+        assert!(observed.process.process_group_cleanup_verified);
+        let node: Vec<serde_json::Value> = serde_json::from_slice(&observed.stdout).unwrap();
+        assert_eq!(node.len(), dates.len());
+        for (date, expected) in dates.iter().zip(node) {
+            let ms = millis(date);
+            let actual = serde_json::json!({"ms":ms,"iso":ms.and_then(iso)});
+            assert_eq!(
+                actual,
+                expected,
+                "actual ordinary Date string {date:?}; selected TZ {:?}",
+                std::env::var_os("TZ")
+            );
         }
     }
 }

@@ -26,7 +26,10 @@ impl PrivateSnapshot {
         include_sidecars: bool,
     ) -> Result<Self> {
         observation.assert_current()?;
-        let (_, mut ancestors) = files::open_root(&std::env::temp_dir())?;
+        let (_, mut ancestors) = files::open_root_with_control(
+            &std::env::temp_dir(),
+            observation.source.control.clone(),
+        )?;
         let parent = ancestors.pop().ok_or_else(files::changed)?;
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|_| files::changed())?;
@@ -80,6 +83,7 @@ impl PrivateSnapshot {
                     metadata: files::identity(&target.metadata().map_err(|_| files::changed())?),
                     file: target,
                     sha256: source.sha256.clone(),
+                    control: source.control.clone(),
                 };
                 result.copies.push(copy);
                 let copy = result.copies.last_mut().ok_or_else(files::changed)?;

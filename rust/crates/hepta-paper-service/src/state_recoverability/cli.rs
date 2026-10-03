@@ -1,6 +1,11 @@
 //! Complete state-backup command composition. Process profiles remain the
 //! default; an explicit independently pinned socket profile owns both clients.
 mod arguments;
+mod status;
+pub(crate) use status::{
+    StateBackupStatusObservationV1, StateBackupStatusReadV1,
+    observe_ordinary_state_backup_status_v1, ordinary_state_backup_status_help_v1,
+};
 pub(super) mod inputs;
 use super::*;
 use super::{

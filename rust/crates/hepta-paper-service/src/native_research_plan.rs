@@ -13,6 +13,7 @@ use hepta_legacy_compatibility::{
     ProductionJsonValue as V, parse_production_json_v1, production_json_stringify_v1,
 };
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 use crate::{
     NativeJobV1, ObjectStoreV1,
@@ -235,20 +236,7 @@ pub(crate) fn prepare_native_research_data_plan_from_request_v1(
     let bytes = objects
         .read_with_maximum_v1(&request.plan_object, MAX_PLAN_BYTES)
         .map_err(|_| refusal())?;
-    let plan = parse_production_json_v1(&bytes).map_err(|_| refusal())?;
-    if !matches!(field(&plan, "version"), Some(V::Number(n)) if *n == 1.0)
-        || string(field(&plan, "kind"), 64)? != "NativeResearchWorkerPlan"
-        || string(field(&plan, "paperId"), 256)? != request.paper_id
-        || string(field(&plan, "taskKey"), 512)? != request.task_key
-    {
-        return Err(refusal());
-    }
-    let Some(V::Array(workers)) = field(&plan, "workers") else {
-        return Err(refusal());
-    };
-    if workers.is_empty() || workers.len() > 16 {
-        return Err(refusal());
-    }
+    decode_plan_v1(&bytes, &request.paper_id, &request.task_key)?;
     let mut observed = BTreeMap::new();
     let mut total = 0_u64;
     for (path, hash) in &request.source_objects {
@@ -267,16 +255,8 @@ pub(crate) fn prepare_native_research_data_plan_from_request_v1(
         }
         observed.insert(path.clone(), data);
     }
-    let mut ids = BTreeSet::new();
-    let mut jobs = Vec::new();
-    for worker in workers {
-        check(cancelled)?;
-        let job = prepare_worker(worker, request, &observed)?;
-        if !ids.insert(job.worker_id.clone()) {
-            return Err(refusal());
-        }
-        jobs.push(job);
-    }
+    let prepared =
+        prepare_native_research_data_plan_from_observed_v1(request, &bytes, &observed, cancelled)?;
     for (path, hash) in &request.source_objects {
         check(cancelled)?;
         if objects
@@ -293,6 +273,125 @@ pub(crate) fn prepare_native_research_data_plan_from_request_v1(
         != bytes
     {
         return Err(refusal());
+    }
+    check(cancelled)?;
+    Ok(prepared)
+}
+
+fn decode_plan_v1(bytes: &[u8], paper_id: &str, task_key: &str) -> Result<V, String> {
+    if bytes.len() as u64 > MAX_PLAN_BYTES {
+        return Err(refusal());
+    }
+    inline(paper_id, 256)?;
+    inline(task_key, 512)?;
+    let plan = parse_production_json_v1(bytes).map_err(|_| refusal())?;
+    if !matches!(field(&plan, "version"), Some(V::Number(n)) if *n == 1.0)
+        || string(field(&plan, "kind"), 64)? != "NativeResearchWorkerPlan"
+        || string(field(&plan, "paperId"), 256)? != paper_id
+        || string(field(&plan, "taskKey"), 512)? != task_key
+    {
+        return Err(refusal());
+    }
+    let Some(V::Array(workers)) = field(&plan, "workers") else {
+        return Err(refusal());
+    };
+    if workers.is_empty() || workers.len() > 16 {
+        return Err(refusal());
+    }
+    Ok(plan)
+}
+/// Fixed selection from the actual plan; bounded and deduplicated before any
+/// filesystem input read or CAS write. Conflicting duplicate bindings refuse.
+pub(crate) fn native_research_plan_source_bindings_v1(
+    bytes: &[u8],
+    paper_id: &str,
+    task_key: &str,
+    cancelled: &AtomicBool,
+) -> Result<BTreeMap<String, Sha256Digest>, String> {
+    check(cancelled)?;
+    let plan = decode_plan_v1(bytes, paper_id, task_key)?;
+    let Some(V::Array(workers)) = field(&plan, "workers") else {
+        return Err(refusal());
+    };
+    let mut bindings = BTreeMap::new();
+    for worker in workers {
+        check(cancelled)?;
+        worker_type(field(worker, "type"))?;
+        let Some(V::Array(inputs)) = field(worker, "inputs") else {
+            return Err(refusal());
+        };
+        if inputs.is_empty() || inputs.len() > 64 {
+            return Err(refusal());
+        }
+        for input in inputs {
+            check(cancelled)?;
+            let path = string(field(input, "path"), 4096)?;
+            relative(&path)?;
+            let hash = string(field(input, "sha256"), 71)?
+                .parse::<Sha256Digest>()
+                .map_err(|_| refusal())?;
+            if let Some(prior) = bindings.get(&path) {
+                if prior != &hash {
+                    return Err(refusal());
+                }
+            } else {
+                if bindings.len() >= 128 {
+                    return Err(refusal());
+                }
+                bindings.insert(path, hash);
+            }
+        }
+    }
+    Ok(bindings)
+}
+/// The one job producer consumes exact observed bytes, not caller summaries.
+/// Existing CAS and normal-workspace callers both delegate here.
+pub(crate) fn prepare_native_research_data_plan_from_observed_v1(
+    request: &NativeResearchPlanRequestV1,
+    bytes: &[u8],
+    observed: &BTreeMap<String, Vec<u8>>,
+    cancelled: &AtomicBool,
+) -> Result<PreparedNativeResearchPlanV1, String> {
+    check(cancelled)?;
+    if request.version != 1
+        || request.source_objects.is_empty()
+        || request.source_objects.len() > 128
+        || observed.len() != request.source_objects.len()
+        || bytes.len() as u64 > MAX_PLAN_BYTES
+    {
+        return Err(refusal());
+    }
+    if hepta_codex_protocol::Sha256Digest::from_digest_bytes(sha2::Sha256::digest(bytes).into())
+        != request.plan_object
+    {
+        return Err(refusal());
+    }
+    let plan = decode_plan_v1(bytes, &request.paper_id, &request.task_key)?;
+    let mut total = 0_u64;
+    for (path, hash) in &request.source_objects {
+        check(cancelled)?;
+        relative(path)?;
+        let data = observed.get(path).ok_or_else(refusal)?;
+        total = total
+            .checked_add(data.len() as u64)
+            .filter(|n| *n <= MAX_INPUT_BYTES)
+            .ok_or_else(refusal)?;
+        if Sha256Digest::from_digest_bytes(sha2::Sha256::digest(data).into()) != *hash {
+            return Err(refusal());
+        }
+    }
+    let Some(V::Array(workers)) = field(&plan, "workers") else {
+        return Err(refusal());
+    };
+    let mut ids = BTreeSet::new();
+    let mut jobs = Vec::new();
+    for worker in workers {
+        check(cancelled)?;
+        let job = prepare_worker(worker, request, observed)?;
+        if !ids.insert(job.worker_id.clone()) {
+            return Err(refusal());
+        }
+        jobs.push(job);
     }
     check(cancelled)?;
     Ok(PreparedNativeResearchPlanV1 {

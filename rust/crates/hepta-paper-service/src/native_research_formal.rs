@@ -7,7 +7,8 @@ use crate::{
         parse_new_theorem_declarations_with_control_v1,
     },
     native_research_manuscript::{
-        LiteralInclude, Universe, literal_includes, safe_path, trim_range,
+        LiteralInclude, NativeResearchReadContextV1, Universe, literal_includes, safe_path,
+        trim_range,
     },
     runtime_source_cas::observation::SourceObservation,
 };
@@ -32,6 +33,9 @@ pub struct NativeFormalClaimUniverseRequestV1 {
 pub struct NativeFormalClaimUniverseObservationV1<'a> {
     source: SourceObservation<'a>,
     observed: Value,
+    member_bytes: BTreeMap<String, (Vec<u8>, String)>,
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
 }
 impl NativeFormalClaimUniverseObservationV1<'_> {
     pub fn observed(&self) -> &Value {
@@ -39,6 +43,29 @@ impl NativeFormalClaimUniverseObservationV1<'_> {
     }
     pub fn verify_unchanged(&self) -> Result<(), String> {
         self.source.assert_current()
+    }
+    /// Only buffers already included in this actual formal universe are visible.
+    /// The caller retains this held observation and verifies it before admission.
+    pub(crate) fn member_bytes_v1(&self, relative: &str) -> Result<Option<(&[u8], &str)>, String> {
+        check(self.cancelled, self.deadline)?;
+        let Some((bytes, hash)) = self.member_bytes.get(relative) else {
+            return Ok(None);
+        };
+        let record = self.observed["files"]
+            .as_array()
+            .ok_or_else(refused)?
+            .iter()
+            .find(|value| value["path"] == relative)
+            .ok_or_else(refused)?;
+        if record["bytes"].as_u64() != Some(bytes.len() as u64)
+            || bytes.len() > 1024 * 1024
+            || record["hash"].as_str() != Some(hash.as_str())
+            || bytes_hash(bytes) != *hash
+        {
+            return Err(refused());
+        }
+        check(self.cancelled, self.deadline)?;
+        Ok(Some((bytes.as_slice(), hash.as_str())))
     }
 }
 fn refused() -> String {
@@ -111,6 +138,7 @@ struct Reader<'a, 'b> {
     paths: usize,
     include_bytes: usize,
     work: &'a LatexSyntaxControlV1<'b>,
+    read_context: &'a mut NativeResearchReadContextV1<'b>,
     deadline: Instant,
 }
 impl Reader<'_, '_> {
@@ -159,6 +187,7 @@ impl Reader<'_, '_> {
             .checked_add(metadata.size)
             .filter(|v| *v <= 4 * 1024 * 1024)
             .ok_or_else(refused)?;
+        self.read_context.charge(self.source, path)?;
         let content = self.source.inventory_document(path, 1024 * 1024)?;
         check(self.cancelled, self.deadline)?;
         let hash = bytes_hash(&content);
@@ -477,6 +506,24 @@ pub fn inspect_native_formal_claim_universe_v1<'a>(
     deadline: Instant,
 ) -> Result<NativeFormalClaimUniverseObservationV1<'a>, String> {
     check(c, deadline)?;
+    let mut context = NativeResearchReadContextV1::new(c, deadline);
+    inspect_native_formal_claim_universe_with_context_v1(request, &mut context)
+}
+pub(crate) fn inspect_native_formal_claim_universe_with_context_v1<'a>(
+    request: NativeFormalClaimUniverseRequestV1,
+    context: &mut NativeResearchReadContextV1<'a>,
+) -> Result<NativeFormalClaimUniverseObservationV1<'a>, String> {
+    context.require_active()?;
+    let result = inspect_formal(request, context);
+    context.finish(result)
+}
+fn inspect_formal<'a>(
+    request: NativeFormalClaimUniverseRequestV1,
+    context: &mut NativeResearchReadContextV1<'a>,
+) -> Result<NativeFormalClaimUniverseObservationV1<'a>, String> {
+    let c = context.cancelled();
+    let deadline = context.deadline();
+    check(c, deadline)?;
     if request.version != 1
         || !request.source_root.is_absolute()
         || request.source_root.as_os_str().len() > 4096
@@ -490,7 +537,7 @@ pub fn inspect_native_formal_claim_universe_v1<'a>(
     if source.root() != request.source_root {
         return Err(refused());
     }
-    let work = LatexSyntaxControlV1::new(c, deadline);
+    let work = context.syntax_control_v1()?;
     let mut r = Reader {
         source: &mut source,
         cancelled: c,
@@ -502,6 +549,7 @@ pub fn inspect_native_formal_claim_universe_v1<'a>(
         paths: 0,
         include_bytes: 0,
         work: &work,
+        read_context: context,
         deadline,
     };
     if let Some(path) = &manuscript {
@@ -694,10 +742,19 @@ pub fn inspect_native_formal_claim_universe_v1<'a>(
     let mut observed = json!({"version":1,"kind":"FormalClaimUniverse","status":if blockers.is_empty(){"formal_claim_universe_verified"}else{"formal_claim_universe_blocked"},"manuscriptPath":manuscript,"manuscriptHash":corpus,"files":files,"environmentDeclarations":declarations,"theorems":theorems,"blockers":blockers});
     budget([&observed])?;
     observed["formalClaimUniverseHash"] = json!(hash("FormalClaimUniverse", &observed)?);
-    drop(r.reads);
+    let member_bytes = std::mem::take(&mut r.reads)
+        .into_iter()
+        .map(|read| (read.relative, (read.content, read.hash)))
+        .collect();
     source.assert_current()?;
     check(c, deadline)?;
-    Ok(NativeFormalClaimUniverseObservationV1 { source, observed })
+    Ok(NativeFormalClaimUniverseObservationV1 {
+        source,
+        observed,
+        member_bytes,
+        cancelled: c,
+        deadline,
+    })
 }
 #[cfg(test)]
 mod tests;

@@ -1,10 +1,138 @@
 //! Byte/UTF-16 manuscript boundaries shared by the actual canonical readers.
+use crate::native_latex_theorem_syntax::{
+    LatexSyntaxControlV1, mask_latex_comments_with_control_v1,
+};
 use serde::Serialize;
 use std::{
-    path::Path,
+    collections::BTreeMap,
+    path::{Component, Path, PathBuf},
+    rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
+#[derive(PartialEq, Eq)]
+struct ResearchReadMemberIdentityV1 {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    size: u64,
+    mtime_seconds: i64,
+    mtime_nanoseconds: i64,
+    link_count: u64,
+}
+/// Fixed aggregate for one composed source request. Each actual canonical member
+/// is reserved once before reading; the existing held observer remains the owner
+/// of filesystem identity/content/namespace refusal.
+pub(crate) struct NativeResearchReadContextV1<'a> {
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
+    remaining: u64,
+    charged: BTreeMap<PathBuf, ResearchReadMemberIdentityV1>,
+    failure: Option<String>,
+    syntax: Rc<LatexSyntaxControlV1<'a>>,
+}
+impl<'a> NativeResearchReadContextV1<'a> {
+    pub(crate) fn new(cancelled: &'a AtomicBool, deadline: Instant) -> Self {
+        Self {
+            cancelled,
+            deadline,
+            remaining: 4 * 1024 * 1024,
+            charged: BTreeMap::new(),
+            failure: None,
+            syntax: Rc::new(LatexSyntaxControlV1::new(cancelled, deadline)),
+        }
+    }
+    pub(crate) fn cancelled(&self) -> &'a AtomicBool {
+        self.cancelled
+    }
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
+    pub(crate) fn syntax_control_v1(&mut self) -> Result<Rc<LatexSyntaxControlV1<'a>>, String> {
+        self.require_active()?;
+        Ok(Rc::clone(&self.syntax))
+    }
+    pub(crate) fn require_active(&mut self) -> Result<(), String> {
+        let result = if let Some(error) = &self.failure {
+            Err(error.clone())
+        } else {
+            check(self.cancelled, self.deadline)
+                .and_then(|_| mask_latex_comments_with_control_v1("", &self.syntax).map(|_| ()))
+        };
+        self.finish(result)
+    }
+    pub(crate) fn finish<T>(&mut self, result: Result<T, String>) -> Result<T, String> {
+        match result {
+            Ok(value) if self.failure.is_none() => Ok(value),
+            Ok(_) => Err(self.failure.clone().unwrap_or_else(refused)),
+            Err(error) => {
+                if self.failure.is_none() {
+                    self.failure = Some(error.clone());
+                }
+                Err(error)
+            }
+        }
+    }
+    pub(crate) fn charge(
+        &mut self,
+        source: &mut crate::runtime_source_cas::observation::SourceObservation<'_>,
+        relative: &Path,
+    ) -> Result<(), String> {
+        self.require_active()?;
+        let result = self.reserve(source, relative);
+        self.finish(result)
+    }
+    fn reserve(
+        &mut self,
+        source: &mut crate::runtime_source_cas::observation::SourceObservation<'_>,
+        relative: &Path,
+    ) -> Result<(), String> {
+        if relative.is_absolute()
+            || relative.as_os_str().len() > 4096
+            || relative
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            return Err(refused());
+        }
+        let metadata = source.inventory_probe(relative)?.ok_or_else(refused)?;
+        if metadata.directory || metadata.link_count != 1 {
+            return Err(refused());
+        }
+        // Both roots are actual canonical held roots. Joining a validated member
+        // gives the same key when formal/source and repository/evidence overlap.
+        let key = source.root().join(relative);
+        let identity = ResearchReadMemberIdentityV1 {
+            device: metadata.device,
+            inode: metadata.inode,
+            mode: metadata.mode,
+            size: metadata.size,
+            mtime_seconds: metadata.mtime_seconds,
+            mtime_nanoseconds: metadata.mtime_nanoseconds,
+            link_count: metadata.link_count,
+        };
+        if let Some(before) = self.charged.get(&key) {
+            if *before != identity {
+                return Err("r_runtime_source_cas_input_changed".into());
+            }
+        } else {
+            if self.charged.len() >= 16384 {
+                return Err(refused());
+            }
+            let remaining = self
+                .remaining
+                .checked_sub(metadata.size)
+                .ok_or_else(|| "native_research_composed_read_budget_v1_refused".to_owned())?;
+            self.charged.insert(key, identity);
+            self.remaining = remaining;
+        }
+        check(self.cancelled, self.deadline)
+    }
+    #[cfg(test)]
+    pub(crate) fn charged_bytes(&self) -> u64 {
+        4 * 1024 * 1024 - self.remaining
+    }
+}
 #[derive(Clone, Copy)]
 pub enum Universe {
     Formal,
@@ -345,3 +473,6 @@ pub fn line_records(
     }
     Ok(lines)
 }
+
+#[cfg(test)]
+mod tests;

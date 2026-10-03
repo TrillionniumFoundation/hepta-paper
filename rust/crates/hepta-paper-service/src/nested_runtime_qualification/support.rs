@@ -264,6 +264,50 @@ pub(super) fn resolve(base: &Path, value: &Value) -> Result<PathBuf> {
     Ok(output)
 }
 pub(super) fn read_json(path: &Path, max: u64) -> Result<(Value, String)> {
+    read_json_with_control(path, max, None)
+}
+pub(super) fn read_json_with_control(
+    path: &Path,
+    max: u64,
+    control: Control<'_>,
+) -> Result<(Value, String)> {
+    checkpoint(control)?;
+    if control.is_some() {
+        // The original ordinary verifier observes realpath before its held
+        // file open. Keep this refusal/report boundary without following an
+        // alias in the descriptor-relative evidence reader below.
+        match std::fs::canonicalize(path) {
+            Ok(actual) => ensure(
+                actual == path,
+                "nested_runtime_platform_evidence_path_not_canonical",
+            )?,
+            Err(error) => {
+                let mut selected = std::path::PathBuf::from("/");
+                let mut failure = error;
+                for component in path.components() {
+                    if let Component::Normal(part) = component {
+                        selected.push(part);
+                        if let Err(error) = std::fs::symlink_metadata(&selected) {
+                            failure = error;
+                            break;
+                        }
+                    }
+                }
+                let (code, message) = match failure.raw_os_error() {
+                    Some(nix::libc::ENOENT) => ("ENOENT", "no such file or directory"),
+                    Some(nix::libc::ENOTDIR) => ("ENOTDIR", "not a directory"),
+                    Some(nix::libc::EACCES) => ("EACCES", "permission denied"),
+                    Some(nix::libc::ELOOP) => ("ELOOP", "too many symbolic links encountered"),
+                    _ => return Err("nested_runtime_platform_evidence_path_not_canonical".into()),
+                };
+                return Err(NestedRuntimeQualificationError(format!(
+                    "{}: {message}, lstat '{}'",
+                    code,
+                    selected.display()
+                )));
+            }
+        }
+    }
     let mut parts = path
         .components()
         .filter_map(|p| {
@@ -284,6 +328,7 @@ pub(super) fn read_json(path: &Path, max: u64) -> Result<(Value, String)> {
     })?;
     let mut selected = None;
     while let Some(part) = parts.next() {
+        checkpoint(control)?;
         let flags = OFlag::O_RDONLY
             | OFlag::O_NOFOLLOW
             | OFlag::O_CLOEXEC
@@ -320,14 +365,38 @@ pub(super) fn read_json(path: &Path, max: u64) -> Result<(Value, String)> {
         "nested_runtime_platform_evidence_file_invalid",
     )?;
     let mut bytes = Vec::new();
-    (&mut file)
-        .take(max + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| {
-            NestedRuntimeQualificationError::from(
-                "nested_runtime_platform_evidence_file_unavailable",
-            )
-        })?;
+    if control.is_some() {
+        let mut block = [0u8; 64 * 1024];
+        loop {
+            checkpoint(control)?;
+            let count = file.read(&mut block).map_err(|_| {
+                NestedRuntimeQualificationError::from(
+                    "nested_runtime_platform_evidence_file_unavailable",
+                )
+            })?;
+            if count == 0 {
+                break;
+            }
+            ensure(
+                bytes
+                    .len()
+                    .checked_add(count)
+                    .is_some_and(|size| size as u64 <= max && size as u64 <= before.len()),
+                "nested_runtime_platform_evidence_changed_during_read",
+            )?;
+            bytes.extend_from_slice(&block[..count]);
+        }
+    } else {
+        (&mut file)
+            .take(max + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| {
+                NestedRuntimeQualificationError::from(
+                    "nested_runtime_platform_evidence_file_unavailable",
+                )
+            })?;
+    }
+    checkpoint(control)?;
     let after = file.metadata().map_err(|_| {
         NestedRuntimeQualificationError::from("nested_runtime_platform_evidence_file_unavailable")
     })?;
@@ -342,6 +411,29 @@ pub(super) fn read_json(path: &Path, max: u64) -> Result<(Value, String)> {
             && after.ctime_nsec() == before.ctime_nsec(),
         "nested_runtime_platform_evidence_changed_during_read",
     )?;
+    if control.is_some() {
+        let named = std::fs::symlink_metadata(path).map_err(|_| {
+            NestedRuntimeQualificationError::from(
+                "nested_runtime_platform_evidence_changed_during_read",
+            )
+        })?;
+        ensure(
+            named.is_file()
+                && !named.is_symlink()
+                && named.dev() == before.dev()
+                && named.ino() == before.ino()
+                && named.mode() == before.mode()
+                && named.uid() == before.uid()
+                && named.gid() == before.gid()
+                && named.nlink() == before.nlink()
+                && named.len() == before.len()
+                && named.mtime() == before.mtime()
+                && named.mtime_nsec() == before.mtime_nsec()
+                && named.ctime() == before.ctime()
+                && named.ctime_nsec() == before.ctime_nsec(),
+            "nested_runtime_platform_evidence_changed_during_read",
+        )?;
+    }
     let parsed: StrictJson = serde_json::from_slice(&bytes).map_err(|_| {
         NestedRuntimeQualificationError::from("nested_runtime_platform_evidence_json_invalid")
     })?;
@@ -349,6 +441,7 @@ pub(super) fn read_json(path: &Path, max: u64) -> Result<(Value, String)> {
         parsed.0.is_object(),
         "nested_runtime_platform_evidence_json_invalid",
     )?;
+    checkpoint(control)?;
     Ok((parsed.0, digest(&bytes)))
 }
 // serde's ordinary Value parser overwrites duplicate keys. Evidence rejects

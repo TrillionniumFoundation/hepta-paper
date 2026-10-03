@@ -21,6 +21,11 @@ pub struct NativeResearchSourceSnapshotRequestV1 {
 pub struct NativeResearchSourceSnapshotObservationV1<'a> {
     source: SourceObservation<'a>,
     snapshot: Value,
+    charged_in_composition: bool,
+    member_reads: usize,
+    member_read_failed: bool,
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
 }
 impl<'a> NativeResearchSourceSnapshotObservationV1<'a> {
     pub fn snapshot(&self) -> &Value {
@@ -28,6 +33,66 @@ impl<'a> NativeResearchSourceSnapshotObservationV1<'a> {
     }
     pub fn verify_unchanged(&self) -> Result<(), String> {
         self.source.assert_current()
+    }
+    pub(crate) fn source_root_v1(&self) -> &Path {
+        self.source.root()
+    }
+    pub(crate) fn controls_v1(&self) -> (&'a AtomicBool, Instant) {
+        (self.cancelled, self.deadline)
+    }
+    /// Only a member actually included and charged by this opaque observation
+    /// can be borrowed. A caller path or projected JSON cannot create the proof.
+    pub(crate) fn listed_member_bytes_v1(
+        &mut self,
+        relative: &Path,
+        maximum: u64,
+    ) -> Result<Vec<u8>, String> {
+        let result = (|| {
+            self.verify_unchanged()?;
+            let name = relative.to_str().ok_or_else(refused)?;
+            if !self.charged_in_composition
+                || self.member_read_failed
+                || self.member_reads >= 129
+                || name.is_empty()
+                || name.len() > 4096
+                || name.contains('\\')
+                || maximum == 0
+                || maximum > MAX_BYTES
+                || relative
+                    .components()
+                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
+                || name
+                    .split('/')
+                    .any(|p| p.is_empty() || matches!(p, "." | ".."))
+            {
+                return Err(refused());
+            }
+            let records = self.snapshot["workspaceSnapshot"]["fileRecords"]
+                .as_array()
+                .ok_or_else(refused)?;
+            let record = records
+                .iter()
+                .find(|r| r["path"].as_str() == Some(name))
+                .ok_or_else(refused)?;
+            let size = record["bytes"].as_u64().ok_or_else(refused)?;
+            let digest = record["hash"].as_str().ok_or_else(refused)?;
+            if size > maximum {
+                return Err(refused());
+            }
+            self.member_reads += 1;
+            let bytes = self.source.inventory_document(relative, maximum)?;
+            if bytes.len() as u64 != size
+                || format!("sha256:{:x}", Sha256::digest(&bytes)) != digest
+            {
+                return Err(refused());
+            }
+            self.verify_unchanged()?;
+            Ok(bytes)
+        })();
+        if result.is_err() {
+            self.member_read_failed = true;
+        }
+        result
     }
 }
 fn refused() -> String {
@@ -55,6 +120,8 @@ struct Walker<'a, 'b> {
     merkle_records: Vec<String>,
     remaining: u64,
     path_bytes: usize,
+    maximum_records: usize,
+    context: Option<&'a mut crate::native_research_manuscript::NativeResearchReadContextV1<'b>>,
 }
 impl Walker<'_, '_> {
     fn walk(&mut self, relative: &Path, depth: usize) -> Result<(), String> {
@@ -74,7 +141,7 @@ impl Walker<'_, '_> {
             let path = relative.join(&entry.name);
             let name = path.to_str().ok_or_else(refused)?;
             // No caller-supplied escaped/traversal or display-name substitution.
-            if self.files.len() + self.directories.len() >= MAX_RECORDS
+            if self.files.len() + self.directories.len() >= self.maximum_records
                 || name.contains('\\')
                 || name.len() > 4096
             {
@@ -96,6 +163,9 @@ impl Walker<'_, '_> {
             } else {
                 if metadata.link_count != 1 || metadata.size > self.remaining {
                     return Err(refused());
+                }
+                if let Some(context) = self.context.as_mut() {
+                    context.charge(self.source, &path)?;
                 }
                 let (digest, bytes) = self.source.archive(&path, self.remaining.max(1))?;
                 if bytes != metadata.size {
@@ -122,6 +192,48 @@ pub fn inspect_native_research_source_snapshot_v1<'a>(
     request: NativeResearchSourceSnapshotRequestV1,
     cancelled: &'a AtomicBool,
     deadline: Instant,
+) -> Result<NativeResearchSourceSnapshotObservationV1<'a>, String> {
+    inspect_snapshot(request, cancelled, deadline, None, false)
+}
+/// The fixed ordinary OneShot workspace domain reuses the held walker and its
+/// existing CAS ceilings. It does not enlarge the paper-source profile or
+/// provide a manuscript member permit or execution authority.
+pub(crate) fn inspect_native_one_shot_workspace_snapshot_v1<'a>(
+    source_root: PathBuf,
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
+) -> Result<NativeResearchSourceSnapshotObservationV1<'a>, String> {
+    inspect_snapshot(
+        NativeResearchSourceSnapshotRequestV1 {
+            version: 1,
+            source_root,
+        },
+        cancelled,
+        deadline,
+        None,
+        true,
+    )
+}
+pub(crate) fn inspect_native_research_source_snapshot_with_context_v1<'a>(
+    request: NativeResearchSourceSnapshotRequestV1,
+    context: &mut crate::native_research_manuscript::NativeResearchReadContextV1<'a>,
+) -> Result<NativeResearchSourceSnapshotObservationV1<'a>, String> {
+    context.require_active()?;
+    let result = inspect_snapshot(
+        request,
+        context.cancelled(),
+        context.deadline(),
+        Some(context),
+        false,
+    );
+    context.finish(result)
+}
+fn inspect_snapshot<'a>(
+    request: NativeResearchSourceSnapshotRequestV1,
+    cancelled: &'a AtomicBool,
+    deadline: Instant,
+    context: Option<&mut crate::native_research_manuscript::NativeResearchReadContextV1<'a>>,
+    one_shot_workspace: bool,
 ) -> Result<NativeResearchSourceSnapshotObservationV1<'a>, String> {
     check(cancelled)?;
     if request.version != 1 || !request.source_root.is_absolute() {
@@ -151,6 +263,7 @@ pub fn inspect_native_research_source_snapshot_v1<'a>(
             exclusions.insert(entry.name);
         }
     }
+    let charged_in_composition = context.is_some();
     let mut w = Walker {
         source: &mut source,
         exclusions,
@@ -159,8 +272,18 @@ pub fn inspect_native_research_source_snapshot_v1<'a>(
         files: Vec::new(),
         directories: Vec::new(),
         merkle_records: Vec::new(),
-        remaining: MAX_BYTES,
+        remaining: if one_shot_workspace {
+            1024 * 1024 * 1024
+        } else {
+            MAX_BYTES
+        },
+        maximum_records: if one_shot_workspace {
+            16_384
+        } else {
+            MAX_RECORDS
+        },
         path_bytes: 0,
+        context,
     };
     w.walk(Path::new(""), 0)?;
     let source_merkle = format!(
@@ -232,7 +355,15 @@ pub fn inspect_native_research_source_snapshot_v1<'a>(
     let snapshot = json!({"workspaceSnapshot":{"merkleHash":merkle,"manifestHash":manifest,"fileRecords":w.files,"directoryRecords":w.directories,"blockers":[]},"sourceMerkle":source_merkle});
     source.assert_current()?;
     check(cancelled)?;
-    Ok(NativeResearchSourceSnapshotObservationV1 { source, snapshot })
+    Ok(NativeResearchSourceSnapshotObservationV1 {
+        source,
+        snapshot,
+        charged_in_composition,
+        member_reads: 0,
+        member_read_failed: false,
+        cancelled,
+        deadline,
+    })
 }
 #[cfg(test)]
 mod tests;

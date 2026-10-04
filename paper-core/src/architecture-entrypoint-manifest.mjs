@@ -88,6 +88,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/critical-module-coverage.mjs',
     'paper-core/bin/strict-npm-audit.mjs',
     'paper-core/bin/verify-source-implementation-evidence.mjs',
+    'paper-core/bin/with-locked-parent-node-oracle.mjs',
     'paper-core/bin/repository-asset-status.mjs',
     'paper-core/bin/operational-proof-status.mjs',
     'paper-core/bin/owner-acceptance-status.mjs',

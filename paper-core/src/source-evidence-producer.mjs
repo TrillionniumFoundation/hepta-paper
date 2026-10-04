@@ -8,6 +8,7 @@ export const SOURCE_EVIDENCE_ENTRYPOINT = 'paper-core/bin/verify-source-implemen
 export const SOURCE_EVIDENCE_PRODUCER_PATHS = Object.freeze([
   SOURCE_EVIDENCE_ENTRYPOINT,
   'paper-core/src/source-evidence-git-inputs.mjs',
+  'paper-core/src/source-evidence-public-r-inputs.mjs',
   'paper-core/src/source-evidence-rust-symbols.mjs',
   'paper-core/src/source-evidence-strict-json.mjs',
   'paper-core/src/source-evidence-cargo-observations.mjs',

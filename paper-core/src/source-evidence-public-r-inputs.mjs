@@ -32,8 +32,38 @@ function routeFromCommittedFile(root, selected, owners) {
   if (owners.git(root, ['rev-parse', `${historical.commit}:${historical.path}`]) !== historical.subtree) {
     owners.fail('public_r_historical_tree_mismatch');
   }
-  owners.git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling', historical.subtree]);
+  if (owners.deferredStrictGraphTargets !== undefined) {
+    if (!Array.isArray(owners.deferredStrictGraphTargets)) owners.fail('public_r_graph_collector_invalid');
+    owners.deferredStrictGraphTargets.push(historical.subtree);
+  } else {
+    owners.git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling', historical.subtree]);
+  }
   return route;
+}
+
+// Re-observe only the original locator for a consumer's privately owned,
+// completely validated subject. This pure check grants no content, runtime,
+// replay or receipt authority. Actual content remains the full guard's input.
+export function readPublicRSourceGraphTargetV1(root, profile, owners) {
+  if (profile === undefined) return [];
+  const selected = new Map([[ROUTE, { mode: '100644', blob: profile.routeBlob }]]);
+  // A fresh pinned route/locator, carrying data only. Its consumer must
+  // actually verify this graph together with the current HEAD before reuse.
+  const targets = [];
+  const route = routeFromCommittedFile(root, selected, { ...owners, deferredStrictGraphTargets: targets });
+  if (profile.path !== TARGET || profile.sourceTree !== route.publicHistoricalRoute.subtree
+      || profile.manifestBlob !== route.publicHistoricalRoute.manifestBlob
+      || profile.gitlinkReference !== route.originalGitlink.commit
+      || profile.gitlinkCommitQualified !== false || profile.productionAuthorized !== false
+      || profile.packageExecutionAllowed !== false) {
+    owners.fail('public_r_owned_reference_changed');
+  }
+  return [route.publicHistoricalRoute.subtree];
+}
+
+export function assertPublicRSourceReferenceCurrent(root, profile, owners) {
+  const targets = readPublicRSourceGraphTargetV1(root, profile, owners);
+  if (targets.length) owners.git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling', ...targets]);
 }
 
 function originalMembers(root, route, owners) {

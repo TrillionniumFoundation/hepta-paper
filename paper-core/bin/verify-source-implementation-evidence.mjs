@@ -594,7 +594,11 @@ export function executeCommands(root, bundles, source) {
           }
           const discoveryTimeoutMs = remaining();
           const captured = run(runtime.cargo.path, discoveryArgs, { cwd: cwdReal, env, timeout: discoveryTimeoutMs });
-          if (captured.status !== 0) fail('verification_discovery_failed', label);
+          if (captured.status !== 0) fail('verification_discovery_failed', JSON.stringify({
+            label, phase: 'cargo_discovery', program: runtime.cargo.path, args: discoveryArgs,
+            status: captured.status, signal: captured.signal ?? null,
+            stderr: commandDiagnostic(captured.stderr), stdout: commandDiagnostic(captured.stdout),
+          }));
           const actual = cargoTargetObservation(rootReal, binding, captured.stdout ?? '', label);
           const artifactOwner = holdCargoTestArtifactEpoch(actual.artifact, rootReal);
           artifactOwners.set(key, artifactOwner);
@@ -610,7 +614,11 @@ export function executeCommands(root, bundles, source) {
           const listTimeoutMs = remaining();
           const listed = run(actual.artifact.path, ['--list'], { cwd: capture.cwd, env: capture.environment, timeout: listTimeoutMs });
           artifactOwner.assertCurrent();
-          if (listed.status !== 0) fail('verification_discovery_failed', label);
+          if (listed.status !== 0) fail('verification_discovery_failed', JSON.stringify({
+            label, phase: 'test_inventory', program: actual.artifact.path, args: ['--list'],
+            status: listed.status, signal: listed.signal ?? null,
+            stderr: commandDiagnostic(listed.stderr), stdout: commandDiagnostic(listed.stdout),
+          }));
           const tests = exactCargoTestInventory(listed.stdout ?? '', label);
           const targetId = `cargo-target-${targets.length}`;
           const target = { kind: 'SourceOwnerCargoTargetReuseV1', version: 1, targetId, source,

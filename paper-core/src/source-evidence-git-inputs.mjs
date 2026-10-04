@@ -85,13 +85,13 @@ export function captureCommittedSourceSubject(root) {
   if (!flags.endsWith('\0') || flags.slice(0, -1).split('\0').some(row => !row.startsWith('H '))) {
     fail('source_index_hidden_input_flag');
   }
-  git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling', commit]);
+  const strictGraphTargets = [commit];
   const references = [], files = [], batchInputs = [];
   try {
     for (const [relative, expected] of selected) {
       if (expected.mode === '160000') {
         const content = observePublicRSourceContent(realRoot, relative, expected, selected,
-          { fail, git, readPinnedSource, readPinnedSourceBatch, assertSourceBatchInputsCurrent });
+          { fail, git, readPinnedSource, readPinnedSourceBatch, assertSourceBatchInputsCurrent, deferredStrictGraphTargets: strictGraphTargets });
         if (content) { references.push(content); subject.publicRSourceContentProfile = content.value; continue; }
         const reference = observeGitlinkReference(realRoot, relative, expected.blob);
         references.push(reference);
@@ -105,6 +105,9 @@ export function captureCommittedSourceSubject(root) {
     for (let offset = 0; offset < files.length; offset += 128) {
       batchInputs.push(readPinnedSourceBatch(root, files.slice(offset, offset + 128)));
     }
+    // Every actual graph is still checked before this observation can return.
+    // Git checks the union once, without repeatedly scanning the same objects.
+    git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling', ...new Set(strictGraphTargets)]);
     assertSourceBatchInputsCurrent(batchInputs);
     for (const reference of references) reference.assertCurrent();
     if (git(root, ['rev-parse', 'HEAD', 'HEAD^{tree}']) !== `${commit}\n${tree}`

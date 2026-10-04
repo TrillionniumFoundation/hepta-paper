@@ -1,8 +1,9 @@
 use super::{EventV1, HookV1, Result, error};
+use sha2::{Digest, Sha256};
 use std::{
     fs::{self, DirBuilder, File, Metadata, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
 use zeroize::Zeroizing;
@@ -142,22 +143,82 @@ pub(super) fn private_chain(chain: &Chain, uid: u32, code: &str) -> Result<()> {
     private_directory(&lstat(path)?, uid, code)
 }
 pub(super) fn names(path: &Path) -> Result<Vec<String>> {
-    let mut names = fs::read_dir(path)
-        .map_err(|e| io_error(e, "scandir", path))?
-        .map(|entry| entry.map(|e| e.file_name().to_string_lossy().into_owned()))
-        .collect::<std::io::Result<Vec<_>>>()
-        .map_err(|e| io_error(e, "scandir", path))?;
+    let mut names = Vec::new();
+    for entry in fs::read_dir(path).map_err(|e| io_error(e, "scandir", path))? {
+        if names.len() >= 3 {
+            return Err(error("release_integrity_key_pair_shape_invalid"));
+        }
+        names.push(
+            entry
+                .map_err(|e| io_error(e, "scandir", path))?
+                .file_name()
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
     names.sort();
     Ok(names)
 }
-pub(super) struct KeyFile {
-    pub bytes: Zeroizing<Vec<u8>>,
+pub(super) struct KeyGuard {
     path: PathBuf,
     metadata: Metadata,
+    held: File,
+    digest: [u8; 32],
+}
+impl KeyGuard {
+    pub(super) fn assert_current(&self) -> Result<()> {
+        self.assert_current_with_code("release_integrity_key_file_changed_after_read")
+    }
+    fn assert_current_with_code(&self, changed_code: &str) -> Result<()> {
+        let held = self
+            .held
+            .metadata()
+            .map_err(|e| io_error(e, "fstat", &self.path))?;
+        let named = lstat(&self.path)?;
+        if !same_file_metadata(&self.metadata, &held) || !same_file_metadata(&self.metadata, &named)
+        {
+            return Err(error(changed_code));
+        }
+        let mut bytes = Zeroizing::new(vec![0; self.metadata.len() as usize]);
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let count = self
+                .held
+                .read_at(&mut bytes[offset..], offset as u64)
+                .map_err(|e| io_error(e, "read", &self.path))?;
+            if count == 0 {
+                return Err(error(changed_code));
+            }
+            offset += count;
+        }
+        if <[u8; 32]>::from(Sha256::digest(&bytes)) != self.digest {
+            return Err(error(changed_code));
+        }
+        let after = self
+            .held
+            .metadata()
+            .map_err(|e| io_error(e, "fstat", &self.path))?;
+        if !same_file_metadata(&self.metadata, &after)
+            || !same_file_metadata(&self.metadata, &lstat(&self.path)?)
+        {
+            return Err(error(changed_code));
+        }
+        Ok(())
+    }
+}
+pub(super) struct KeyFile {
+    pub bytes: Zeroizing<Vec<u8>>,
+    guard: KeyGuard,
 }
 impl KeyFile {
     pub fn assert_current(&self) -> Result<()> {
-        unchanged_file(&self.path, &self.metadata)
+        // Pair inspection has not returned the verified pair yet. Preserve the
+        // ordinary during-read diagnostic while retained guards use after-read.
+        self.guard
+            .assert_current_with_code("release_integrity_key_file_changed_during_read")
+    }
+    pub fn into_parts(self) -> (Zeroizing<Vec<u8>>, KeyGuard) {
+        (self.bytes, self.guard)
     }
 }
 fn same_file_metadata(before: &Metadata, after: &Metadata) -> bool {
@@ -232,10 +293,15 @@ pub(super) fn read_key(
     {
         return Err(error("release_integrity_key_file_changed_during_read"));
     }
+    let digest = Sha256::digest(&bytes).into();
     Ok(KeyFile {
         bytes,
-        path: path.to_owned(),
-        metadata: before,
+        guard: KeyGuard {
+            path: path.to_owned(),
+            metadata: before,
+            held: file,
+            digest,
+        },
     })
 }
 pub(super) fn random_hex() -> Result<String> {

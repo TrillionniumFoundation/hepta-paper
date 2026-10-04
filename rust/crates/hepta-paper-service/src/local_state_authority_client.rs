@@ -22,7 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-mod manager;
+pub(crate) mod manager;
 mod peer;
 mod transport;
 pub use manager::ObservedSocketPeerManagerAssociationV1;

@@ -59,13 +59,10 @@ collected on separately controlled infrastructure.
 
 ### External authority
 
-Binds an active protected-repository policy, real key owner, provider account,
-KMS/HSM, WORM custodian, release attestor or submission authority. Repository
-source and GitHub-hosted workflow execution cannot manufacture this tier.
-
-For repository governance, the configuring administrator and independent
-reviewer remain distinct, and the evidence includes denial tests rather than
-only a settings snapshot.
+Binds a real key owner, provider account, KMS/HSM, WORM custodian, release
+attestor or submission authority. Repository source and GitHub-hosted workflow
+execution cannot manufacture this tier. Protected-branch settings are a source
+integration control, not an external-authority package.
 
 ## Static implementation record
 
@@ -201,10 +198,10 @@ retain the original subject, digest, issuer and review status.
 
 ## Independence
 
-The implementation author may produce source and hosted-installed evidence.
-They may not self-approve:
+The implementation author may produce source and hosted-installed evidence and
+may integrate it when the required machine gates pass. They still cannot
+manufacture operational facts outside their authority, including:
 
-- protected-main policy, bypass or denial evidence;
 - target-host Linux primitive and storage facts;
 - external key-owner custody;
 - provider-account authentication;
@@ -212,9 +209,6 @@ They may not self-approve:
 - live release or submission permission;
 - confidential legacy replay acceptance when they operate the verifier.
 
-The administrator who configures a protected policy may produce its exported
-configuration and denial observations but cannot be the sole independent
-reviewer accepting it.
 
 ## Expiry, invalidation and revocation
 
@@ -243,8 +237,8 @@ Qualification workflows:
 7. use exact non-secret subject identities;
 8. avoid prompts, manuscripts, credentials and raw provider payloads;
 9. fail when required evidence files are absent;
-10. preserve logs long enough for independent review;
-11. never set independent approval fields themselves;
+10. preserve logs long enough for debugging and audit;
+11. never set production or external-authority approval fields themselves;
 12. leave the source worktree byte-clean;
 13. validate normalized evidence and the final artifact against their complete
     committed schemas;

@@ -7,6 +7,74 @@ storage and an untrusted schema. It rejects WAL, SHM and rollback-journal entrie
 identity or byte hash during inspection. Obtain a consistent, checkpointed copy
 before inspecting a running service; never copy only a live WAL database file.
 
+## Ordinary inspection profile v1
+
+`OrdinaryReadOnlyStoreV1::open(absolute_path)` is the separate ordinary reader for
+arbitrary user schemas. It uses SQLite `mode=ro`, a consistent read transaction,
+`query_only`, untrusted schema and memory temporary storage. It never runs a
+migration or grants source, release, cutover, writer-fencing or submission authority.
+It accepts ordinary WAL coordination; the strict immutable opener above still
+rejects every sidecar and still requires its recognized complete schema.
+
+`node_logical_integrity_report()` preserves the complete production Node fields,
+including blocked results for foreign-key or receipt errors. Serialize its
+`OrdinaryNodeLogicalIntegrityReportV1` directly with `serde_json::to_writer` or
+`to_string`: `invalidReceiptRows` retains raw JSON for ECMAScript numbers and
+surrogate values, so converting the whole report to `serde_json::Value` loses that
+wire scope. SQLite TEXT uses Node's UTF-8 replacement behavior in this ordinary
+profile; the strict reader retains its invalid-UTF-8 refusal. Receipt selection
+uses original property order, including duplicate updates and the last falsy
+`*ReceiptHash` fallback; it reuses the existing production raw hash kernel.
+
+The connection still opens by pathname. Held main/WAL/journal file hashes and
+full named/held metadata, canonical target and held path directories are checked
+before and after inspection. Every captured directory must retain mtime/ctime;
+concurrent unrelated ancestor changes are an explicit native safety refusal.
+This is not a claim that SQLite opened the held descriptor. SQLite WAL reads can
+create coordination files. For WAL headers, this owner atomically prepares only
+missing fixed WAL/SHM leaves as zero files through the held parent with NoReplace,
+checks the exact entry delta, then captures the directory baseline before SQLite
+opens. It never overwrites an existing leaf or deletes a possibly shared leaf on
+failure. After this window, directory drift is refused without an SHM exception.
+`coordination_observation()` reports these preparation effects separately from the
+Node report. SHM content/readmarks may change; main/WAL/journal bytes must remain
+fixed. If the prepared leaf cannot be reopened with SQLite's required permissions,
+the ordinary read refuses; it never changes a preexisting file's permissions.
+
+The closed native safety profile is **version 1**: 16 GiB per main/WAL/journal,
+4096 schema objects and parent entries, 2 million rows per table, 1 MiB borrowed
+cell, 16 MiB row and SQLite value limit, 4 GiB aggregate logical input, 2 MiB schema
+and table-metadata preallocation budgets, 4 MiB retained invalid-receipt JSON and
+8 MiB report serialization. The existing raw hash kernel's size/node/collation
+limits still apply, including unpaired surrogate key refusal. These caps and path
+stability rules are native refusals; Node does not have matching product limits.
+The ordinary route therefore remains partial outside tested parameter and effect
+profiles. Row hashes stream; the complete row set is never materialized in Rust.
+
+`open_with_cancellation(path, Arc<AtomicBool>, Instant)` accepts the CLI's existing
+signal flag and one absolute deadline. The maximum lifetime is 300 seconds; a caller may shorten that deadline.
+SQLite VM progress and per-row/per-block file hashing check cancellation. A
+blocking filesystem call or SQLite's bounded ten-second busy wait finishes before
+the next check. Libraries install no process signal handlers. Cancelling may leave
+new coordination leaves; reopening observes them rather than replaying deletion.
+
+`fixed_inventory_projection_v1(&FixedInventoryBudgetV1::default())` exposes only
+the fixed papers/submission-ledger/campaign join and venues query used by the
+Node inventory producer. Typed raw cells preserve SQL NULL/text/number/BLOB values;
+papers and venues retain separate failures. The profile preflights each input and
+unsorted join to 1024 rows, then checks borrowed 64 KiB cells and a conservative
+4 MiB aggregate JSON allocation bound before copying output. It does not expose
+arbitrary SQL, alter YAML fallback rules, or turn missing columns/malformed JSON
+into null values. Consumers still own normalization and selection policy.
+
+The shipping `hepta-paper-rust verify store -- DB` normal entry resolves database and runtime defaults from its actual frontend, emits the raw report directly, exits one for a blocked report, and closes SQLite before output or signal termination. The ordinary Node/native process owner in `paper-core/tests/native-store-integrity-normal.test.mjs` executes default/relative paths, raw receipts, actual SIGTERM/SIGKILL and same-input retry, including the explicitly different cold 0400 SHM effects. These tests bind source behavior; complete route and live host acceptance remain separate.
+
+The focused ordinary tests run the actual `hepta-paper verify store -- DB` Node
+wrapper for arbitrary schemas, SQL values, live/closed WAL and explicit cap
+differences, and exercise actual path replacement, cancellation and retry. The
+`ordinary-report-v1` example is an explicit owner diagnostic harness for external
+sealed inputs; it is not a delivery or host qualification command.
+
 ## Schema recognition
 
 The production Node store records migrations in `schema_migrations`; it leaves

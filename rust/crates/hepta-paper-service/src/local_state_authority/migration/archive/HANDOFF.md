@@ -20,7 +20,9 @@ private key, open source-family descriptors, sign receipts or invoke transport.
 
 The owner first performs complete source-schema, configuration/public-key and
 signed-history verification. All original admission limits apply, including
-refusal of pending operations, every backup row and unsupported histories. It
+refusal of pending operations and unsupported histories. Complete signed backup
+rows at the exact empty mutation terminal head follow the same bounded
+[history admission profile](../history/HANDOFF.md) and are preserved verbatim. It
 then copies the same held snapshot using rusqlite's safe `Backup` API into a
 fresh, private memory database. Destination page size matches the actual source
 page size, from 512 through 65,536 bytes. The full physical page allocation,

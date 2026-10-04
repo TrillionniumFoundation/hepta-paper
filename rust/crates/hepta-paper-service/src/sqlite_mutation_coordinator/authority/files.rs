@@ -17,6 +17,7 @@ pub(crate) struct Snapshot {
     bytes: Vec<u8>,
     metadata: Metadata,
     ancestors: Vec<(PathBuf, Metadata)>,
+    control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
 }
 fn same(a: &Metadata, b: &Metadata) -> bool {
     a.dev() == b.dev()
@@ -33,6 +34,18 @@ fn same(a: &Metadata, b: &Metadata) -> bool {
 }
 impl Snapshot {
     pub fn load(path: &Path, pin: &str, maximum: u64, code: &str) -> Result<Self> {
+        Self::load_with_control(path, pin, maximum, code, None)
+    }
+    pub(crate) fn load_with_control(
+        path: &Path,
+        pin: &str,
+        maximum: u64,
+        code: &str,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
+        if let Some(control) = &control {
+            control.check()?;
+        }
         if !path.is_absolute()
             || !sha(&json!(pin))
             || path.components().any(|p| matches!(p, Component::ParentDir))
@@ -64,6 +77,9 @@ impl Snapshot {
             .peekable();
         let mut selected = None;
         while let Some(part) = parts.next() {
+            if let Some(control) = &control {
+                control.check()?;
+            }
             let last = parts.peek().is_none();
             let flags = OFlag::O_RDONLY
                 | OFlag::O_NOFOLLOW
@@ -99,12 +115,41 @@ impl Snapshot {
             return Err(error(code));
         }
         let mut bytes = Vec::new();
-        (&mut file)
-            .take(maximum + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| error(code))?;
+        if let Some(control) = &control {
+            let mut chunk = [0_u8; 64 * 1024];
+            loop {
+                control.check()?;
+                let n = file.read(&mut chunk).map_err(|_| error(code))?;
+                if n == 0 {
+                    break;
+                }
+                if (bytes.len() as u64)
+                    .checked_add(n as u64)
+                    .is_none_or(|n| n > maximum)
+                {
+                    return Err(error(code));
+                }
+                bytes.extend_from_slice(&chunk[..n]);
+            }
+        } else {
+            (&mut file)
+                .take(maximum + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| error(code))?;
+        }
+        let actual_hash = if let Some(control) = &control {
+            use sha2::{Digest, Sha256};
+            let mut digest = Sha256::new();
+            for chunk in bytes.chunks(64 * 1024) {
+                control.check()?;
+                digest.update(chunk);
+            }
+            format!("sha256:{}", hex::encode(digest.finalize()))
+        } else {
+            hash_bytes(&bytes)
+        };
         if bytes.len() as u64 != metadata.len()
-            || hash_bytes(&bytes) != pin
+            || actual_hash != pin
             || !same(&metadata, &file.metadata().map_err(|_| error(code))?)
         {
             return Err(error(code));
@@ -115,11 +160,15 @@ impl Snapshot {
             bytes,
             metadata,
             ancestors,
+            control,
         };
         snapshot.assert_current().map_err(|_| error(code))?;
         Ok(snapshot)
     }
     pub fn assert_current(&self) -> Result<()> {
+        if let Some(control) = &self.control {
+            control.check()?;
+        }
         let failed =
             || error("autonomous_research_online_mutation_authority_process_identity_changed");
         for (path, before) in &self.ancestors {
@@ -152,7 +201,14 @@ impl Snapshot {
         self.bytes.zeroize();
     }
     pub fn json(&self, code: &str) -> Result<Value> {
-        parse(&self.bytes, code)
+        if let Some(control) = &self.control {
+            control.check()?;
+        }
+        let value = parse(&self.bytes, code)?;
+        if let Some(control) = &self.control {
+            control.check()?;
+        }
+        Ok(value)
     }
     pub fn executable(&self) -> bool {
         self.metadata.mode() & 0o111 != 0

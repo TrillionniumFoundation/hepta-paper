@@ -1002,3 +1002,6 @@ fn publication_private_reader_refuses_actual_view_oversize_and_unsafe_sidecars()
         assert_eq!(publication_snapshot(&fixture.fixture.root), before);
     }
 }
+
+#[path = "runtime_image_reproducibility_parity/ordinary_runtime_image.rs"]
+mod ordinary_runtime_image;

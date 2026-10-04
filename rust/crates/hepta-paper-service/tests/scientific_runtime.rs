@@ -1,3 +1,6 @@
+#[path = "support/installed_rscript.rs"]
+mod installed_rscript;
+
 use hepta_codex_protocol::Sha256Digest;
 use hepta_paper_service::scientific_runtime::*;
 use serde_json::Value;
@@ -482,7 +485,7 @@ fn actual_r_empirical_and_numerical_programs_produce_verified_outputs() {
                 format: ScientificOutputFormatV1::Json,
             }],
         };
-        let p = installed_profile(&temp, &job, runtime, Path::new("/usr/bin/Rscript"));
+        let p = installed_profile(&temp, &job, runtime, &installed_rscript::selected_rscript());
         let output = execute_scientific_job_v1(&p, job.clone(), runtime.capability()).unwrap();
         retain_installed_output(
             if runtime == ScientificRuntimeKindV1::REmpirical {
@@ -546,7 +549,7 @@ fn actual_r_failure_cannot_publish_an_existing_output_as_success() {
         &temp,
         &job,
         ScientificRuntimeKindV1::REmpirical,
-        Path::new("/usr/bin/Rscript"),
+        &installed_rscript::selected_rscript(),
     );
     assert!(matches!(
         execute_scientific_job_v1(&p, job, "CAP-EMPIRICAL"),

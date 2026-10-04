@@ -13,6 +13,35 @@ use std::{
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn cli_refuses_invalid_forwarded_arguments_before_workspace_inspection() {
+    for (args, error) in [
+        (vec!["--unknown"], "unknown_cli_option:--unknown"),
+        (
+            vec!["--require-decoupled=true"],
+            "boolean_cli_option_does_not_take_value:--require-decoupled",
+        ),
+        (
+            vec!["--require-decoupled", "--require-decoupled"],
+            "duplicate_cli_option:--require-decoupled",
+        ),
+        (vec!["positional"], "unexpected_cli_positional:positional"),
+        (vec!["--"], "unexpected_cli_argument_separator"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-workspace-status"))
+            .args(args)
+            .env(
+                "HEPTA_PAPER_WORKSPACE_ROOT",
+                "/nonexistent/invalid-deployment",
+            )
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(String::from_utf8(output.stderr).unwrap().trim(), error);
+    }
+}
+
 fn oracle(options: &Value) -> Value {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut child = Command::new("node")

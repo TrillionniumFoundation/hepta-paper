@@ -5,7 +5,7 @@ builds a standalone native SQLite artifact entirely in memory. Its only public
 entry point is the existing owner loaded with the pinned daemon configuration
 and independently pinned online configuration/public-key document. It first
 performs the same complete source-schema and signed-history verification as
-`inspect`, retaining the exact six-table SQL snapshot used by that observation.
+`inspect`, retaining the exact admitted five/six-table SQL snapshot used by that observation.
 No private key is loaded, no receipt is signed and no transport is invoked.
 
 The source connection must already hold a real main READ or WRITE transaction.
@@ -35,8 +35,12 @@ Within its own memory-only transaction the builder executes the embedded native
 `schema.sql`, then inserts every original value through bound SQL parameters,
 including all original rowids and unmodified JSON TEXT. Metadata, all ten
 database heads and retained schema, rebind and mutation evidence remain intact.
-As required by the first history contract, backup history is refused before
-conversion. The native mutation table replaces the original unconditional
+Complete signed backups at the exact empty mutation terminal head are retained
+unchanged under the [history admission profile](../history/HANDOFF.md). Pending,
+tampered or unsupported backup histories remain refusals. For the exact initial
+five-table source profile, the native image adds the empty rebind table while
+preserving the source schema identity in its history report and the common
+logical hash domain. The native mutation table replaces the original unconditional
 global-sequence uniqueness with the native partial live-sequence index; an
 aborted tail remains present and no longer permanently consumes the next live
 sequence. The new identity row contains the hash of the actual independently
@@ -64,7 +68,9 @@ SQLite format bytes. Physical page layout is an artifact property and is not
 claimed to reproduce the source file bytes.
 
 Tests use the actual Node runtime to create isolated signed initial/rebind and
-multi-database mutation histories, including an aborted tail. They can write a
+multi-database mutation histories, including an aborted tail and a complete
+signed backup. Pending-backup, wrong-key and tampered histories remain negative
+cases. They can write a
 returned image back to that disposable fixture's original configured path only
 after all original source handles are closed. A real native runtime can then
 open the native-format fixture and continue reserving/finalizing while retaining

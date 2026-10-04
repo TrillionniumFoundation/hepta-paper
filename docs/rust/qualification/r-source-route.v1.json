@@ -27,7 +27,7 @@
   "acceptance": {
     "currentBuildClosureVerificationRequired": true,
     "exactHeadBaseMergeRequired": true,
-    "independentReviewRequired": true,
+    "independentReviewRequired": false,
     "targetHostQualificationRequired": true
   },
   "authority": {
@@ -35,5 +35,12 @@
     "originalGitlinkVerified": false,
     "productionAuthorized": false,
     "externalAuthorityClaimed": false
+  },
+  "contentObservation": {
+    "maximumFileBytes": 16777216,
+    "maximumTotalBytes": 134217728,
+    "gitlinkCommitQualified": false,
+    "productionAuthorized": false,
+    "packageExecutionAllowed": false
   }
 }

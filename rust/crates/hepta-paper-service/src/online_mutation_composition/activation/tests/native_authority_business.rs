@@ -309,7 +309,13 @@ fn native_authority_business(reject_commit: bool) {
     let guard = inventory.native_store_transaction_guard_v1().unwrap();
     let recovery = prepared
         .fence
-        .retain_native_store_transaction_v1(&prepared.fence_binding, &guard, &prepared.verifier)
+        .retain_native_store_with_pins(&prepared.fence_binding, &guard, &prepared.verifier, || {
+            assert_product_owner_current(
+                prepared.installed_authority.as_ref(),
+                &prepared.fence,
+                &prepared.verifier,
+            )
+        })
         .unwrap();
     let binding = OnlineReconciliationBindingV1 {
         database_instance_id: guard.instance()["instanceId"].as_str().unwrap().into(),
@@ -333,6 +339,7 @@ fn native_authority_business(reject_commit: bool) {
         cache: &prepared.cache,
         fence: &prepared.fence,
         verifier: &prepared.verifier,
+        installed_authority: prepared.installed_authority.as_ref(),
         checked_at: &prepared.checked_at,
         package: &prepared.package,
     };
@@ -477,7 +484,13 @@ fn native_authority_business(reject_commit: bool) {
         assert!(
             prepared
                 .fence
-                .assert_native_store_transaction_current_v1(&recovery, &prepared.verifier)
+                .assert_native_store_with_pins(&recovery, &prepared.verifier, || {
+                    assert_product_owner_current(
+                        prepared.installed_authority.as_ref(),
+                        &prepared.fence,
+                        &prepared.verifier,
+                    )
+                })
                 .is_err(),
             "actual coordinator finalization feedback must invalidate the original epoch token"
         );
@@ -495,11 +508,8 @@ fn native_authority_business(reject_commit: bool) {
     probe(&path, false);
     // A new real process observation authenticates the terminal authority head;
     // it cannot revive the now-invalid original evidence or grant activation.
-    let mut authority = Online::load_process(
-        &request.online_process_configuration_path,
-        &request.online_process_configuration_file_hash,
-    )
-    .unwrap();
+    let (online_path, online_hash) = process_online_profile(&request);
+    let mut authority = load_process_online(online_path, online_hash).unwrap();
     let now = SystemMutationClockV1.now_millis().unwrap();
     let trust = authority.trust();
     let head_request = json!({"version":1,"kind":"AutonomousResearchOnlineMutationCurrentHeadRequest",

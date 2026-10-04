@@ -1,4 +1,9 @@
 //! Bounded JSON command interface for the durable Rust composition.
+#[path = "shared/ordinary_readonly.rs"]
+mod ordinary_readonly;
+use hepta_paper_service::personal_self_hosted_gpu::cli::{
+    PERSONAL_GPU_USAGE, parse_personal_gpu_arguments, safe_personal_gpu_token,
+};
 use hepta_paper_service::{
     LegacyDeletionDrillAttestationRequestV1, LegacyNodeFreezeSubjectV1, ObjectStoreV1,
     ServiceRunV1,
@@ -52,6 +57,7 @@ use hepta_paper_service::{
         AutonomousSubmissionDispatcherChallengeOptions,
         inspect_autonomous_submission_dispatcher_challenge_v1,
     },
+    cli_commands::CommandV1,
     command_surface::{
         ci_command_matrix_json_v1, classify_npm_script_surface_json_v1, command_usage_json_v1,
         generated_npm_route_scripts_json_v1, synchronize_command_surface_json_v1,
@@ -83,7 +89,7 @@ use hepta_paper_service::{
         execute_local_golden_dataset_provisioning_v1, inspect_local_golden_dataset_provisioning_v1,
         local_golden_dataset_provisioning_usage, parse_local_golden_dataset_provisioning_arguments,
     },
-    migrate_node_store_v1, native_implementation_hash_v1,
+    native_implementation_hash_v1,
     personal_self_hosted_gpu::{
         blocked_personal_gpu_receipt_v1, encode_personal_gpu_operational_receipt_v1,
         parse_personal_gpu_operational_receipt_v1, personal_gpu_receipt_json_v1,
@@ -93,7 +99,25 @@ use hepta_paper_service::{
         PersonalSelfHostedReadinessOptions, canonical_observed_at_v1,
         inspect_personal_self_hosted_readiness_v1, personal_self_hosted_readiness_help_json_v1,
     },
-    release_attest::{ReleaseAttestationRequestV1, inspect_release_attestation_v1},
+    release_attest::{
+        ReleaseAttestationRequestV1, ReleaseAttestationSourceRequestV2,
+        inspect_release_attestation_source_with_cancellation_v2, inspect_release_attestation_v1,
+    },
+    release_replay::{
+        ReleaseAttestationMeasuredPolicyReplayRequestV8,
+        ReleaseAttestationNativeAstPolicyReplayRequestV9,
+        ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12,
+        ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13,
+        ReleaseAttestationNativeRetirementPolicyReplayRequestV10,
+        ReleaseAttestationPolicyReplayRequestV4, ReleaseAttestationReplayRequestV3,
+        inspect_release_attestation_measured_policy_replay_with_cancellation_v8,
+        inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9,
+        inspect_release_attestation_native_command_disposition_policy_replay_with_cancellation_v12,
+        inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13,
+        inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10,
+        inspect_release_attestation_policy_replay_with_cancellation_v4,
+        inspect_release_attestation_replay_with_cancellation_v3,
+    },
     release_state::inspect_release_state_v1,
     release_trust_gate::build_release_trust_layer_gate_from_values_v1,
     repository_assets::{
@@ -102,14 +126,16 @@ use hepta_paper_service::{
     },
     research_capability_matrix::build_research_capability_matrix_v2,
     retirement_matrix::inspect_retirement_matrix_v1,
-    retirement_reference::verify_retirement_reference_v1,
+    retirement_reference::verify_retirement_reference_with_cancellation_v1,
     retirement_status::inspect_retirement_status_v1,
     run_service_v1,
-    runtime_source_cas::{acquire_runtime_source_cas_from_seed_v1, inspect_runtime_source_cas_v1},
+    runtime_source_cas::{
+        acquire_runtime_source_cas_from_seed_with_cancellation_v1,
+        inspect_runtime_source_cas_with_cancellation_v1,
+    },
     state_recoverability::safety_inspection::{
         StateSafetyInspectionOptionsV1, inspect_autonomous_research_state_safety_v1,
     },
-    store_status::inspect_store_status_with_options_v1,
     strict_full_auto_acceptance::{
         STRICT_FULL_AUTO_ACCEPTANCE_USAGE, execute_strict_full_auto_acceptance_v1,
         inspect_strict_full_auto_acceptance_v1, parse_strict_full_auto_acceptance_arguments,
@@ -124,61 +150,250 @@ use hepta_paper_service::{
 use std::{
     collections::BTreeMap,
     env,
-    fs::File,
-    io::{self, BufRead, Read},
+    fs::{self, File, OpenOptions},
+    io::{self, BufRead, Read, Write},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// Resolve the same database default used by Node's
-/// `paper-core/bin/hepta-store-logical-integrity.mjs`: an explicit
-/// `HEPTA_PAPER_RUNTIME_ROOT` is resolved from the current directory, while
-/// the installed source tree defaults to its sibling runtime deployment.
-fn default_store_integrity_database_v1() -> PathBuf {
-    let runtime_root = env::var_os("HEPTA_PAPER_RUNTIME_ROOT")
-        .map(PathBuf::from)
-        .map(lexical_absolute_path)
-        .unwrap_or_else(|| {
-            let workspace =
-                lexical_absolute_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
-            workspace
-                .parent()
-                .unwrap_or(&workspace)
-                .join("hepta-paper-runtime/native-runtime")
-        });
-    runtime_root.join("hepta-paper.sqlite")
+/// Resolve default product paths from the actual frontend, never the caller's
+/// working directory or a different checkout's compile-time path.
+fn default_command_workspace_v1() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(hepta_paper_service::native_workspace::current_native_command_workspace_root_v1(None)?)
+}
+fn default_command_runtime_v1() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(hepta_paper_service::native_workspace::current_native_command_runtime_root_v1()?)
+}
+fn default_command_assets_v1() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(path) = env::var_os("HEPTA_PAPER_ASSET_ROOT").filter(|value| !value.is_empty()) {
+        return Ok(lexical_absolute_path(PathBuf::from(path)));
+    }
+    let workspace = default_command_workspace_v1()?;
+    let parent = workspace.parent().unwrap_or(&workspace);
+    Ok(
+        if parent
+            .file_name()
+            .is_some_and(|name| name == "paper_factory")
+        {
+            parent.to_path_buf()
+        } else {
+            parent.join("hepta-paper-assets")
+        },
+    )
+}
+fn default_store_integrity_database_v1() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(default_command_runtime_v1()?.join("hepta-paper.sqlite"))
+}
+
+fn ordinary_store_integrity_database_v1(
+    argument: Option<&String>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let explicit_database = argument
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    if let Some(database) = explicit_database.as_ref().filter(|path| path.is_absolute()) {
+        return Ok(
+            hepta_paper_service::native_workspace::resolve_native_workspace_root_v1(
+                Path::new("/"),
+                database,
+                Some(database),
+            )?,
+        );
+    }
+    let explicit_runtime = if explicit_database.is_none() {
+        env::var_os("HEPTA_PAPER_RUNTIME_ROOT")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    } else {
+        None
+    };
+    if let Some(runtime) = explicit_runtime.as_ref().filter(|path| path.is_absolute()) {
+        let runtime = hepta_paper_service::native_workspace::resolve_native_workspace_root_v1(
+            Path::new("/"),
+            runtime,
+            Some(runtime),
+        )?;
+        return Ok(runtime.join("hepta-paper.sqlite"));
+    }
+    let workspace = default_command_workspace_v1()?;
+    if let Some(database) = explicit_database {
+        return Ok(
+            hepta_paper_service::native_workspace::resolve_native_workspace_root_v1(
+                &workspace,
+                &database,
+                Some(&database),
+            )?,
+        );
+    }
+    let runtime = if let Some(runtime) = explicit_runtime {
+        hepta_paper_service::native_workspace::resolve_native_workspace_root_v1(
+            &workspace,
+            &runtime,
+            Some(&runtime),
+        )?
+    } else {
+        workspace
+            .parent()
+            .unwrap_or(&workspace)
+            .join("hepta-paper-runtime/native-runtime")
+    };
+    Ok(runtime.join("hepta-paper.sqlite"))
+}
+
+// This ordinary reader uses the existing signal flag while SQLite is open.
+// Once its owned handles are closed, signals regain Node's termination status,
+// including during a blocked stdout write. Libraries retain no signal handlers.
+fn ordinary_store_integrity_command_v1(
+    argument: Option<&String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let database = ordinary_store_integrity_database_v1(argument)?;
+    let (report, bytes) = ordinary_readonly::with_node_termination_v1(|cancelled| {
+        let store = hepta_readonly_store::OrdinaryReadOnlyStoreV1::open_with_cancellation(
+            database,
+            cancelled,
+            std::time::Instant::now() + std::time::Duration::from_secs(300),
+        )?;
+        let report = store.node_logical_integrity_report()?;
+        let bytes = serde_json::to_string_pretty(&report)?;
+        store.verify_unchanged()?;
+        drop(store);
+        Ok((report, bytes))
+    })?;
+    println!("{bytes}");
+    if report.status != "sqlite_logical_integrity_verified" {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn ordinary_governance_status_command_v1(owner: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let workspace =
+        hepta_paper_service::native_workspace::current_native_command_workspace_root_v1(None)?;
+    // The Node group wrapper executes its worker in the physical workspace.
+    // Its relative runtime and asset environment paths resolve from that root.
+    let path_from_environment = |name: &str, fallback: PathBuf| -> Result<PathBuf, String> {
+        if let Some(selected) = env::var_os(name).filter(|value| !value.is_empty()) {
+            let selected = PathBuf::from(selected);
+            hepta_paper_service::native_workspace::resolve_native_workspace_root_v1(
+                &workspace,
+                &selected,
+                Some(&selected),
+            )
+        } else {
+            Ok(fallback)
+        }
+    };
+    let parent = workspace.parent().unwrap_or(&workspace);
+    let runtime = path_from_environment(
+        "HEPTA_PAPER_RUNTIME_ROOT",
+        parent.join("hepta-paper-runtime/native-runtime"),
+    )?;
+    let report = ordinary_readonly::with_node_termination_v1(|cancelled| {
+        if owner {
+            Ok(hepta_paper_service::operational_status::inspect_ordinary_owner_acceptance_status_with_cancellation_v1(
+                &workspace, &runtime, &cancelled,
+            )?)
+        } else {
+            let asset_default = if parent
+                .file_name()
+                .is_some_and(|name| name == "paper_factory")
+            {
+                parent.to_owned()
+            } else {
+                parent.join("hepta-paper-assets")
+            };
+            let assets = path_from_environment("HEPTA_PAPER_ASSET_ROOT", asset_default)?;
+            Ok(hepta_paper_service::operational_status::capability_operational_proof_status_with_cancellation_v1(
+                &workspace, &runtime, &assets, &cancelled,
+            )?)
+        }
+    })?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn ordinary_retirement_reference_command_v1() -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = default_command_workspace_v1()?;
+    let root = if let Some(selected) =
+        env::var_os("HEPTA_RETIREMENT_REFERENCE").filter(|value| !value.is_empty())
+    {
+        let selected = PathBuf::from(selected);
+        hepta_paper_service::native_workspace::resolve_native_workspace_root_v1(
+            &workspace,
+            &selected,
+            Some(&selected),
+        )?
+    } else {
+        PathBuf::from(
+            "/data/home-data/hepta-paper-legacy-reference/retirement-source-snapshot-2026-07-13",
+        )
+    };
+    let report = ordinary_readonly::with_node_termination_v1(|cancelled| {
+        Ok(verify_retirement_reference_with_cancellation_v1(
+            &root, &cancelled,
+        )?)
+    })?;
+    let blocked = report["status"] == "retirement_reference_blocked";
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if blocked {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn read_bounded(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take(16 * 1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > 16 * 1024 * 1024 {
+    const MAXIMUM_INPUT_BYTES: u64 = 16 * 1024 * 1024;
+    // A request is a cooperative regular-file snapshot. Special files must
+    // never wait for a writer before the command can install cancellation.
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK | nix::libc::O_CLOEXEC)
+        .open(path)?;
+    let before = file.metadata()?;
+    if !before.is_file() {
+        return Err("input must be a regular file".into());
+    }
+    if before.len() > MAXIMUM_INPUT_BYTES {
         return Err("input exceeds 16MiB".into());
+    }
+    let identity = |value: &fs::Metadata| {
+        (
+            value.dev(),
+            value.ino(),
+            value.uid(),
+            value.gid(),
+            value.mode(),
+            value.nlink(),
+            value.len(),
+            value.mtime(),
+            value.mtime_nsec(),
+            value.ctime(),
+            value.ctime_nsec(),
+        )
+    };
+    if identity(&before) != identity(&fs::symlink_metadata(path)?) {
+        return Err("input changed during read".into());
+    }
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(MAXIMUM_INPUT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAXIMUM_INPUT_BYTES {
+        return Err("input exceeds 16MiB".into());
+    }
+    if bytes.len() as u64 != before.len()
+        || identity(&before) != identity(&file.metadata()?)
+        || identity(&before) != identity(&fs::symlink_metadata(path)?)
+    {
+        return Err("input changed during read".into());
     }
     Ok(bytes)
 }
 fn default_repository_asset_paths() -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
-    let manifest_relative = Path::new("paper-core/config/repository-asset-externalization.v1.json");
-    let mut candidates = Vec::new();
-    if let Ok(current) = env::current_dir() {
-        candidates.push(current);
-    }
-    let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .map(Path::to_path_buf);
-    if let Some(source_root) = source_root {
-        candidates.push(source_root);
-    }
-    for root in candidates {
-        let manifest = root.join(manifest_relative);
-        if manifest.is_file() {
-            return Ok((root, manifest));
-        }
-    }
-    Err("repository_asset_default_manifest_not_found".into())
+    let root = default_command_workspace_v1()?;
+    let manifest = root.join("paper-core/config/repository-asset-externalization.v1.json");
+    Ok((root, manifest))
 }
 
 fn main() {
@@ -197,27 +412,6 @@ fn main() {
 fn current_unix_millis() -> Result<i64, Box<dyn std::error::Error>> {
     let millis = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     Ok(i64::try_from(millis).map_err(|_| "current clock exceeds signed millisecond range")?)
-}
-
-fn safe_personal_gpu_token(value: &str) -> String {
-    let token = value
-        .encode_utf16()
-        .take(180)
-        .map(|unit| {
-            if unit <= 127 {
-                let character = char::from(unit as u8);
-                if character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | ':' | '-') {
-                    return character;
-                }
-            }
-            '_'
-        })
-        .collect::<String>();
-    if token.is_empty() {
-        "error".to_owned()
-    } else {
-        token
-    }
 }
 
 fn workspace_commit_for_personal_gpu(root: &Path) -> Option<String> {
@@ -263,116 +457,6 @@ fn personal_gpu_check_fallback(
         workspace_commit_for_personal_gpu(workspace_root).as_deref(),
         &failure_token,
     )
-}
-
-const PERSONAL_GPU_USAGE: &str = "personal-gpu-operational-gate [--write] [--check] [--root PATH] [--runtime-root PATH]\n  Runs the local single-host GPU/PDE/DL gate. Green is personal-only and non-promotable.";
-
-fn parse_personal_gpu_arguments(args: &[String]) -> Result<BTreeMap<String, String>, String> {
-    let mut parsed = BTreeMap::new();
-    let mut index = 0;
-    while index < args.len() {
-        let token = args[index].as_str();
-        if token == "--" {
-            return Err("unexpected_cli_argument_separator".into());
-        }
-        let raw = token
-            .strip_prefix("--")
-            .ok_or_else(|| format!("unexpected_cli_positional:{token}"))?;
-        let (key, inline) = raw
-            .split_once('=')
-            .map_or((raw, None), |(key, value)| (key, Some(value)));
-        if key.is_empty() {
-            return Err("empty_cli_option".into());
-        }
-        let boolean = matches!(key, "check" | "help" | "write");
-        let value = if boolean {
-            if inline.is_some() {
-                return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
-            }
-            "true".to_owned()
-        } else {
-            if !matches!(
-                key,
-                "root" | "runtime-root" | "receipt" | "output-root" | "run-id" | "deadline-ms"
-            ) {
-                return Err(format!("unknown_cli_option:--{key}"));
-            }
-            let value = match inline {
-                Some(value) => value,
-                None => {
-                    index += 1;
-                    let value = args
-                        .get(index)
-                        .filter(|value| !value.starts_with("--"))
-                        .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?;
-                    value.as_str()
-                }
-            };
-            if value.is_empty() {
-                return Err(format!("empty_cli_option_value:--{key}"));
-            }
-            value.to_owned()
-        };
-        // The Node parser validates the value before reporting duplication.
-        if parsed.insert(key.to_owned(), value).is_some() {
-            return Err(format!("duplicate_cli_option:--{key}"));
-        }
-        index += 1;
-    }
-    Ok(parsed)
-}
-
-// Apply Node's strict value and duplicate ordering to the native health subset.
-// `action` is a native selector; resident execution remains blocked below.
-fn parse_supervisor_health_arguments(args: &[String]) -> Result<BTreeMap<String, String>, String> {
-    let mut parsed = BTreeMap::new();
-    let mut index = 0;
-    while index < args.len() {
-        let token = args[index].as_str();
-        if token == "--" {
-            return Err("unexpected_cli_argument_separator".into());
-        }
-        let raw = token
-            .strip_prefix("--")
-            .ok_or_else(|| format!("unexpected_cli_positional:{token}"))?;
-        let (key, inline) = raw
-            .split_once('=')
-            .map_or((raw, None), |(key, value)| (key, Some(value)));
-        if key.is_empty() {
-            return Err("empty_cli_option".into());
-        }
-        let value = match key {
-            "help" | "require-startup-reconciliation" | "require-machine-intake-reconciliation" => {
-                if inline.is_some() {
-                    return Err(format!("boolean_cli_option_does_not_take_value:--{key}"));
-                }
-                "true"
-            }
-            "action" | "runtime-root" | "external-qualification-config" => {
-                let value = match inline {
-                    Some(value) => value,
-                    None => {
-                        index += 1;
-                        args.get(index)
-                            .filter(|value| !value.starts_with("--"))
-                            .map(String::as_str)
-                            .ok_or_else(|| format!("missing_cli_option_value:--{key}"))?
-                    }
-                };
-                if value.is_empty() {
-                    return Err(format!("empty_cli_option_value:--{key}"));
-                }
-                value
-            }
-            _ => return Err(format!("unsupported_supervisor_mode:{token}")),
-        };
-        // Node validates a repeated value before reporting duplication.
-        if parsed.insert(key.to_owned(), value.to_owned()).is_some() {
-            return Err(format!("duplicate_cli_option:--{key}"));
-        }
-        index += 1;
-    }
-    Ok(parsed)
 }
 
 fn parse_dispatcher_challenge_arguments(
@@ -460,21 +544,74 @@ const DISPATCHER_CHALLENGE_USAGE: &str = r#"{
   "residentDispatcherPrincipalRequired": true
 }"#;
 
+// One CLI signal adapter; libraries never change process-global handlers.
+fn command_cancellation_flag()
+-> Result<std::sync::Arc<std::sync::atomic::AtomicBool>, Box<dyn std::error::Error>> {
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+        signal_hook::flag::register(signal, std::sync::Arc::clone(&cancelled))?;
+    }
+    Ok(cancelled)
+}
+
 fn command() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        Some("native-identity") if args.len() == 1 => {
+    let args = env::args_os()
+        .skip(1)
+        .map(|argument| {
+            argument
+                .into_string()
+                .map_err(|_| "native_command_argument_encoding_invalid")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // Internal data-only worker selected only by the current native ELF owner.
+    // It reads bounded JSON and never executes Python source or grants authority.
+    if args.as_slice() == ["__hepta_internal_retirement_python_ast_v1"] {
+        let mut bytes = Vec::new();
+        io::stdin()
+            .lock()
+            .take(16 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        let output =
+            hepta_paper_service::release_replay::python_ast::inspect_python_ast_worker_bytes_v1(
+                &bytes,
+            )?;
+        io::stdout().lock().write_all(&output)?;
+        return Ok(());
+    }
+    let args = match hepta_paper_service::canonical_cli::resolve_canonical_cli_arguments_v1(&args) {
+        Ok(Some(arguments)) => arguments,
+        Ok(None) => args,
+        Err(error) => {
+            let report =
+                hepta_paper_service::canonical_cli::canonical_cli_error_report_v1(&args, &error)?;
+            eprintln!("{}", serde_json::to_string_pretty(&report)?);
+            std::process::exit(2);
+        }
+    };
+    if args.as_slice() == ["--help-json"] {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "version": 1, "kind": "RustCommandCatalogV1",
+                "commands": CommandV1::ALL.iter().map(|command| command.name()).collect::<Vec<_>>()
+            }))?
+        );
+        return Ok(());
+    }
+    match args.first().and_then(|name| CommandV1::parse(name)) {
+        Some(CommandV1::NativeIdentity) if args.len() == 1 => {
             println!("{}", native_implementation_hash_v1()?);
         }
-        Some("put") if args.len() == 3 => {
+        Some(CommandV1::Put) if args.len() == 3 => {
+            let bytes = read_bounded(&args[2])?;
             let store = ObjectStoreV1::open(&PathBuf::from(&args[1]))?;
-            println!("{}", store.put(&read_bounded(&args[2])?)?);
+            println!("{}", store.put(&bytes)?);
         }
-        Some("run") if args.len() == 2 => {
+        Some(CommandV1::Run) if args.len() == 2 => {
             let config: ServiceRunV1 = serde_json::from_slice(&read_bounded(&args[1])?)?;
             println!("{}", serde_json::to_string(&run_service_v1(config)?)?);
         }
-        Some("serve") if args.len() == 1 => {
+        Some(CommandV1::Serve) if args.len() == 1 => {
             // One closed JSON request per line; EOF performs orderly shutdown.
             let mut stdin = io::stdin().lock();
             loop {
@@ -492,7 +629,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string(&run_service_v1(config)?)?);
             }
         }
-        Some("verify-legacy-freeze") if args.len() == 5 => {
+        Some(CommandV1::VerifyLegacyFreeze) if args.len() == 5 => {
             let receipt = verify_legacy_node_freeze_v1(
                 PathBuf::from(&args[1]),
                 LegacyNodeFreezeSubjectV1 {
@@ -503,56 +640,269 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             println!("{}", serde_json::to_string(receipt.receipt())?);
         }
-        Some("inspect-db") if args.len() == 2 => {
-            let store = hepta_readonly_store::ReadOnlyStoreV1::open(PathBuf::from(&args[1]))?;
+        Some(CommandV1::InspectDb) if args.len() == 2 => {
+            let store = hepta_readonly_store::ReadOnlyStoreV1::open_known_installed_v1(
+                PathBuf::from(&args[1]),
+            )?;
             println!(
                 "{}",
                 serde_json::to_string(&store.node_logical_snapshot()?)?
             );
         }
-        Some("store-integrity") if args.len() == 1 || args.len() == 2 => {
-            let database = args
-                .get(1)
-                .map(PathBuf::from)
-                .unwrap_or_else(default_store_integrity_database_v1);
-            let store = hepta_readonly_store::ReadOnlyStoreV1::open(database)?;
+        Some(
+            command @ (CommandV1::OrdinaryJournalConnectorCoverage
+            | CommandV1::OrdinaryAutonomousSupervisorHealth),
+        ) => {
+            use hepta_paper_service::ordinary_readonly_frontend::{
+                OrdinaryReadonlyRouteV1, inspect_ordinary_readonly_frontend_v1,
+            };
+            let route = match command {
+                CommandV1::OrdinaryJournalConnectorCoverage => {
+                    OrdinaryReadonlyRouteV1::JournalConnectorCoverage
+                }
+                _ => OrdinaryReadonlyRouteV1::AutonomousSupervisorHealth,
+            };
+            let output = inspect_ordinary_readonly_frontend_v1(route, &args[1..]);
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryExternalAuthorityIntake) => {
+            let mut environment = std::collections::BTreeMap::new();
+            for key in hepta_paper_service::external_authority_intake::EXTERNAL_AUTHORITY_INTAKE_ENVIRONMENT_KEYS.into_iter()
+                .chain(hepta_paper_service::external_authority_intake::PASSIVE_RELEASE_ATTESTOR_ENVIRONMENT_KEYS) {
+                if let Some(value) = env::var_os(key) {
+                    environment.insert(key.to_owned(), value.into_string().map_err(|_| "external_authority_intake_environment_invalid")?);
+                }
+            }
+            let workspace =
+                hepta_paper_service::native_workspace::resolve_native_command_workspace_root_v1(
+                    &env::current_dir()?,
+                    &std::collections::BTreeMap::new(),
+                    None,
+                )?;
+            let cancelled = command_cancellation_flag()?;
+            let deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(120))
+                .ok_or("external_authority_intake_deadline_invalid")?;
+            let output =
+                hepta_paper_service::external_authority_intake::external_authority_intake_cli_v1(
+                    &args[1..],
+                    &environment,
+                    &workspace,
+                    &cancelled,
+                    deadline,
+                )?;
+            println!("{}", serde_json::to_string_pretty(&output.value)?);
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryAutonomousEmpiricalPluginTemplate) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                Ok(hepta_paper_service::autonomous_empirical_plugin_release::run_ordinary_autonomous_empirical_plugin_template_v1(&args[1..],&cancelled,deadline)?)
+            })?;
+            use std::io::Write;
+            std::io::stdout().write_all(&output.stdout)?;
+            std::io::stderr().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryAdvancedNumericalPluginStatus) => {
+            let exit_code = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                let output = hepta_paper_service::ordinary_advanced_numerical_plugin::run_ordinary_advanced_numerical_plugin_status_v1(&args[1..], &cancelled, deadline)?;
+                use std::io::Write;
+                std::io::stdout()
+                    .write_all(&output.stdout)
+                    .map_err(|e| e.to_string())?;
+                std::io::stderr()
+                    .write_all(&output.stderr)
+                    .map_err(|e| e.to_string())?;
+                Ok(output.exit_code)
+            })?;
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryRuntimeImageReproducibility) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                let mut environment = std::collections::BTreeMap::new();
+                for (key, value) in env::vars_os() {
+                    let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
+                        return Err("runtime_reproducibility_environment_encoding_invalid".into());
+                    };
+                    if environment.len() >= 256 || key.len() > 128 || value.len() > 65536 {
+                        return Err("runtime_reproducibility_environment_invalid".into());
+                    }
+                    environment.insert(key.to_owned(), value.to_owned());
+                }
+                Ok(hepta_paper_service::runtime_image_reproducibility::runtime_image_reproducibility_cli_with_control_v1(
+                    &args[1..], &environment, &cancelled, deadline,
+                )?)
+            })?;
+            if let Some(text) = output.text {
+                println!("{text}");
+            } else {
+                println!("{}", serde_json::to_string_pretty(&output.value)?);
+            }
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryReleaseIntegrityKey) => {
+            let mut environment = std::collections::BTreeMap::new();
+            for key in [
+                "HEPTA_PAPER_WORKSPACE_ROOT",
+                "HEPTA_PAPER_RUNTIME_ROOT",
+                "HEPTA_PAPER_ASSET_ROOT",
+                "PAPER_FACTORY_LEGACY_ROOT",
+                "HEPTA_PAPER_RUNTIME_ISOLATED",
+            ] {
+                match env::var(key) {
+                    Ok(value) => {
+                        environment.insert(key.to_owned(), value);
+                    }
+                    Err(env::VarError::NotPresent) => (),
+                    Err(env::VarError::NotUnicode(_)) => {
+                        eprintln!("release_integrity_key_environment_encoding_invalid:{key}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            let cancelled = command_cancellation_flag()?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            match hepta_paper_service::release_integrity_key::release_integrity_key_cli_with_cancellation_v1(
+                &args[1..], &environment, &cancelled, deadline,
+            ) {
+                Ok(output) => {
+                    if let Some(text) = output.text {
+                        println!("{text}");
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&output.value)?);
+                    }
+                    if output.exit_code != 0 {
+                        std::process::exit(output.exit_code);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(CommandV1::OrdinaryReleaseTrustGate) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(hepta_paper_service::release_trust_normal::run_ordinary_release_trust_gate_with_control_v1(
+                    &args[1..], &cancelled, deadline,
+                )?)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code)
+            }
+        }
+        Some(CommandV1::OrdinaryOwnerAcceptanceStatus) if args.len() == 1 => {
+            ordinary_governance_status_command_v1(true)?;
+        }
+        Some(CommandV1::OrdinaryOperationalProofStatus) if args.len() == 1 => {
+            ordinary_governance_status_command_v1(false)?;
+        }
+        Some(CommandV1::PaperBatch) => {
+            let cwd = env::current_dir()?;
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(
+                    hepta_paper_service::batch_operator::run_native_batch_operator_v1(
+                        &args[1..],
+                        &cwd,
+                        &cancelled,
+                    )?,
+                )
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryStoreIntegrity) if args.len() == 1 || args.len() == 2 => {
+            ordinary_store_integrity_command_v1(args.get(1))?;
+        }
+        Some(CommandV1::StoreIntegrity) if args.len() == 1 || args.len() == 2 => {
+            let database = match args.get(1) {
+                Some(path) => PathBuf::from(path),
+                None => default_store_integrity_database_v1()?,
+            };
+            let store = hepta_readonly_store::ReadOnlyStoreV1::open_known_installed_v1(database)?;
             let report = store.node_logical_integrity_report()?;
             println!("{}", serde_json::to_string(&report)?);
             if report.status != "sqlite_logical_integrity_verified" {
                 return Err("sqlite logical integrity report blocked".into());
             }
         }
-        Some("store-status") if (1..=4).contains(&args.len()) => {
-            let mut database = None;
-            let mut runtime_root = None;
-            let mut allow_isolated_verification_evidence = false;
-            for token in args.iter().skip(1) {
-                if token == "--allow-isolated-verification-evidence" {
-                    if allow_isolated_verification_evidence {
+        Some(CommandV1::StoreStatus) => {
+            let ordinary = env::args().nth(1).as_deref() == Some("operator")
+                && env::args().nth(2).as_deref() == Some("store");
+            let mut cwd = env::current_dir()?;
+            let mut environment = BTreeMap::new();
+            for key in [
+                "HEPTA_PAPER_WORKSPACE_ROOT",
+                "HEPTA_PAPER_ASSET_ROOT",
+                "HEPTA_PAPER_RUNTIME_ROOT",
+                "PAPER_FACTORY_LEGACY_ROOT",
+            ] {
+                match env::var(key) {
+                    Ok(value) => {
+                        environment.insert(key.to_owned(), value);
+                    }
+                    Err(env::VarError::NotPresent) => (),
+                    Err(env::VarError::NotUnicode(_)) => {
                         return Err(
-                            "duplicate_cli_option:--allow-isolated-verification-evidence".into(),
+                            hepta_paper_service::store_status::StoreStatusError::Utf8.into()
                         );
                     }
-                    allow_isolated_verification_evidence = true;
-                } else if token.starts_with("--") {
-                    return Err(format!("unknown_cli_option:{token}").into());
-                } else if database.is_none() {
-                    database = Some(PathBuf::from(token));
-                } else if runtime_root.is_none() {
-                    runtime_root = Some(PathBuf::from(token));
-                } else {
-                    return Err("store-status accepts at most two paths".into());
                 }
             }
-            let database = database.unwrap_or_else(default_store_integrity_database_v1);
-            let report = inspect_store_status_with_options_v1(
-                &database,
-                runtime_root.as_deref(),
-                allow_isolated_verification_evidence,
-            )?;
-            println!("{}", serde_json::to_string(&report)?);
+            if ordinary
+                && !environment
+                    .get("HEPTA_PAPER_RUNTIME_ROOT")
+                    .is_some_and(|value| !value.is_empty() && Path::new(value).is_absolute())
+            {
+                cwd = hepta_paper_service::native_workspace::resolve_native_command_workspace_root_v1(
+                    &cwd, &environment, None,
+                )?;
+                environment.insert(
+                    "HEPTA_PAPER_WORKSPACE_ROOT".to_owned(),
+                    cwd.to_str()
+                        .ok_or("native_workspace_root_invalid")?
+                        .to_owned(),
+                );
+            }
+            match hepta_paper_service::store_status::store_status_cli_v1(
+                &args[1..],
+                &cwd,
+                &environment,
+            ) {
+                Ok((report, code)) => {
+                    println!("{}", serde_json::to_string(&report)?);
+                    if code != 0 {
+                        std::process::exit(code);
+                    }
+                }
+                Err(hepta_paper_service::store_status::StoreStatusError::Arguments(message)) => {
+                    eprintln!("{}", serde_json::json!({"error": message}));
+                    std::process::exit(2);
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
-        Some("automation-status") if args.len() >= 2 => {
+        Some(CommandV1::AutomationStatus) if args.len() >= 2 => {
             let mut help = false;
             let mut json = false;
             for flag in args.iter().skip(1) {
@@ -579,28 +929,63 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let _ = json;
             println!("{}", automation_status_help_json_v1());
         }
-        Some("store-migrate") if (args.len() == 2 || args.len() == 3) => {
-            let target = args.get(2).map(|value| value.parse::<u32>()).transpose()?;
-            println!(
-                "{}",
-                serde_json::to_string(&migrate_node_store_v1(&PathBuf::from(&args[1]), target,)?)?
-            );
+        Some(CommandV1::StoreMigrate) => {
+            use hepta_paper_service::node_migration::{
+                migrate_node_store_with_control_v1, parse_node_migration_arguments_v1,
+            };
+            let options = parse_node_migration_arguments_v1(&args[1..])?;
+            let cancelled = command_cancellation_flag()?;
+            let receipt = migrate_node_store_with_control_v1(
+                &options.path,
+                options.target_version,
+                cancelled,
+                options.timeout,
+            )?;
+            println!("{}", serde_json::to_string(&receipt)?);
         }
-        Some("repository-assets") => {
-            let (root, manifest_path, flag_start) =
-                if args.get(1).is_none_or(|value| value.starts_with("--")) {
-                    let (root, manifest) = default_repository_asset_paths()?;
-                    (root, manifest, 1)
-                } else if args.len() >= 3 {
-                    (PathBuf::from(&args[1]), PathBuf::from(&args[2]), 3)
-                } else {
-                    return Err("repository_asset_root_and_manifest_required".into());
-                };
-            let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(
-                manifest_path
-                    .to_str()
-                    .ok_or("repository_asset_manifest_path_invalid")?,
-            )?)?;
+        Some(CommandV1::WorkspaceStatus) => {
+            let mut environment: BTreeMap<String, String> = [
+                "HEPTA_PAPER_WORKSPACE_ROOT",
+                "HEPTA_PAPER_ASSET_ROOT",
+                "HEPTA_PAPER_RUNTIME_ROOT",
+                "PAPER_FACTORY_LEGACY_ROOT",
+            ]
+            .into_iter()
+            .filter_map(|name| env::var(name).ok().map(|value| (name.to_owned(), value)))
+            .collect();
+            let mut cwd = env::current_dir()?;
+            if env::args().nth(1).as_deref() == Some("operator")
+                && env::args().nth(2).as_deref() == Some("workspace")
+            {
+                cwd = hepta_paper_service::native_workspace::resolve_native_command_workspace_root_v1(
+                    &cwd, &environment, None,
+                )?;
+                environment.insert(
+                    "HEPTA_PAPER_WORKSPACE_ROOT".to_owned(),
+                    cwd.to_str()
+                        .ok_or("native_workspace_root_invalid")?
+                        .to_owned(),
+                );
+            }
+            let (report, code) = hepta_paper_service::workspace_status::workspace_status_cli_v1(
+                &args[1..],
+                &cwd,
+                &environment,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(CommandV1::RepositoryAssets) => {
+            let explicit_paths = if args.get(1).is_none_or(|value| value.starts_with("--")) {
+                None
+            } else if args.len() >= 3 && !args[2].starts_with("--") {
+                Some((PathBuf::from(&args[1]), PathBuf::from(&args[2])))
+            } else {
+                return Err(format!("unexpected_cli_positional:{}", args[1]).into());
+            };
+            let flag_start = if explicit_paths.is_some() { 3 } else { 1 };
             let mut handoff = false;
             let mut require_externalized = false;
             for token in args.iter().skip(flag_start) {
@@ -629,6 +1014,15 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 *flag = true;
             }
+            let (root, manifest_path) = match explicit_paths {
+                Some(paths) => paths,
+                None => default_repository_asset_paths()?,
+            };
+            let manifest: serde_json::Value = serde_json::from_slice(&read_bounded(
+                manifest_path
+                    .to_str()
+                    .ok_or("repository_asset_manifest_path_invalid")?,
+            )?)?;
             let inspection = inspect_repository_asset_externalization_v1(&root, &manifest)?;
             let value = if handoff {
                 build_repository_asset_externalization_handoff_v1(&root, &manifest)?
@@ -648,7 +1042,20 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
-        Some("command-surface") if args.len() == 2 || args.len() == 3 => {
+        Some(CommandV1::OrdinaryCommandSurfaceSync) if args.len() == 1 => {
+            let root = hepta_paper_service::native_workspace::current_native_command_surface_workspace_root_v1()?;
+            let output =
+                hepta_paper_service::command_surface::synchronize_command_surface_pretty_json_v1(
+                    &root, true,
+                )?;
+            let blocked = serde_json::from_str::<serde_json::Value>(&output)?.get("ready")
+                != Some(&serde_json::Value::Bool(true));
+            println!("{output}");
+            if blocked {
+                std::process::exit(1);
+            }
+        }
+        Some(CommandV1::CommandSurface) if args.len() == 2 || args.len() == 3 => {
             let root = PathBuf::from(&args[1]);
             match args.get(2).map(String::as_str) {
                 None => {
@@ -682,7 +1089,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("verify-architecture") if args.len() >= 2 => {
+        Some(CommandV1::VerifyArchitecture) if args.len() >= 2 => {
             let root = PathBuf::from(&args[1]);
             let mut json_output = false;
             for flag in args.iter().skip(2) {
@@ -711,7 +1118,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("architecture conformance verification blocked".into());
             }
         }
-        Some("verify-critical") => {
+        Some(CommandV1::VerifyCritical) => {
             let options = match parse_critical_module_coverage_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -730,7 +1137,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             // tree (`HEPTA_WORKSPACE_ROOT`), so invoking the native command
             // from another cwd must not silently switch its deployment
             // defaults to that caller directory.
-            let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+            let workspace_root = default_command_workspace_v1()?;
             let report = inspect_critical_module_coverage_v1(&options, &workspace_root)
                 .map_err(|error| format!("critical module coverage preflight failed: {error}"))?;
             if options.json {
@@ -747,7 +1154,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("verify-full") => {
+        Some(CommandV1::VerifyFull) => {
             let options = match parse_full_suite_verification_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -758,11 +1165,18 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             if options.help {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&full_suite_verification_help_json_v1())?
+                    serde_json::to_string_pretty(&full_suite_verification_help_json_v1()?)?
                 );
                 return Ok(());
             }
-            let report = inspect_full_suite_verification_v1(&options)?;
+            let report = if options.preflight {
+                inspect_full_suite_verification_v1(&options)?
+            } else {
+                let cancelled = command_cancellation_flag()?;
+                hepta_paper_service::full_suite_verification::execute_full_suite_verification_v1(
+                    &options, &cancelled,
+                )?
+            };
             if options.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -771,11 +1185,11 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                     report["status"].as_str().unwrap_or("verify_full_blocked")
                 );
             }
-            // This route is an explicit acceptance boundary. Inventory is
-            // useful evidence, but it cannot silently become test parity.
-            std::process::exit(2);
+            if report["ok"] != true {
+                std::process::exit(2);
+            }
         }
-        Some("advanced-numerical-plugin") if args.len() == 2 => {
+        Some(CommandV1::AdvancedNumericalPlugin) if args.len() == 2 => {
             if args[1] == "status" {
                 println!(
                     "{}",
@@ -794,15 +1208,22 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}", serde_json::to_string(&result)?);
             }
         }
-        Some("retirement-reference") if args.len() == 2 => {
-            let report = verify_retirement_reference_v1(&PathBuf::from(&args[1]))?;
+        Some(CommandV1::RetirementReference) if args.len() == 2 => {
+            let cancelled = command_cancellation_flag()?;
+            let report = verify_retirement_reference_with_cancellation_v1(
+                &PathBuf::from(&args[1]),
+                &cancelled,
+            )?;
             let blocked = report["status"] == "retirement_reference_blocked";
             println!("{}", serde_json::to_string(&report)?);
             if blocked {
                 return Err("retirement reference verification blocked".into());
             }
         }
-        Some("retirement-matrix") => {
+        Some(CommandV1::OrdinaryRetirementReference) if args.len() == 1 => {
+            ordinary_retirement_reference_command_v1()?;
+        }
+        Some(CommandV1::RetirementMatrix) => {
             let mut workspace_root = None;
             let mut runtime_root = None;
             let mut index = 1;
@@ -835,7 +1256,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("retirement matrix is locally inspectable but blocked by source or owner evidence".into());
             }
         }
-        Some("retirement-drill-attest") if args.len() == 2 => {
+        Some(CommandV1::RetirementDrillAttest) if args.len() == 2 => {
             let request: LegacyDeletionDrillAttestationRequestV1 =
                 serde_json::from_slice(&read_bounded(&args[1])?)?;
             let report = inspect_legacy_deletion_drill_attest_v1(request)?;
@@ -847,30 +1268,112 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
-        Some("release-trust-gate") if args.len() == 2 => {
+        Some(CommandV1::ReleaseTrustGate) if args.len() == 2 => {
             let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
             println!(
                 "{}",
                 serde_json::to_string(&build_release_trust_layer_gate_from_values_v1(&input)?)?
             );
         }
-        Some("release-state") if args.len() == 2 => {
+        Some(CommandV1::ReleaseState) if args.len() == 2 => {
             let input: serde_json::Value = serde_json::from_slice(&read_bounded(&args[1])?)?;
             println!(
                 "{}",
                 serde_json::to_string(&inspect_release_state_v1(&input)?)?
             );
         }
-        Some("release-attest") if args.len() == 2 => {
-            let request: ReleaseAttestationRequestV1 =
-                serde_json::from_slice(&read_bounded(&args[1])?)?;
-            let report = inspect_release_attestation_v1(request)?;
-            println!("{}", serde_json::to_string(&report)?);
-            if report["releaseEvidenceReady"] != true {
-                return Err("release attestation blocked pending external evidence".into());
+        Some(CommandV1::ReleaseEvidence) => {
+            // Validate the complete ordinary grammar before process handlers,
+            // path selection, source capture or key access.
+            let options =
+                hepta_paper_service::release_evidence::parse_release_evidence_arguments_v1(
+                    &args[1..],
+                )?;
+            if options.help {
+                println!(
+                    "{}",
+                    hepta_paper_service::release_evidence::RELEASE_EVIDENCE_USAGE
+                );
+            } else {
+                let mut environment = std::collections::BTreeMap::new();
+                for name in [
+                    "HEPTA_PAPER_WORKSPACE_ROOT",
+                    "HEPTA_PAPER_RUNTIME_ROOT",
+                    "HEPTA_PAPER_ASSET_ROOT",
+                    "PAPER_FACTORY_LEGACY_ROOT",
+                    "HEPTA_PAPER_RUNTIME_ISOLATED",
+                ] {
+                    if let Some(raw) = std::env::var_os(name) {
+                        let value = raw
+                            .into_string()
+                            .map_err(|_| "native_command_environment_encoding_invalid")?;
+                        environment.insert(name.to_owned(), value);
+                    }
+                }
+                let cancelled = command_cancellation_flag()?;
+                let report = hepta_paper_service::release_evidence::execute_release_evidence_with_cancellation_v1(&args[1..], &environment, &cancelled)?;
+                println!("{}", serde_json::to_string(&report)?);
             }
         }
-        Some("retirement-status") if args.len() == 1 || args.len() == 2 => {
+        Some(CommandV1::ReleaseAttest) if args.len() == 2 => {
+            let bytes = read_bounded(&args[1])?;
+            let discriminator: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let report = if discriminator["version"] == 13 {
+                let request: ReleaseAttestationNativeResearchRetirementPolicyReplayRequestV13 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_native_research_retirement_policy_replay_with_cancellation_v13(request,&cancelled)?
+            } else if discriminator["version"] == 12 {
+                let request: ReleaseAttestationNativeCommandDispositionPolicyReplayRequestV12 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_native_command_disposition_policy_replay_with_cancellation_v12(
+                    request, &cancelled,
+                )?
+            } else if discriminator["version"] == 10 {
+                let request: ReleaseAttestationNativeRetirementPolicyReplayRequestV10 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_native_retirement_policy_replay_with_cancellation_v10(
+                    request, &cancelled,
+                )?
+            } else if discriminator["version"] == 9 {
+                let request: ReleaseAttestationNativeAstPolicyReplayRequestV9 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_native_ast_policy_replay_with_cancellation_v9(
+                    request, &cancelled,
+                )?
+            } else if discriminator["version"] == 8 {
+                let request: ReleaseAttestationMeasuredPolicyReplayRequestV8 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_measured_policy_replay_with_cancellation_v8(
+                    request, &cancelled,
+                )?
+            } else if discriminator["version"] == 4 {
+                let request: ReleaseAttestationPolicyReplayRequestV4 =
+                    serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_policy_replay_with_cancellation_v4(request, &cancelled)?
+            } else if discriminator["version"] == 3 {
+                let request: ReleaseAttestationReplayRequestV3 = serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_replay_with_cancellation_v3(request, &cancelled)?
+            } else if discriminator["version"] == 2 {
+                let request: ReleaseAttestationSourceRequestV2 = serde_json::from_slice(&bytes)?;
+                let cancelled = command_cancellation_flag()?;
+                inspect_release_attestation_source_with_cancellation_v2(request, &cancelled)?
+            } else {
+                let request: ReleaseAttestationRequestV1 = serde_json::from_slice(&bytes)?;
+                inspect_release_attestation_v1(request)?
+            };
+            println!("{}", serde_json::to_string(&report)?);
+            if report["releaseEvidenceReady"] != true {
+                return Err("release attestation blocked; inspect implementationBlockers and externalQualificationBlockers".into());
+            }
+        }
+        Some(CommandV1::RetirementStatus) if args.len() == 1 || args.len() == 2 => {
             let input: serde_json::Value = if args.len() == 1 {
                 serde_json::json!({})
             } else {
@@ -881,15 +1384,20 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::to_string(&inspect_retirement_status_v1(&input)?)?
             );
         }
-        Some("runtime-r-source-cas") if args.len() >= 2 => {
+        Some(CommandV1::RuntimeRSourceCas) if args.len() >= 2 => {
             let repository_root = PathBuf::from(&args[1]);
             let mut action = "status";
             let mut seed = None;
+            let mut snapshot = false;
             let mut action_seen = false;
             let mut seed_seen = false;
             let mut index = 2;
             while index < args.len() {
                 match args[index].as_str() {
+                    "--snapshot" if !snapshot => {
+                        snapshot = true;
+                        index += 1;
+                    }
                     "--action" if index + 1 < args.len() && !action_seen => {
                         action = args[index + 1].as_str();
                         action_seen = true;
@@ -902,16 +1410,36 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     _ => {
                         return Err(
-                            "runtime-r-source-cas accepts ROOT [--action status|acquire] [--seed DIRECTORY] only".into(),
+                            "runtime-r-source-cas accepts ROOT [--action status|acquire] [--seed DIRECTORY | --snapshot] only".into(),
                         );
                     }
                 }
             }
+            if snapshot && (seed.is_some() || action != "acquire") {
+                return Err(
+                    "runtime-r-source-cas --snapshot requires exclusive acquire mode".into(),
+                );
+            }
             let report = match action {
-                "status" => inspect_runtime_source_cas_v1(&repository_root),
+                "status" => {
+                    let cancelled = command_cancellation_flag()?;
+                    inspect_runtime_source_cas_with_cancellation_v1(&repository_root, &cancelled)
+                }
                 "acquire" => {
-                    let seed = seed.ok_or("runtime-r-source-cas acquire requires --seed")?;
-                    acquire_runtime_source_cas_from_seed_v1(&repository_root, &seed)?
+                    let cancelled = command_cancellation_flag()?;
+                    if snapshot {
+                        hepta_paper_service::runtime_source_cas::acquire_runtime_source_cas_from_snapshot_with_cancellation_v1(
+                            &repository_root, &cancelled,
+                        )?
+                    } else {
+                        let seed = seed
+                            .ok_or("runtime-r-source-cas acquire requires --seed or --snapshot")?;
+                        acquire_runtime_source_cas_from_seed_with_cancellation_v1(
+                            &repository_root,
+                            &seed,
+                            &cancelled,
+                        )?
+                    }
                 }
                 _ => return Err("runtime-r-source-cas action must be status or acquire".into()),
             };
@@ -921,7 +1449,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("R runtime source CAS verification blocked".into());
             }
         }
-        Some("research-readiness") => {
+        Some(CommandV1::ResearchReadiness) => {
             let mut workspace_root = None;
             let mut runtime_root = None;
             let mut working_directory = env::current_dir()?;
@@ -1023,7 +1551,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 return Err("research readiness state-safety inspection is blocked".into());
             }
         }
-        Some("external-authority-intake") => {
+        Some(CommandV1::ExternalAuthorityIntake) => {
             let mut author_config = None;
             let mut author_hash = None;
             let mut release_config = None;
@@ -1101,7 +1629,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("generic-domain-capability-evidence") => {
+        Some(CommandV1::GenericDomainCapabilityEvidence) => {
             let mut action = "status".to_owned();
             let mut action_seen = false;
             let mut runtime_root = None;
@@ -1166,7 +1694,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("research-capability-matrix") => {
+        Some(CommandV1::ResearchCapabilityMatrix) => {
             let mut request = None;
             let mut require_production_ready = false;
             let mut index = 1;
@@ -1211,7 +1739,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
-        Some("local-golden-dataset-provision") => {
+        Some(CommandV1::LocalGoldenDatasetProvision) => {
             let Some(options) = parse_local_golden_dataset_provisioning_arguments(&args[1..])?
             else {
                 println!("{}", local_golden_dataset_provisioning_usage());
@@ -1229,7 +1757,23 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("autonomous-state-provision") => {
+        Some(CommandV1::AutonomousOnlineSchemaTransition) => {
+            let report =
+                hepta_paper_service::online_schema_execution::cli::schema_transition_plan_cli_v1(
+                    &args[1..],
+                    &mut hepta_paper_service::sqlite_mutation_coordinator::clock::SystemMutationClockV1,
+                )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Some(CommandV1::AutonomousStateProvision) => {
+            if args
+                .get(1)
+                .is_some_and(|value| value == "--recover-publication")
+            {
+                let report = hepta_paper_service::autonomous_state_provision::publication_recovery::reconcile_publication_cli_v1(&args[1..])?;
+                println!("{}", serde_json::to_string(&report)?);
+                return Ok(());
+            }
             if args
                 .get(1)
                 .is_some_and(|value| value == "--recover-staging")
@@ -1253,7 +1797,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("autonomous-state-partial-root-maintenance") => {
+        Some(CommandV1::AutonomousStatePartialRootMaintenance) => {
             let Some(options) =
                 parse_autonomous_state_partial_root_maintenance_arguments(&args[1..])?
             else {
@@ -1271,7 +1815,22 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some("personal-gpu-operational-gate") => {
+        Some(CommandV1::OrdinaryPersonalGpuOperationalGate) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(
+                    hepta_paper_service::normal_personal_gpu::inspect_normal_personal_gpu_v1(
+                        &args[1..],
+                        cancelled,
+                    )?,
+                )
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::PersonalGpuOperationalGate) => {
             let options = match parse_personal_gpu_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1286,29 +1845,18 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             if !options.contains_key("check") {
                 return Err("personal-gpu-operational-gate Rust route currently supports only --check; GPU execution is not ported".into());
             }
-            let workspace_root = options.get("root").map(PathBuf::from);
-            let runtime_root = options.get("runtime-root").map(PathBuf::from);
+            let workspace_root = match options.get("root") {
+                Some(path) => lexical_absolute_path(PathBuf::from(path)),
+                None => default_command_workspace_v1()?,
+            };
+            // Runtime defaults belong to the frontend independently of the
+            // CLI provenance --root, as in Node's defaultPaperRuntimeRoot.
+            let runtime_root = match options.get("runtime-root") {
+                Some(path) => lexical_absolute_path(PathBuf::from(path)),
+                None => default_command_runtime_v1()?,
+            };
             let receipt = options.get("receipt").map(PathBuf::from);
             let resolve_path = lexical_absolute_path;
-            let workspace_root = workspace_root.map(resolve_path).unwrap_or_else(|| {
-                lexical_absolute_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
-            });
-            let runtime_root = runtime_root
-                .or_else(|| {
-                    env::var("HEPTA_PAPER_RUNTIME_ROOT")
-                        .ok()
-                        .filter(|value| !value.is_empty())
-                        .map(PathBuf::from)
-                })
-                .map(resolve_path)
-                .unwrap_or_else(|| {
-                    // Node's defaultPaperRuntimeRoot binds the installed source
-                    // workspace, independently of the CLI provenance --root.
-                    lexical_absolute_path(
-                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                            .join("../../../../hepta-paper-runtime/native-runtime"),
-                    )
-                });
             let receipt_path = receipt.map(resolve_path).unwrap_or_else(|| {
                 runtime_root.join("gpu-personal/personal-gpu-operational-receipt.json")
             });
@@ -1360,7 +1908,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-intake-authority-rotation") => {
+        Some(CommandV1::AutonomousIntakeAuthorityRotation) => {
             let mut options = match parse_autonomous_intake_authority_rotation_arguments(&args[1..])
             {
                 Ok(options) => options,
@@ -1378,19 +1926,10 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            if options.runtime_root.is_none() {
-                options.runtime_root = env::var("HEPTA_PAPER_RUNTIME_ROOT")
-                    .ok()
-                    .filter(|value| !value.is_empty())
-                    .map(PathBuf::from);
-            }
-            if options.runtime_root.is_none() {
-                options.runtime_root = Some(
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("../../../../hepta-paper-runtime/native-runtime"),
-                );
-            }
-            options.runtime_root = options.runtime_root.take().map(lexical_absolute_path);
+            options.runtime_root = Some(match options.runtime_root.take() {
+                Some(path) => lexical_absolute_path(path),
+                None => default_command_runtime_v1()?,
+            });
             options.next_machine_intake_config = options
                 .next_machine_intake_config
                 .take()
@@ -1410,7 +1949,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-empirical-plugin-release") => {
+        Some(CommandV1::AutonomousEmpiricalPluginRelease) => {
             let options = match parse_autonomous_empirical_plugin_release_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1440,7 +1979,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-submission-dispatcher") => {
+        Some(CommandV1::AutonomousSubmissionDispatcher) => {
             let mut options = match parse_autonomous_submission_dispatcher_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1475,7 +2014,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-submission-dispatcher-challenge") => {
+        Some(CommandV1::AutonomousSubmissionDispatcherChallenge) => {
             let options = match parse_dispatcher_challenge_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1499,22 +2038,10 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                     "rust_autonomous_submission_dispatcher_challenge_publish_not_ported".into(),
                 );
             }
-            let runtime_root = options
-                .get("runtime-root")
-                .map(PathBuf::from)
-                .or_else(|| {
-                    env::var("HEPTA_PAPER_RUNTIME_ROOT")
-                        .ok()
-                        .filter(|value| !value.is_empty())
-                        .map(PathBuf::from)
-                })
-                .map(lexical_absolute_path)
-                .unwrap_or_else(|| {
-                    lexical_absolute_path(
-                        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                            .join("../../../../hepta-paper-runtime/native-runtime"),
-                    )
-                });
+            let runtime_root = match options.get("runtime-root") {
+                Some(path) => lexical_absolute_path(PathBuf::from(path)),
+                None => default_command_runtime_v1()?,
+            };
             let report = inspect_autonomous_submission_dispatcher_challenge_v1(
                 &AutonomousSubmissionDispatcherChallengeOptions {
                     runtime_root,
@@ -1531,7 +2058,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-research") => {
+        Some(CommandV1::AutonomousResearch) => {
             let options = match parse_autonomous_research_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1549,13 +2076,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             let report = if options.action == "prepare" || options.action == "status" {
                 inspect_autonomous_research_v1(&options)
             } else {
-                // Install only in this command process, before any worker or
-                // owner is opened. The atomic handlers survive until process exit;
-                // libraries never install handlers or change signal masks.
-                let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
-                    signal_hook::flag::register(signal, std::sync::Arc::clone(&cancelled))?;
-                }
+                let cancelled = command_cancellation_flag()?;
                 execute_autonomous_research_with_cancellation_v1(&options, cancelled)
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1563,7 +2084,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-research-one-shot-campaign-attempt") => {
+        Some(CommandV1::AutonomousResearchOneShotCampaignAttempt) => {
             let mut options =
                 parse_autonomous_research_one_shot_campaign_attempt_arguments(&args[1..])?;
             if options.help {
@@ -1575,46 +2096,15 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
-            let workspace_root =
-                lexical_absolute_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
-            options.root = Some(
-                options
-                    .root
-                    .or_else(|| {
-                        env::var("HEPTA_PAPER_ASSET_ROOT")
-                            .ok()
-                            .filter(|value| !value.is_empty())
-                            .map(PathBuf::from)
-                    })
-                    .map(lexical_absolute_path)
-                    .unwrap_or_else(|| {
-                        let parent = workspace_root.parent().unwrap_or(&workspace_root);
-                        if parent
-                            .file_name()
-                            .is_some_and(|name| name == "paper_factory")
-                        {
-                            parent.to_path_buf()
-                        } else {
-                            parent.join("hepta-paper-assets")
-                        }
-                    }),
-            );
-            options.runtime_root = Some(
-                options
-                    .runtime_root
-                    .or_else(|| {
-                        env::var("HEPTA_PAPER_RUNTIME_ROOT")
-                            .ok()
-                            .filter(|value| !value.is_empty())
-                            .map(PathBuf::from)
-                    })
-                    .map(lexical_absolute_path)
-                    .unwrap_or_else(|| {
-                        lexical_absolute_path(
-                            workspace_root.join("../hepta-paper-runtime/native-runtime"),
-                        )
-                    }),
-            );
+            options.root = Some(match options.root.take() {
+                Some(path) => lexical_absolute_path(path),
+                None => default_command_assets_v1()?,
+            });
+            options.runtime_root = Some(match options.runtime_root.take() {
+                Some(path) => lexical_absolute_path(path),
+                None => default_command_runtime_v1()?,
+            });
+            let workspace_root = default_command_workspace_v1()?;
             options.control_root = Some(
                 options
                     .control_root
@@ -1637,7 +2127,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             std::process::exit(2);
         }
-        Some("submission-handoff-export") => {
+        Some(CommandV1::SubmissionHandoffExport) => {
             let options = match parse_submission_handoff_export_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1663,7 +2153,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("full-production-readiness") => {
+        Some(CommandV1::FullProductionReadiness) => {
             let mut options = match parse_full_production_readiness_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1687,7 +2177,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
             // tree (`HEPTA_WORKSPACE_ROOT`), so invoking the native command
             // from another cwd must not silently switch its deployment
             // defaults to that caller directory.
-            let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+            let workspace_root = default_command_workspace_v1()?;
             let report = if options.require_full_production {
                 execute_full_production_readiness_v1(&options, &workspace_root)?
             } else {
@@ -1698,7 +2188,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("strict-full-auto-acceptance") => {
+        Some(CommandV1::StrictFullAutoAcceptance) => {
             let options = match parse_strict_full_auto_acceptance_arguments(&args[1..]) {
                 Ok(options) => options,
                 Err(error) => {
@@ -1725,48 +2215,113 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         }
-        Some("autonomous-supervisor") => {
-            let options = parse_supervisor_health_arguments(&args[1..])?;
-            let action = options
-                .get("action")
-                .map(String::as_str)
-                .unwrap_or("health");
-            let runtime_root = options.get("runtime-root").map(PathBuf::from);
-            let help = options.contains_key("help");
-            let require_startup = options.contains_key("require-startup-reconciliation");
-            let require_machine = options.contains_key("require-machine-intake-reconciliation");
-            if help {
-                println!(
-                    "{{\"version\":1,\"kind\":\"AutonomousSupervisorHealthUsage\",\"usage\":\"hepta-paper-rust autonomous-supervisor --action health --runtime-root PATH [--require-startup-reconciliation|--require-machine-intake-reconciliation]\",\"mutation\":\"none\"}}"
-                );
-                return Ok(());
-            }
-            if action != "health" {
-                return Err("rust_autonomous_supervisor_execution_not_ported".into());
-            }
-            let runtime_root = runtime_root
-                .or_else(|| env::var("HEPTA_PAPER_RUNTIME_ROOT").ok().map(PathBuf::from))
-                .unwrap_or_else(|| {
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("../../../../hepta-paper-runtime/native-runtime")
-                });
-            let report = hepta_paper_service::supervisor_health::inspect_supervisor_health_v1(
-                &lexical_absolute_path(runtime_root),
-                current_unix_millis()?,
-            )?;
-            println!("{}", serde_json::to_string(&report)?);
-            let passing = if require_machine {
-                report["ready"] == true
-            } else if require_startup {
-                report["startupReady"] == true
-            } else {
-                report["healthy"] == true
+        Some(CommandV1::AutonomousSupervisor) => {
+            use hepta_paper_service::supervisor_health::cli::{
+                SupervisorHealthEntryV1, inspect_supervisor_health_command_v1,
             };
-            if !passing {
-                std::process::exit(2);
+            let result =
+                inspect_supervisor_health_command_v1(&args[1..], SupervisorHealthEntryV1::Unified)?;
+            println!("{}", serde_json::to_string(&result.report)?);
+            if result.exit_code != 0 {
+                std::process::exit(result.exit_code);
             }
         }
-        Some("personal-self-hosted-readiness") => {
+        Some(CommandV1::OrdinaryStateBackupStatus) => {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                Ok(hepta_paper_service::ordinary_state_backup_status::run_ordinary_state_backup_status_with_control_v1(&args[1..], &cancelled, deadline)?)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryOneShotStatus) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_one_shot::inspect_ordinary_one_shot_status_v1(
+                    &args[1..],
+                    cancelled,
+                )
+                .map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryRuntimeRSourceCas) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_runtime_r_source_cas::inspect_ordinary_runtime_r_source_cas_v1(&args[1..], cancelled).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryCampaignQuery) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_campaign_query::inspect_ordinary_campaign_query_v1(
+                    &args[1..],
+                    cancelled,
+                )
+                .map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryReconcile) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_reconcile::inspect_ordinary_reconcile_v1(
+                    &args[1..],
+                    cancelled,
+                )
+                .map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryPortalTargetQualification) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_portal_target::inspect_ordinary_portal_target_qualification_v1(&args[1..], cancelled).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryNestedRuntimeQualification) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::ordinary_nested_runtime::inspect_ordinary_nested_runtime_qualification_v1(&args[1..], cancelled).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::OrdinaryPersonalSelfHostedReadiness) => {
+            let output = ordinary_readonly::with_node_termination_v1(|cancelled| {
+                hepta_paper_service::personal_self_hosted_cli::inspect_ordinary_personal_readiness_v1(
+                    &args[1..], cancelled,
+                ).map_err(Into::into)
+            })?;
+            io::stdout().lock().write_all(&output.stdout)?;
+            io::stderr().lock().write_all(&output.stderr)?;
+            if output.exit_code != 0 {
+                std::process::exit(output.exit_code);
+            }
+        }
+        Some(CommandV1::PersonalSelfHostedReadiness) => {
             let mut workspace_root = None;
             let mut runtime_root = None;
             let mut cpu_receipt = None;
@@ -1903,7 +2458,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 "store-status [IMMUTABLE_DB [RUNTIME_ROOT]] [--allow-isolated-verification-evidence] | ",
                 "automation-status --help [--json] | ",
                 "verify-legacy-freeze IMMUTABLE_DB REPOSITORY COMMIT TREE | ",
-                "store-migrate NODE_DB [TARGET_VERSION] | ",
+                "store-migrate NODE_DB [TARGET_VERSION] [--timeout-ms N] | ",
                 "repository-assets ROOT MANIFEST [--handoff] [--require-externalized]",
                 " | command-surface ROOT [--write-package|--check-package|--npm-aliases|--help-artifact|--ci-matrix]",
                 " | verify-architecture ROOT [--json] [--strict]",
@@ -1917,7 +2472,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | release-state REQUEST",
                 " | release-attest REQUEST",
                 " | retirement-status [REQUEST]",
-                " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY]",
+                " | runtime-r-source-cas REPOSITORY_ROOT [--action status|acquire] [--seed DIRECTORY | --snapshot]",
                 " | research-readiness --workspace-root ABSOLUTE_PATH --runtime-root ABSOLUTE_PATH [--working-directory ABSOLUTE_PATH] [--now UNIX_MILLIS] [--require-ready]",
                 " | external-authority-intake [--author-config PATH --author-config-hash sha256:...] [--release-attestor-config PATH --release-attestor-config-hash sha256:...] [--require-ready]",
                 " | generic-domain-capability-evidence --action status|converge --runtime-root ABSOLUTE_PATH",

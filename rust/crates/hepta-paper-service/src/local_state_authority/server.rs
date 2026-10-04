@@ -43,6 +43,9 @@ impl LocalStateAuthorityServerV1 {
             // Bound acceptance work too, so a flood cannot starve existing
             // peers. Excess connections receive EOF without any state action.
             for _ in 0..MAX_CONNECTIONS {
+                if stopped.load(Ordering::Acquire) {
+                    break;
+                }
                 match self.listener.accept() {
                     Ok((stream, _)) if peers.len() < MAX_CONNECTIONS => {
                         if stream.set_nonblocking(true).is_ok() {
@@ -60,14 +63,16 @@ impl LocalStateAuthorityServerV1 {
             while index < peers.len() && !stopped.load(Ordering::Acquire) {
                 buffered -= peers[index].buffered();
                 let available = MAX_BUFFERED_BYTES.saturating_sub(buffered);
-                if peers[index].advance(self, available)? {
+                if peers[index].advance(self, available, stopped)? {
                     buffered += peers[index].buffered();
                     index += 1;
                 } else {
                     peers.swap_remove(index);
                 }
             }
-            thread::sleep(Duration::from_millis(2));
+            if !stopped.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(2));
+            }
         }
         Ok(())
     }
@@ -97,20 +102,25 @@ impl Peer {
         &mut self,
         server: &mut LocalStateAuthorityServerV1,
         available: usize,
+        stopped: &AtomicBool,
     ) -> Result<bool> {
-        if Instant::now() >= self.deadline {
+        let control = RequestControl::serving(stopped, self.deadline);
+        if control.check().is_err() {
             return Ok(false);
         }
         if self.output.is_none() {
             let mut chunk = [0u8; 8192];
             let mut processed = 0;
             while processed < IO_QUANTUM {
-                if Instant::now() >= self.deadline {
+                if control.check().is_err() {
                     return Ok(false);
                 }
                 match self.stream.read(&mut chunk) {
                     Ok(0) => {
                         server.socket.assert_current()?;
+                        if control.check().is_err() {
+                            return Ok(false);
+                        }
                         let bytes = std::mem::take(&mut self.input);
                         let request = files::parse(&bytes, "local_state_authority_request_invalid")
                             .and_then(|value| {
@@ -120,16 +130,19 @@ impl Peer {
                                 )?;
                                 Ok((value, echo))
                             });
-                        if Instant::now() >= self.deadline {
+                        if control.check().is_err() {
                             return Ok(false);
                         }
                         // Only complete requests enter the single SQLite owner.
                         // Waiting for EOF or socket output never owns its queue.
                         let result = request.and_then(|(value, echo)| {
-                            server.runtime.handle(&value).map(|receipt| (receipt, echo))
+                            server
+                                .runtime
+                                .handle_with_control(&value, &control)
+                                .map(|receipt| (receipt, echo))
                         });
                         drop(bytes);
-                        if Instant::now() >= self.deadline {
+                        if control.check().is_err() {
                             return Ok(false);
                         }
                         let mut output = BoundedOutput {
@@ -172,7 +185,7 @@ impl Peer {
         if let Some(output) = &self.output {
             let end = output.len().min(self.written.saturating_add(IO_QUANTUM));
             while self.written < end {
-                if Instant::now() >= self.deadline {
+                if control.check().is_err() {
                     return Ok(false);
                 }
                 match self.stream.write(&output[self.written..end]) {

@@ -3,10 +3,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 
 export async function createSchemaHistoryFixture({
   repository, root, rebindCount = 0, stopAt = 'activated', reverseIds = false,
+  backupCount = 0, pendingBackup = false,
+  backupLeaseMs = 30000, backupReceiptLeaseDeltaMs = 0,
 } = {}) {
   if (!path.isAbsolute(repository) || !root.startsWith('/tmp/hepta-')
     || fs.lstatSync(root).isSymbolicLink() || fs.realpathSync(root) !== root
@@ -20,6 +23,7 @@ export async function createSchemaHistoryFixture({
   const { AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES: roles, autonomousResearchStateDatabaseScopeHash: scopeHash } = await load('paper-domain/automation/autonomous-research-state-backup-contract.mjs');
   const { autonomousResearchOnlineSchemaTransitionReceiptHash: receiptHash } = await load('paper-domain/automation/autonomous-research-online-schema-transition-contract.mjs');
   const { buildAutonomousResearchOnlineSchemaTransitionFinalizeRequest: finalizeRequest } = await load('paper-adapters/automation/autonomous-research-online-schema-transition-state.mjs');
+  const { autonomousResearchStateBackupAuthoritySignaturePayload: backupPayload } = await load('paper-adapters/automation/autonomous-research-state-backup-authority.mjs');
   const h = text => `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`;
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
   const privateKeyPath = path.join(root, 'fixture-key.pem');
@@ -108,6 +112,53 @@ export async function createSchemaHistoryFixture({
       }
     }
   }
+  const backups = [];
+  if (stopAt !== 'uninitialized') {
+    for (let index = 0; index < backupCount; index++) {
+      now = `2026-09-21T00:01:${String(index).padStart(2, '0')}.000Z`;
+      const current = authority.inspect();
+      const reserve = {
+        version: 1, kind: 'AutonomousResearchStateBackupAuthorityReserveRequest',
+        inventoryHash: h(`backup:inventory:${index}`),
+        databaseScopeHash: configuration.databaseScopeHash,
+        databaseInstanceIds: current.databaseHeads.map(head => head.databaseInstanceId),
+        requestedAt: now, maximumLeaseMs: backupLeaseMs,
+      };
+      const reservation = authority.handle(reserve);
+      if (pendingBackup && index === backupCount - 1) {
+        backups.push({ reserve, reservation, finalize: null, finalization: null });
+        break;
+      }
+      now = `2026-09-21T00:01:${String(index).padStart(2, '0')}.100Z`;
+      const finalize = {
+        version: 1, kind: 'AutonomousResearchStateBackupAuthorityFinalizeRequest',
+        reservationId: reservation.reservationId,
+        inventoryHash: reserve.inventoryHash,
+        databaseScopeHash: reserve.databaseScopeHash,
+        snapshotContentHash: h(`backup:snapshot:${index}`), requestedAt: now,
+      };
+      const finalization = authority.handle(finalize);
+      backups.push({ reserve, reservation, finalize, finalization });
+    }
+  }
+  if (backupReceiptLeaseDeltaMs !== 0) {
+    // Only this isolated negative fixture is changed. The actual Node producer
+    // above supplies the request and original signed records; a fresh signature
+    // deliberately binds a false lease duration using the same fixture key.
+    const receipt = { ...backups[0].reservation };
+    backups[0].reservation = receipt;
+    receipt.expiresAt = new Date(Date.parse(receipt.expiresAt) + backupReceiptLeaseDeltaMs).toISOString();
+    const payload = Buffer.from(backupPayload(receipt), 'utf8');
+    receipt.signature = crypto.sign(null, payload, privateKey).toString('base64');
+    if (!crypto.verify(null, payload, publicKey, Buffer.from(receipt.signature, 'base64'))) {
+      throw Error('fixture_signature_invalid');
+    }
+    const database = new DatabaseSync(configuration.stateDatabasePath);
+    try {
+      database.prepare('UPDATE authority_backup_reservation SET reservation_receipt_json=? WHERE reservation_id=?')
+        .run(JSON.stringify(receipt), receipt.reservationId);
+    } finally { database.close(); }
+  }
   const terminal = authority.inspect();
   const genesis = {
     globalSequence: terminal.globalSequence, globalHash: terminal.globalHash,
@@ -117,7 +168,7 @@ export async function createSchemaHistoryFixture({
   };
   return {
     authority, configuration, configurationPath, publicKeyPem, genesis, terminal, transitions,
-    profile: productionOracleProfile(), setNow: value => { now = value; }, close: () => authority.close(),
+    backups, profile: productionOracleProfile(), setNow: value => { now = value; }, close: () => authority.close(),
   };
 }
 
@@ -129,11 +180,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     'rebind-permuted': { rebindCount: 1, reverseIds: true },
     'reserved-rebind': { rebindCount: 1, stopAt: 'reserved-rebind' },
     'finalized-rebind': { rebindCount: 1, stopAt: 'finalized-rebind' },
+    'finalized-backups': { backupCount: 3 },
+    'pending-backup': { backupCount: 2, pendingBackup: true },
+    'signed-backup-short-lease': { backupCount: 3, backupLeaseMs: 10000, backupReceiptLeaseDeltaMs: -1000 },
+    'signed-backup-long-lease': { backupCount: 3, backupLeaseMs: 10000, backupReceiptLeaseDeltaMs: 1000 },
   }[scenario];
   if (!options) throw Error('fixture_scenario_invalid');
   const fixture = await createSchemaHistoryFixture({ repository, root, ...options });
   try {
-    const { configuration, configurationPath, publicKeyPem, genesis, terminal, transitions, profile } = fixture;
-    process.stdout.write(JSON.stringify({ configuration, configurationPath, publicKeyPem, genesis, terminal, transitions, profile }) + '\n');
+    const { configuration, configurationPath, publicKeyPem, genesis, terminal, transitions, backups, profile } = fixture;
+    process.stdout.write(JSON.stringify({ configuration, configurationPath, publicKeyPem, genesis, terminal, transitions, backups, profile }) + '\n');
   } finally { fixture.close(); }
 }

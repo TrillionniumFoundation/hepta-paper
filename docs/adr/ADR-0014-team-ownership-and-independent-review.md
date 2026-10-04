@@ -12,8 +12,8 @@ behavior. The owner explicitly removed that prerequisite.
 
 Use the [single-maintainer ownership policy](../governance/OWNERSHIP_AND_REVIEW.md).
 The maintainer may author and integrate a PR after its applicable exact-source
-checks pass. Required approval count is zero; Code Owner and last-push approvals
-are disabled. CODEOWNERS and TEAM IDs route responsibility, not mandatory votes.
+checks pass. Pull-request review protection is disabled entirely; CODEOWNERS and
+TEAM IDs route responsibility, not mandatory votes.
 
 ## Consequences
 

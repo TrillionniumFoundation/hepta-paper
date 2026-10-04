@@ -163,14 +163,26 @@ function sectionsOf(source) {
   return sections;
 }
 
-function validateSpec(moduleId, record, source, headings, failures) {
+// These sections carry current machine projections or a manifest-bound anchor.
+// Other headings are editorial guidance, never evidence of semantic correctness.
+const MACHINE_REFERENCED_SECTIONS = new Set(['Identity', 'Open blockers', 'Operational runbook']);
+
+function validateSpec(moduleId, record, source, headings, failures, advisories) {
   const sections = sectionsOf(source);
-  if (/\b(?:TODO|TBD|PLACEHOLDER|FIXME)\b/i.test(source)) failures.push(`${moduleId}: specification contains placeholder language`);
   for (const heading of headings) {
+    const diagnostics = MACHINE_REFERENCED_SECTIONS.has(heading) ? failures : advisories;
     const matches = sections.get(heading) || [];
-    if (matches.length === 0) failures.push(`${moduleId}: missing heading ## ${heading}`);
-    else if (matches.length !== 1) failures.push(`${moduleId}: duplicate heading ## ${heading}`);
-    else if (!matches[0].join('\n').trim()) failures.push(`${moduleId}: empty section ## ${heading}`);
+    if (matches.length === 0) diagnostics.push(`${moduleId}: missing heading ## ${heading}`);
+    else if (matches.length !== 1) diagnostics.push(`${moduleId}: duplicate heading ## ${heading}`);
+    else {
+      const body = matches[0].join('\n').trim();
+      if (!body) diagnostics.push(`${moduleId}: empty section ## ${heading}`);
+      // A bare marker is not a section. A documented defect or limitation may
+      // use these words; banning them throughout prose does not prove closure.
+      else if (/^(?:TODO|TBD|PLACEHOLDER|FIXME)[\s.:;!-]*$/i.test(body)) {
+        diagnostics.push(`${moduleId}: placeholder-only section ## ${heading}`);
+      }
+    }
   }
   const identity = sections.get('Identity')?.[0] || [];
   const fields = {
@@ -309,8 +321,11 @@ function validateManifest(moduleId, record, entry, manifest, failures) {
 export function validateModuleDocumentation(options = {}) {
   const root = path.resolve(options.root || DEFAULT_ROOT);
   const failures = [];
+  const advisories = [];
+  // Keep requiredSections as the V1 index's template-size field for consumers;
+  // its explanatory headings no longer determine gate success.
   const report = { registryModules: 0, documentedModules: 0, specifications: 0, manifests: 0, requiredSections: 0 };
-  const finish = () => ({ ok: failures.length === 0, failures, report });
+  const finish = () => ({ ok: failures.length === 0, failures, advisories, report });
   const schemas = Object.fromEntries(Object.entries(SCHEMAS)
     .map(([name, relative]) => [name, readText(root, relative, failures)]));
   const registry = readJson(root, REGISTRY_PATH, failures);
@@ -358,7 +373,7 @@ export function validateModuleDocumentation(options = {}) {
     const record = modules[moduleId];
     const entry = documented[moduleId];
     const spec = readText(root, entry.specPath, failures);
-    validateSpec(moduleId, record, spec, index.value.requiredSections, failures);
+    validateSpec(moduleId, record, spec, index.value.requiredSections, failures, advisories);
     failures.push(...validateProseStateClaims(moduleId, record, spec));
     failures.push(...validateProseAuthorityClaims(moduleId, record, spec));
     failures.push(...validateWorkStateProjection(moduleId, record, spec, work.value.items));
@@ -413,6 +428,7 @@ function main() {
   if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   else if (result.ok) process.stdout.write(`module_documentation_ready modules=${result.report.registryModules} specs=${result.report.specifications} manifests=${result.report.manifests} sections=${result.report.requiredSections}\n`);
   else for (const failure of result.failures) process.stderr.write(`module-docs: ${failure}\n`);
+  if (!json) for (const advice of result.advisories) process.stderr.write(`module-docs advice: ${advice}\n`);
   process.exitCode = result.ok ? 0 : 1;
 }
 

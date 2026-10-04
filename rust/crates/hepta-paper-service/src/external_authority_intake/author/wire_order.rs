@@ -230,6 +230,62 @@ pub(super) fn canonical_configuration_key_order(bytes: &[u8]) -> bool {
         && trust_keys_are_sorted(property(trust_store, "keys"))
 }
 
+pub(super) fn canonical_kms_bundle_key_order(bytes: &[u8]) -> bool {
+    const BUNDLE: &[&str] = &[
+        "version",
+        "kind",
+        "subject",
+        "authorityEnvelope",
+        "trustStore",
+        "trustStoreHash",
+        "signerKeyIds",
+        "signerRole",
+        "maximumLifetimeMs",
+        "bundleHash",
+    ];
+    const SUBJECT: &[&str] = &[
+        "version",
+        "kind",
+        "kmsProvider",
+        "providerAccountIdentityHash",
+        "keyResourceIdentityHash",
+        "credentialGenerationIdentityHash",
+        "backendDescriptorHash",
+        "backendId",
+        "backendVersion",
+        "activeKeyId",
+        "activeKeyVersion",
+        "activePublicKeySpkiHash",
+        "trustSetHash",
+        "challengeHash",
+        "algorithm",
+        "assuranceProfile",
+        "hardwareProtected",
+        "privateKeyExportable",
+        "keyOrigin",
+        "keyUsage",
+        "attestedAt",
+        "expiresAt",
+        "researchExecutionReleaseKmsHardwareAttestationSubjectHash",
+    ];
+    let Ok(bundle) = parse_production_json_v1(bytes) else {
+        return false;
+    };
+    let (Some(subject), Some(envelope), Some(trust)) = (
+        property(&bundle, "subject"),
+        property(&bundle, "authorityEnvelope"),
+        property(&bundle, "trustStore"),
+    ) else {
+        return false;
+    };
+    ordered_object(&bundle, BUNDLE)
+        && ordered_object(subject, SUBJECT)
+        && ordered_object(envelope, ENVELOPE_ORDER)
+        && array_items_match(property(envelope, "signatures"), signature_object)
+        && ordered_object(trust, TRUST_STORE_ORDER)
+        && trust_keys_are_sorted(property(trust, "keys"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

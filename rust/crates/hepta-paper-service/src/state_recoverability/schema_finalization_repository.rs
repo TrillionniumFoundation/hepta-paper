@@ -48,19 +48,28 @@ impl<'a> SchemaFinalizationRepository<'a> {
     /// Publish with the held-directory CAS lock. Existing bytes are replaced only
     /// when `expected` matches; same receipt publication is idempotent and any
     /// displaced prior bytes remain hidden crash evidence.
+    #[cfg(test)]
     pub(crate) fn publish(&self, receipt: &Value, expected: Option<&str>) -> Result<String> {
-        self.assert_current()?;
         let bytes = serde_json::to_vec(receipt).map_err(|e| error(e.to_string()))?;
+        self.publish_bytes(receipt, &bytes, expected)
+    }
+    pub(crate) fn publish_bytes(
+        &self,
+        receipt: &Value,
+        bytes: &[u8],
+        expected: Option<&str>,
+    ) -> Result<String> {
+        self.assert_current()?;
         ensure(
             bytes.len() <= MAX_BYTES,
             "autonomous_research_online_schema_transition_final_receipt_limit",
         )?;
-        publication::publish_receipt(&self.directory, NAME, receipt, expected)?;
+        publication::publish_receipt_bytes(&self.directory, NAME, receipt, bytes, expected)?;
         let actual = self.load()?.ok_or_else(|| {
             error("autonomous_research_online_schema_transition_final_receipt_missing")
         })?;
         ensure(
-            actual.0 == *receipt && actual.2 == hash_bytes(&bytes),
+            actual.0 == *receipt && actual.1 == bytes && actual.2 == hash_bytes(bytes),
             "autonomous_research_online_schema_transition_final_receipt_changed",
         )?;
         Ok(actual.2)
@@ -128,6 +137,26 @@ mod tests {
         assert_eq!(loaded_digest, digest);
         repository.assert_unchanged(&digest).unwrap();
 
+        // The existing CAS owner must retain independently verified wire bytes,
+        // even when their object key order differs from serde_json's projection.
+        let exact = json!({"version":1,"kind":"test-final-receipt","value":"wire"});
+        let exact_bytes = br#"{"value":"wire","kind":"test-final-receipt","version":1}"#;
+        let exact_digest = repository
+            .publish_bytes(&exact, exact_bytes, Some(&digest))
+            .unwrap();
+        let (loaded, bytes, loaded_digest) = repository.load().unwrap().unwrap();
+        assert_eq!(loaded, exact);
+        assert_eq!(bytes, exact_bytes);
+        assert_eq!(loaded_digest, exact_digest);
+        assert_eq!(
+            repository
+                .publish_bytes(&exact, br#"{"version":1}"#, Some(&exact_digest))
+                .unwrap_err()
+                .code,
+            "autonomous_research_state_backup_receipt_publication_bytes_mismatch"
+        );
+        repository.assert_unchanged(&exact_digest).unwrap();
+
         let replacement = json!({"version":1,"kind":"test-final-receipt","value":"two"});
         let conflict = repository.publish(&replacement, Some("sha256:wrong"));
         assert_eq!(
@@ -135,8 +164,8 @@ mod tests {
             "autonomous_research_state_backup_receipt_publication_conflict"
         );
         let (_, unchanged, unchanged_digest) = repository.load().unwrap().unwrap();
-        assert_eq!(unchanged, expected_bytes);
-        assert_eq!(unchanged_digest, digest);
+        assert_eq!(unchanged, exact_bytes);
+        assert_eq!(unchanged_digest, exact_digest);
         drop(repository);
         drop(lock);
         fs::remove_dir_all(root).unwrap();

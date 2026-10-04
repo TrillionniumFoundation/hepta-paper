@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+hepta-codex-broker = { path = "../hepta-codex-broker", version = "=0.1.0" }
 signal-hook = { version = "=0.3.18", default-features = false }
 ed25519-dalek = { workspace = true, features = ["pem", "pkcs8"] }
 getrandom = "=0.3.4"
@@ -45,3 +46,6 @@ oxc_ast = { version = "=0.148.0", features = ["serialize"] }
 oxc_parser = "=0.148.0"
 oxc_semantic = "=0.148.0"
 oxc_span = "=0.148.0"
+
+rustpython-parser = { version = "=0.4.0", default-features = false, features = ["location", "num-bigint"] }
+rustpython-ast = { version = "=0.4.0", default-features = false, features = ["location", "num-bigint", "visitor"] }

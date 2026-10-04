@@ -43,7 +43,7 @@ import {
   DATASET_ACCESS_SUPERVISOR_TRACER,
 } from './dataset-runtime-access-receipt.mjs';
 import { selectAndValidateWorkerEnvironment } from './worker-environment-policy.mjs';
-import { createWorkerEnvironmentBomPreparer } from './worker-environment-bom-binding.mjs';
+import { createWorkerEnvironmentBomPreparer, workerEnvironmentBomPreparationFailure, WorkerEnvironmentBomClosureError } from './worker-environment-bom-binding.mjs';
 import {
   beginWorkerProcessIdentity,
   buildWorkerProcessInvocationBinding,
@@ -520,7 +520,14 @@ export function createOsSandboxedWorkerRunnerEngine({
         gpuSelectorExecutionLease: requiresGpu
           ? injectedGpuSelectorExecutionLease : null,
       });
-      const environmentBomBinding = prepareEnvironmentBom({ executionIdentity: activeExecutionIdentity, language, executable: containerImage ? containerExecutable : resolvedExecutable, requiresGpu, determinismPolicy, deterministicSeed: deterministicSeed ?? env.HEPTA_EXPERIMENT_SEED ?? env.HEPTA_SEED ?? env.PYTHONHASHSEED ?? null, timeoutMs, memoryBytes, cpuSeconds, maximumProcesses, requestedMaximumOutputBytes, env: Object.fromEntries(permittedEnvironment), runtimePackageClosure, runtimeBuildReproducibility });
+      let environmentBomBinding;
+      try {
+        environmentBomBinding = prepareEnvironmentBom({ executionIdentity: activeExecutionIdentity, language, executable: containerImage ? containerExecutable : resolvedExecutable, requiresGpu, determinismPolicy, deterministicSeed: deterministicSeed ?? env.HEPTA_EXPERIMENT_SEED ?? env.HEPTA_SEED ?? env.PYTHONHASHSEED ?? null, timeoutMs, memoryBytes, cpuSeconds, maximumProcesses, requestedMaximumOutputBytes, env: Object.fromEntries(permittedEnvironment), runtimePackageClosure, runtimeBuildReproducibility, runtimeExecutableSnapshot, sourceExecutionSnapshot: sourceExecutionSnapshotBefore, workExecutionSnapshot });
+      } catch (error) {
+        if (!(error instanceof WorkerEnvironmentBomClosureError)) throw error;
+        removePrivateSandboxRoot(sandboxRoot);
+        return workerEnvironmentBomPreparationFailure(error, executionAvailability);
+      }
       if (environmentBomBinding.blockers.length) { removePrivateSandboxRoot(sandboxRoot); return { ok: false, status: 'os_sandbox_worker_blocked', blockers: environmentBomBinding.blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } }; }
       const { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids, maximumOutputBytes: boundedOutput } = environmentBomBinding.limits;
       let launcher = prlimit;

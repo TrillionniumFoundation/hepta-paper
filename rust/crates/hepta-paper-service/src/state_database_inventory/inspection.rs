@@ -4,6 +4,27 @@ fn open_private(location: &str, immutable: bool) -> Result<Connection> {
     // SQLite canonicalizes filenames, including /proc descriptor paths. Never
     // use that mechanism to claim a pinned source inode: open only our private
     // copy, and use immutable mode only when no effective WAL is present.
+    let immutable = if immutable {
+        true
+    } else {
+        // An absent or zero-byte private WAL cannot carry any committed frames.
+        // Reading the private main copy immutably also avoids SQLite's root-only
+        // fchown of an unchanged copied WAL, which changes its retained ctime.
+        // The snapshot owner still checks every original source/sidecar and all
+        // copied bytes and identities before and after this read.
+        let wal = PathBuf::from(format!("{location}-wal"));
+        match std::fs::symlink_metadata(wal) {
+            Ok(metadata) => {
+                ensure(
+                    metadata.is_file() && !metadata.file_type().is_symlink(),
+                    "autonomous_research_state_database_private_snapshot_changed",
+                )?;
+                metadata.len() == 0
+            }
+            Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => return Err(files::changed()),
+        }
+    };
     let location = if immutable {
         let escaped = location
             .bytes()
@@ -45,24 +66,50 @@ pub(super) fn pending(path: &Path, role: &str, instance: &str) -> Result<Value> 
     )
 }
 pub(super) fn inspect_uri(location: &str, immutable: bool) -> Result<Value> {
+    inspect_uri_with_control(location, immutable, None)
+}
+fn inspect_uri_with_control(
+    location: &str,
+    immutable: bool,
+    control: Option<StateDatabaseInventoryControlV1>,
+) -> Result<Value> {
+    control::checkpoint(&control)?;
     let database = open_private(location, immutable)?;
-    let quick = rows(&database, "PRAGMA quick_check;", 100_000)?;
-    let foreign = rows(&database, "PRAGMA foreign_key_check;", 100_000)?;
+    if let Some(control) = control.clone() {
+        database
+            .progress_handler(1000, Some(move || control.check().is_err()))
+            .map_err(|cause| error(cause.to_string()))?;
+    }
+    let quick = rows(&database, "PRAGMA quick_check;", 100_000, &control)?;
+    let foreign = rows(&database, "PRAGMA foreign_key_check;", 100_000, &control)?;
     let schema = rows(
         &database,
         "SELECT type,name,tbl_name,coalesce(sql,'') AS sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name,tbl_name,sql;",
         100_000,
+        &control,
     )?;
     let complete = rows(
         &database,
         "SELECT type,name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name;",
         100_000,
+        &control,
     )?;
-    let hidden = complete.iter().any(|row| {
-        !schema
-            .iter()
-            .any(|r| r["type"] == row["type"] && r["name"] == row["name"])
-    });
+    let mut hidden = false;
+    for row in &complete {
+        control::checkpoint(&control)?;
+        let mut present = false;
+        for r in &schema {
+            control::checkpoint(&control)?;
+            if r["type"] == row["type"] && r["name"] == row["name"] {
+                present = true;
+                break;
+            }
+        }
+        if !present {
+            hidden = true;
+            break;
+        }
+    }
     ensure(
         !hidden,
         "autonomous_research_state_database_hidden_schema_object",
@@ -73,26 +120,33 @@ pub(super) fn inspect_uri(location: &str, immutable: bool) -> Result<Value> {
     let application: i64 = database
         .pragma_query_value(None, "application_id", |row| row.get(0))
         .map_err(|e| error(e.to_string()))?;
+    control::checkpoint(&control)?;
     let first = quick.first();
     let quick = first
         .and_then(|v| v.get("quick_check").or_else(|| v.get("integrity_check")))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let objects = schema
-        .iter()
-        .map(|row| {
-            format!(
-                "{}:{}",
-                row["type"].as_str().unwrap_or_default(),
-                row["name"].as_str().unwrap_or_default()
-            )
-        })
-        .collect::<Vec<_>>();
+    let mut objects = Vec::with_capacity(schema.len());
+    for row in &schema {
+        control::checkpoint(&control)?;
+        objects.push(format!(
+            "{}:{}",
+            row["type"].as_str().unwrap_or_default(),
+            row["name"].as_str().unwrap_or_default()
+        ));
+    }
+    control::checkpoint(&control)?;
     Ok(
         json!({"quickCheck":quick,"foreignKeyViolationCount":foreign.len(),"schemaHash":hash("AutonomousResearchStateDatabaseSchema",&json!(schema))?,"schemaObjects":objects,"userVersion":user,"applicationId":application}),
     )
 }
-fn rows(database: &Connection, sql: &str, maximum: usize) -> Result<Vec<Value>> {
+fn rows(
+    database: &Connection,
+    sql: &str,
+    maximum: usize,
+    control: &Option<StateDatabaseInventoryControlV1>,
+) -> Result<Vec<Value>> {
+    control::checkpoint(control)?;
     let mut statement = database.prepare(sql).map_err(|e| error(e.to_string()))?;
     let names = statement
         .column_names()
@@ -103,12 +157,14 @@ fn rows(database: &Connection, sql: &str, maximum: usize) -> Result<Vec<Value>> 
     let mut rows = Vec::new();
     let mut bytes = 0usize;
     while let Some(row) = cursor.next().map_err(|e| error(e.to_string()))? {
+        control::checkpoint(control)?;
         ensure(
             rows.len() < maximum,
             "autonomous_research_state_database_inventory_limit_exceeded",
         )?;
         let mut value = serde_json::Map::new();
         for (index, name) in names.iter().enumerate() {
+            control::checkpoint(control)?;
             let cell =
                 match row.get_ref(index).map_err(|e| error(e.to_string()))? {
                     ValueRef::Null => Value::Null,
@@ -132,6 +188,7 @@ fn rows(database: &Connection, sql: &str, maximum: usize) -> Result<Vec<Value>> 
         }
         rows.push(Value::Object(value));
     }
+    control::checkpoint(control)?;
     Ok(rows)
 }
 pub(super) fn candidate(
@@ -146,9 +203,10 @@ pub(super) fn candidate(
         budget,
     )?;
     let inspected = snapshot::with_snapshot(&source, |path| {
-        inspect_uri(
+        inspect_uri_with_control(
             path.to_str().ok_or_else(files::changed)?,
             source.wal.is_none() && source.shm.is_none(),
+            source.source.control.clone(),
         )
     })?;
     source.assert_current()?;

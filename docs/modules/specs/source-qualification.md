@@ -37,7 +37,7 @@ Inputs:
 - repository/base/head/merge identities
 - workflow definition hashes
 - complete eligible run/attempt history
-- artifacts and independent review decisions
+- artifacts and required-check/currentness observations
 
 Outputs:
 
@@ -72,11 +72,11 @@ Declared class: `external_observation`. Determinism applies to validation of a f
 
 ## Failure, recovery, and idempotency
 
-Fail closed on repository/ref/tree drift, incomplete run history, mutable workflow definitions, missing artifacts, stale or conflicting reviews, clock rollback, revoked trust, or any attempt to derive authority from the current producer.
+Fail closed on repository/ref/tree drift, incomplete run history, mutable workflow definitions, missing artifacts, stale or conflicting required-check observations, clock rollback, revoked trust, or any attempt to derive authority from the current producer.
 
 ## Security and privacy
 
-Separate evidence producer, mechanical verifier, reviewer, repository administrator, and external authority. Trust material is public verification data only; secret keys never enter artifacts.
+Separate evidence producer, mechanical verifier, repository administrator, and runtime/external authorities where those operational contracts require it. Source integration itself requires no second human reviewer. Trust material is public verification data only; secret keys never enter artifacts.
 
 ## Compatibility and migration
 
@@ -122,12 +122,53 @@ qualification runner, including real CLI failure and round-trip checks using
 explicitly synthetic test observations.
 
 These are offline consistency checks, not authentication of uploaded records,
-proof that no GitHub run was omitted, reviewer approval, or a stable live-state
-snapshot. The live collector, exact checkout and byte checks in the V1 revalidator,
+proof that no GitHub run was omitted or a stable live-state snapshot. The live collector, exact checkout and byte checks in the V1 revalidator,
 fresh V3 comparison and maintainer integration remain required. V2 live
 verification still invokes the existing V1 currentness verifier and cannot turn
 its failure into success. No module, milestone or production authority is promoted
 by these test fixtures. This contributes to QUAL-001..004 without closing G0.
+
+The repository source verifier and its hardening gate share
+`paper-core/src/source-evidence-rust-symbols.mjs` for Rust token recognition.
+Comment/string/character masking retains UTF-16 source offsets and distinguishes
+lifetimes and labels from character literals. Function lookup handles balanced
+generic parameters, nested bounds, function-return arrows and braced const
+expressions rather than requiring a parenthesis immediately after the name.
+Quoted or commented declarations and malformed parameter prefixes are not owners.
+
+The hardening gate retains unique live declarations, direct cfg/cfg_attr refusal,
+exact declared test ownership, actual Cargo `--exact --list` discovery and later
+nonempty successful owner-test execution. Attribute observation no longer uses a
+fixed text-distance window, and attributes between `#[test]` and its function
+remain visible. The existing hardening self-test exercises generic/lifetime,
+Unicode/raw-string, duplicate, malformed and conditional-declaration cases.
+This recognizer is not a Rust parser, macro expander, reachability proof or cfg
+evaluator. It does not grant authority or waive compiler/execution checks; current
+source/head/tree and hosted evidence remain required. Results belong to current
+run receipts, not to this specification.
+
+
+The repository source verifier binds actual bytes of the evidence document,
+three canonical registries and all declared source/test inputs to their indexed
+Git blob and executable mode. A bounded no-follow regular-file read rechecks
+identity and timestamps; Git `assume-unchanged` or `skip-worktree` hints cannot
+substitute different bytes for those inputs. The same captured HEAD/tree, clean
+tracked index/worktree and input pins are observed after semantic validation and
+again after successful owner-test execution, before constructing or publishing
+a passing receipt. Any observed drift rejects the invocation rather than moving
+the subject, retrying a side effect or issuing an old-SHA receipt. The evidence
+SHA-256 is computed from the original verified bytes, not a late reread of a
+possibly different document. Existing create-only receipt publication remains.
+
+This reuses the existing verifier and exact Git source, not another completion
+producer, serialized authority or claim that test processes are sandboxed. These
+are start/end observations of declared inputs, not continuous hostile-same-UID
+isolation or whole-dependency reachability proof. Actual Node owner-test fixtures
+change tracked source, hide a registry edit using an index hint, change the
+evidence document, and advance HEAD without changing its tree; every case must
+fail without publishing a new receipt. Pre-existing hinted source substitutions
+also reject before execution. Rust discovery, compiler checks, the dual immutable
+subjects and hosted-currentness verification remain independently required.
 
 ## Rollout and rollback
 

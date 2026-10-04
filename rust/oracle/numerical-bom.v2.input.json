@@ -1,0 +1,88 @@
+{
+  "platform": {
+    "operatingSystem": "linux",
+    "architecture": "x64",
+    "kernelReleaseHash": "sha256:9acdffff6368989cac3a39ae30efd757466b117a924e98eb297e28399b18a62b",
+    "machineIdentityHash": "sha256:e5bd304bd9a5e44503c45828ce60c0bbad4660529c70102a670e06e59913f18a",
+    "machineIdentityObservation": "linux_etc_machine_id_hash",
+    "cpu": {
+      "modelHash": "sha256:5490b6ff6c2ab4a9ef252d61f66901235757f1d99810a33598e4b53155503e14",
+      "flagsHash": "sha256:26920c4ac64e35e65531086469b36923a92134f67a5ee27be371fba699df6bd1",
+      "logicalProcessorCount": 48,
+      "observation": "linux_proc_cpuinfo"
+    }
+  },
+  "runtime": {
+    "type": "host",
+    "identityHash": "sha256:25fb095e66ceacc8ec8ea9f80be1fecebaac36b3a42841057448fe7c9d6fcdd3",
+    "language": "python",
+    "languageVersionHash": "sha256:feef0c4a94db02f35344b07633847c3675e57d64c64b1c90fdaf09e5e184beb7",
+    "containerImageDigest": null,
+    "hostExecutableHash": "sha256:e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+    "packageClosure": {
+      "basis": "content_manifest",
+      "identityHash": "sha256:8db9b1131b108c79f31141c735b8bcd4ef7da540332868c0c1d082a6f8cfbb8b",
+      "manifestHash": "sha256:5f3b316ab9f1e37f4582c29631eac9709bd75e5193807eabe9a0db29a7af8f90",
+      "observedPackageCount": 0
+    }
+  },
+  "gpu": {
+    "required": false,
+    "status": "not_required",
+    "deviceCount": 0,
+    "modelSetHash": null,
+    "computeCapabilitySetHash": null,
+    "driverVersionHash": null,
+    "runtimeVersionHash": null
+  },
+  "numericRuntime": {
+    "threads": {},
+    "dynamicThreadingDisabled": false,
+    "explicitSingleThreadPolicy": false,
+    "policyObservation": "worker_environment_allowlist",
+    "blasImplementationHash": "sha256:a23f850aadd0a96adaa8bc5a72d45d5d5769eead9330677032c77b4039d0d2fb",
+    "blasImplementationObservation": "python_runtime_configuration_probe_v1",
+    "numericalLibraryBehaviorHash": "sha256:5c9f15759bc22e21b05178856b86ce2aa74315f86941cba0718a0e42b757e771",
+    "numericalLibraryBehaviorObservation": "python_numpy_behavior_probe_v1"
+  },
+  "limits": {
+    "timeoutMs": 30000,
+    "memoryBytes": 268435456,
+    "cpuSeconds": 10,
+    "maximumPids": 8192,
+    "maximumOutputBytes": 1048576,
+    "maximumCapturedBytes": 131072
+  },
+  "determinism": {
+    "classification": "unknown",
+    "explicitlyRequested": false,
+    "deterministicSeedRequired": false,
+    "deterministicSeedBound": true,
+    "threadPolicyVerified": false,
+    "gpuDeterminismVerified": false
+  },
+  "buildReproducibility": {
+    "status": "build_reproducibility_unverified",
+    "runtimeContentIdentityPinned": false,
+    "bitwiseRebuildVerified": false,
+    "definitionHash": null,
+    "evidenceHash": null,
+    "blockers": [
+      "bitwise_rebuild_not_verified",
+      "runtime_content_identity_not_pinned"
+    ]
+  },
+  "observedClaims": [
+    "blas_implementation_identity",
+    "effective_resource_limits",
+    "hashed_cpu_model_and_flags",
+    "hashed_machine_identity",
+    "host_executable_content_hash",
+    "numerical_library_behavior_identity",
+    "operating_system_and_architecture"
+  ],
+  "unobservedClaims": [
+    "bitwise_runtime_image_rebuild",
+    "numerical_library_behavioral_equivalence"
+  ]
+}

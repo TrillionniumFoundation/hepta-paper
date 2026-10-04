@@ -28,9 +28,21 @@ pub struct ProcessMutationAuthorityTransportV1 {
 }
 impl ProcessMutationAuthorityTransportV1 {
     pub fn load(path: &Path, expected_file_hash: &str) -> Result<Self> {
+        Self::load_with_control(path, expected_file_hash, None)
+    }
+    pub(crate) fn load_with_control(
+        path: &Path,
+        expected_file_hash: &str,
+        control: Option<crate::state_database_inventory::StateDatabaseInventoryControlV1>,
+    ) -> Result<Self> {
         let code = "autonomous_research_online_mutation_authority_process_configuration_invalid";
-        let process_configuration =
-            Snapshot::load(path, expected_file_hash, 4 * 1024 * 1024, code)?;
+        let process_configuration = Snapshot::load_with_control(
+            path,
+            expected_file_hash,
+            4 * 1024 * 1024,
+            code,
+            control.clone(),
+        )?;
         let value = process_configuration.json(code)?;
         if !keys(
             &value,
@@ -70,17 +82,19 @@ impl ProcessMutationAuthorityTransportV1 {
         let authority_configuration_pin = text(&value, "authorityConfigurationSha256")?.to_owned();
         let identity_code =
             "autonomous_research_online_mutation_authority_process_identity_mismatch";
-        let authority_configuration = Snapshot::load(
+        let authority_configuration = Snapshot::load_with_control(
             &authority_configuration_path,
             &authority_configuration_pin,
             4 * 1024 * 1024,
             identity_code,
+            control.clone(),
         )?;
-        let command = Snapshot::load(
+        let command = Snapshot::load_with_control(
             Path::new(text(&value, "commandPath")?),
             text(&value, "commandSha256")?,
             128 * 1024 * 1024,
             identity_code,
+            control.clone(),
         )?;
         if !command.executable() {
             return Err(error(identity_code));
@@ -99,10 +113,18 @@ impl ProcessMutationAuthorityTransportV1 {
             )?,
         })
     }
-    pub(super) fn current(&self) -> Result<()> {
+    pub(crate) fn current(&self) -> Result<()> {
         self.process_configuration.assert_current()?;
         self.authority_configuration.assert_current()?;
         self.command.assert_current()
+    }
+    /// Read-only reference to the independently pinned public verifier input.
+    /// The process owner must remain held; this accessor invokes no command.
+    pub(crate) fn public_configuration_pin(&self) -> (&Path, &str) {
+        (
+            &self.authority_configuration_path,
+            &self.authority_configuration_pin,
+        )
     }
 
     /// Necessary native-command checks against the actual retained executable.

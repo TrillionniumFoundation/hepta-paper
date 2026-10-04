@@ -3,6 +3,7 @@ use hepta_control_plane::ControlPlaneError;
 use hepta_paper_service::workflow::{
     LocalWorkflowV1, WorkflowActionV1, WorkflowAmendmentV1, WorkflowInspectionRequestV1,
     WorkflowListRequestV1, amend_local_workflow_v1, amend_local_workflow_with_clock_v1,
+    cancel_local_workflow_node_v1, cancel_local_workflow_node_with_clock_v1,
     initialize_local_workflow_v1, inspect_local_workflow_v1, list_local_workflows_v1,
     operate_local_workflow_v1, operate_local_workflow_with_clock_v1,
 };
@@ -63,7 +64,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if args.len() < 3 {
-        return Err("usage: init DEFINITION | status STATE HASH | advance STATE HASH THROUGH [NOW] | pause|resume|cancel STATE HASH REVISION [NOW] | amend STATE HASH REQUEST [NOW] | list REQUEST | events STATE HASH REQUEST | logs STATE HASH OFFSET LIMIT | slo STATE HASH".into());
+        return Err("usage: init DEFINITION | status STATE HASH | advance STATE HASH THROUGH [NOW] | pause|resume|cancel STATE HASH REVISION [NOW] | cancel-node STATE HASH STEP_ID REVISION [NOW] | amend STATE HASH REQUEST [NOW] | list REQUEST | events STATE HASH REQUEST | logs STATE HASH OFFSET LIMIT | slo STATE HASH".into());
     }
     let definition_hash = args[2].parse()?;
     let inspection = match args[0].as_str() {
@@ -123,6 +124,29 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
             )?
         };
         println!("{}", serde_json::to_string(&receipt)?);
+        return Ok(());
+    }
+
+    if args[0] == "cancel-node" && matches!(args.len(), 5 | 6) {
+        let expected_revision = args[4].parse()?;
+        let progress = if args.len() == 6 {
+            cancel_local_workflow_node_v1(
+                Path::new(&args[1]),
+                &definition_hash,
+                &args[3],
+                expected_revision,
+                args[5].parse()?,
+            )?
+        } else {
+            cancel_local_workflow_node_with_clock_v1(
+                Path::new(&args[1]),
+                &definition_hash,
+                &args[3],
+                expected_revision,
+                &mut observe_now,
+            )?
+        };
+        println!("{}", serde_json::to_string(&progress)?);
         return Ok(());
     }
 

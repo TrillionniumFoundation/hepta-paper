@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["vendor/rustpython-parser"]
 members = [
   "crates/hepta-codex-broker",
   "crates/hepta-codex-protocol",
@@ -36,7 +37,7 @@ publish = false
 base64ct = { version = "=1.8.3", features = ["alloc"] }
 ed25519-dalek = "=3.0.0"
 hex = "=0.4.3"
-nix = { version = "=0.31.3", features = ["dir", "fs", "poll", "process", "signal", "socket", "user"] }
+nix = { version = "=0.31.3", features = ["dir", "fs", "inotify", "poll", "process", "signal", "socket", "user"] }
 rusqlite = { version = "=0.40.2", features = ["bundled", "session", "backup", "limits", "serialize"] }
 ryu-js = "=1.0.2"
 serde = { version = "=1.0.228", features = ["derive"] }
@@ -57,8 +58,18 @@ unimplemented = "deny"
 # Development and test owners still hash every actual executable/artifact byte.
 # Optimize only the pinned SHA implementation rather than bypassing identity
 # checks or dropping debug/overflow assertions. The test profile inherits dev;
-# workspace code and the production release profile keep their existing settings.
+# the production release profile keeps its existing settings.
 [profile.dev.package."sha2:0.10.8"]
 opt-level = 2
 debug-assertions = true
 overflow-checks = true
+
+# The native worker reads its own executable under the fixed 256 MiB limit.
+# Omit DWARF from ordinary dev/test artifacts; retain debug and overflow assertions.
+[profile.dev]
+debug = 0
+debug-assertions = true
+overflow-checks = true
+
+[patch.crates-io]
+rustpython-parser = { path = "vendor/rustpython-parser" }

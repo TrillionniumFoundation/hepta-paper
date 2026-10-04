@@ -7,15 +7,21 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
-struct Fixture {
-    root: PathBuf,
+pub(crate) struct Fixture {
+    pub(crate) root: PathBuf,
     child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
-    value: Value,
+    pub(crate) value: Value,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
+        Self::with_private_runtime_owner(None)
+    }
+    pub(crate) fn with_uid65534_source_owner() -> Self {
+        Self::with_private_runtime_owner(Some(json!({"uid":65534,"gid":65534})))
+    }
+    fn with_private_runtime_owner(owner: Option<Value>) -> Self {
         let root = std::env::temp_dir().join(format!(
             "hepta-native-schema-checkpoint-{}-{}",
             std::process::id(),
@@ -24,14 +30,15 @@ impl Fixture {
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let mut child = Command::new("node")
-            .arg(repo.join("rust/oracle/schema-checkpoint-v1.mjs"))
-            .current_dir(repo)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
+        let mut child =
+            Command::new(std::env::var_os("HEPTA_TEST_NODE").unwrap_or_else(|| "node".into()))
+                .arg(repo.join("rust/oracle/schema-checkpoint-v1.mjs"))
+                .current_dir(repo)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
         let mut result = Self {
@@ -41,31 +48,35 @@ impl Fixture {
             output,
             value: Value::Null,
         };
-        let reply = result.ask(json!({"operation":"fixture","root":result.root}));
+        let mut request = json!({"operation":"fixture","root":result.root});
+        if let Some(owner) = owner {
+            request["privateRuntimeOwner"] = owner;
+        }
+        let reply = result.ask(request);
         assert_eq!(reply["ok"], true, "{reply}");
         result.value = reply["value"].clone();
         hepta_legacy_compatibility::qualify_production_node_profile_v1(&result.value["profile"])
             .unwrap();
         result
     }
-    fn ask(&mut self, value: Value) -> Value {
+    pub(crate) fn ask(&mut self, value: Value) -> Value {
         writeln!(self.input, "{value}").unwrap();
         self.input.flush().unwrap();
         let mut line = String::new();
         self.output.read_line(&mut line).unwrap();
         serde_json::from_str(&line).unwrap()
     }
-    fn runtime(&self) -> &Path {
+    pub(crate) fn runtime(&self) -> &Path {
         Path::new(self.value["runtimeRoot"].as_str().unwrap())
     }
-    fn checkpoint(&self) -> &Path {
+    pub(crate) fn checkpoint(&self) -> &Path {
         Path::new(self.value["checkpointRoot"].as_str().unwrap())
     }
-    fn inventory(&self) -> ObservedStateDatabaseInventoryV1 {
+    pub(crate) fn inventory(&self) -> ObservedStateDatabaseInventoryV1 {
         observe_state_database_inventory_v1(self.runtime(), &self.value["stateDatabaseManifest"])
             .unwrap()
     }
-    fn authority(&self) -> PinnedMutationAuthorityV1<NoRpc> {
+    pub(crate) fn authority(&self) -> PinnedMutationAuthorityV1<NoRpc> {
         PinnedMutationAuthorityV1::load(
             Path::new(self.value["configurationPath"].as_str().unwrap()),
             self.value["configurationFileHash"].as_str().unwrap(),
@@ -73,7 +84,7 @@ impl Fixture {
         )
         .unwrap()
     }
-    fn load(&self) -> Result<VerifiedSchemaTransitionCheckpointV1> {
+    pub(crate) fn load(&self) -> Result<VerifiedSchemaTransitionCheckpointV1> {
         load_schema_transition_checkpoint_v1(
             self.checkpoint(),
             &self.inventory(),
@@ -89,7 +100,7 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.root);
     }
 }
-struct NoRpc;
+pub(crate) struct NoRpc;
 impl MutationAuthorityTransportV1 for NoRpc {
     fn invoke(&mut self, _: &Value) -> Result<Value> {
         panic!("checkpoint authentication must not invoke authority RPC")

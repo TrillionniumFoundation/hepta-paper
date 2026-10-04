@@ -3,10 +3,12 @@
 //! The incumbent `legacy-deletion-drill.mjs --attest --execute` command does
 //! more than inspect an archive: it runs the Node differential and policy
 //! replays, captures release provenance, signs a receipt with an external
-//! release key, and publishes that receipt.  None of those authorities can be
-//! inferred from a local Rust process.  This module therefore performs only
-//! the locally reproducible part and emits a self-hashed, explicitly blocked
-//! inspection.  It never signs, deletes, publishes, or claims Node retirement.
+//! release key, and publishes that receipt. Replay, provenance, signing, and
+//! publication composition are internal implementation gaps. Owner acceptance,
+//! operational qualification, signing-key custody, and deletion authorization
+//! are separate external prerequisites. This V1 entry performs local archive
+//! and schema checks and keeps both kinds of gaps visible in a blocked report.
+//! It never signs, deletes, publishes, or claims Node retirement.
 
 use std::{
     fs::{self, File},
@@ -88,7 +90,7 @@ pub struct LegacyDeletionDrillAttestationInspectionV1 {
     pub version: u16,
     /// Report kind.
     pub kind: String,
-    /// Always blocked until the external attestation contract is supplied.
+    /// Always blocked while implementation and qualification are incomplete.
     pub status: String,
     /// The native local checks are sufficient for the local portion only.
     pub local_freeze_verified: bool,
@@ -106,7 +108,13 @@ pub struct LegacyDeletionDrillAttestationInspectionV1 {
     pub archive: Option<LegacyDeletionDrillArchiveCaptureV1>,
     /// Freeze receipt hash, when the local schema-25 quiescence check passed.
     pub legacy_freeze_receipt_hash: Option<String>,
-    /// Explicit local and external blockers.
+    /// Missing native composition; no supplied external count closes these gaps.
+    #[serde(default)]
+    pub implementation_blockers: Vec<String>,
+    /// Genuine owner, operational, custody, and deletion prerequisites.
+    #[serde(default)]
+    pub external_qualification_blockers: Vec<String>,
+    /// Combined implementation, qualification, and observed local blockers.
     pub blockers: Vec<String>,
     /// This command does not invoke a release signing key.
     pub signing_key_read: bool,
@@ -335,15 +343,28 @@ pub fn inspect_legacy_deletion_drill_attest_v1(
         return Err(LegacyDeletionDrillAttestError::RequestInvalid);
     }
 
-    let mut blockers = vec![
-        "legacy_deletion_drill_node_differential_replay_external".to_owned(),
-        "legacy_deletion_drill_matrix_policy_replay_external".to_owned(),
-        "legacy_deletion_drill_release_state_provenance_external".to_owned(),
-        "legacy_deletion_drill_owner_acceptance_external".to_owned(),
-        "legacy_deletion_drill_operational_proof_external".to_owned(),
-        "legacy_deletion_drill_release_signature_external".to_owned(),
-        "legacy_deletion_drill_receipt_publication_external".to_owned(),
-    ];
+    let implementation_blockers: Vec<String> = [
+        "legacy_deletion_drill_node_differential_replay_not_implemented",
+        "legacy_deletion_drill_matrix_policy_replay_not_implemented",
+        "legacy_deletion_drill_release_state_provenance_not_implemented",
+        "legacy_deletion_drill_release_signing_integration_not_implemented",
+        "legacy_deletion_drill_receipt_publication_not_implemented",
+        "legacy_deletion_drill_receipt_publication_recovery_not_implemented",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let external_qualification_blockers: Vec<String> = [
+        "legacy_deletion_drill_owner_acceptance_external",
+        "legacy_deletion_drill_operational_proof_external",
+        "legacy_deletion_drill_release_key_custody_external",
+        "legacy_deletion_drill_physical_deletion_authorization_external",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let mut blockers = implementation_blockers.clone();
+    blockers.extend(external_qualification_blockers.iter().cloned());
     if request.release_commit != request.commit {
         blockers.push("legacy_deletion_drill_release_commit_subject_mismatch".to_owned());
     }
@@ -381,6 +402,8 @@ pub fn inspect_legacy_deletion_drill_attest_v1(
         release_state_snapshot_hash: request.release_state_snapshot_hash,
         archive,
         legacy_freeze_receipt_hash,
+        implementation_blockers,
+        external_qualification_blockers,
         blockers,
         signing_key_read: false,
         runtime_evidence_written: false,
@@ -426,11 +449,9 @@ mod tests {
         assert!(!report.physical_deletion_allowed);
         assert!(!report.local_freeze_verified);
         assert!(!report.signing_key_read);
-        assert!(
-            report
-                .blockers
-                .contains(&"legacy_deletion_drill_node_differential_replay_external".to_owned())
-        );
+        assert!(report.blockers.contains(
+            &"legacy_deletion_drill_node_differential_replay_not_implemented".to_owned()
+        ));
         assert!(
             report
                 .blockers
@@ -440,6 +461,27 @@ mod tests {
             report
                 .blockers
                 .contains(&"legacy_node_freeze_inspection_failed".to_owned())
+        );
+        assert_eq!(report.implementation_blockers.len(), 6);
+        assert_eq!(report.external_qualification_blockers.len(), 4);
+        assert!(
+            report
+                .implementation_blockers
+                .iter()
+                .all(|s| s.ends_with("_not_implemented"))
+        );
+        assert!(
+            report
+                .external_qualification_blockers
+                .iter()
+                .all(|s| s.ends_with("_external"))
+        );
+        assert!(
+            report
+                .implementation_blockers
+                .iter()
+                .chain(&report.external_qualification_blockers)
+                .all(|s| report.blockers.contains(s))
         );
         assert!(valid_digest(&report.report_hash));
         let claimed_hash = report.report_hash.clone();

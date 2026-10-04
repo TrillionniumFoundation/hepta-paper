@@ -70,7 +70,7 @@ function withDetachedHeadWorktree(callback) {
 test('public historical R source route hostile controls execute', () => {
   const result = run('test_r_source_route.py');
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-  assert.match(result.stderr, /Ran 7 tests/u);
+  assert.match(result.stderr, /Ran 8 tests/u);
   assert.match(result.stderr, /OK/u);
 });
 

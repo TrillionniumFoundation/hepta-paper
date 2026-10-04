@@ -4,9 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { deflateSync, inflateSync } from 'node:zlib';
+import { captureCommittedSourceSubject } from '../src/source-evidence-git-inputs.mjs';
 import {
   parseStrictJson,
+  validateCommand,
   verifyRepositorySourceEvidence,
+  SOURCE_EVIDENCE_PRODUCER_PATHS,
 } from '../bin/verify-source-implementation-evidence.mjs';
 
 function command(root, ...args) {
@@ -42,6 +47,9 @@ function createFixture(mutator = () => {}) {
   command(root, 'git', 'init', '--quiet');
   command(root, 'git', 'config', 'user.name', 'Hepta Source Evidence Test');
   command(root, 'git', 'config', 'user.email', 'source-evidence@example.invalid');
+  for (const relative of SOURCE_EVIDENCE_PRODUCER_PATHS) {
+    write(root, relative, fs.readFileSync(new URL(`../../${relative}`, import.meta.url)));
+  }
 
   write(root, 'src/feature.mjs', 'export function feature() { return 1; }\n');
   write(root, 'src/orphan.mjs', 'export function orphanFeature() { return 2; }\n');
@@ -193,6 +201,92 @@ test('exact source evidence executes a typed owner test and emits no authority',
   assert.deepEqual(receipt.authorityClaims, authorityClaims());
 });
 
+test('cold-build owner commands accept the schema timeout ceiling and reject out-of-bound budgets', () => {
+  const schema = JSON.parse(fs.readFileSync(new URL(
+    '../../docs/system/schemas/source-implementation-evidence-v1.schema.json',
+    import.meta.url,
+  ), 'utf8'));
+  const timeout = schema.$defs.command.properties.timeoutSeconds;
+  assert.equal(timeout.minimum, 1);
+  assert.equal(timeout.maximum, 1200);
+  const command = {
+    program: 'cargo',
+    args: ['test', '--locked', '-p', 'hepta-paper-service', '--test',
+      'schema_installation_parity', 'finalization_recovery::lost_observation_response',
+      '--', '--exact', '--nocapture'],
+    workdir: 'rust',
+    expectedExitCode: 0,
+    timeoutSeconds: timeout.maximum,
+    expectedTargets: ['rust/crates/hepta-paper-service/tests/schema_installation_parity.rs'],
+  };
+  const paths = new Set(command.expectedTargets);
+  for (const timeoutSeconds of [timeout.minimum, 600, timeout.maximum]) {
+    assert.doesNotThrow(() => validateCommand(
+      { ...command, timeoutSeconds }, 'cold-build-owner', paths,
+    ));
+  }
+  for (const timeoutSeconds of [0, timeout.maximum + 1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => validateCommand(
+      { ...command, timeoutSeconds }, 'cold-build-owner', paths,
+    ), /integer_domain_invalid: cold-build-owner.timeoutSeconds/u);
+  }
+  const fixture = createFixture((evidence) => {
+    evidence.bundles['example-source'].verificationCommands[0].timeoutSeconds = timeout.maximum;
+  });
+  const receipt = verifyRepositorySourceEvidence({
+    root: fixture.root,
+    execute: true,
+    expectedHead: fixture.head,
+    expectedTree: fixture.tree,
+  });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+});
+
+test('failed owner command preserves a bounded exact transcript diagnostic', () => {
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', [
+      "import assert from 'node:assert/strict';",
+      "import test from 'node:test';",
+      "test('feature_test', () => assert.fail('functional-evidence-failure-marker'));",
+      '',
+    ].join('\n'));
+    evidence.bundles['example-source'].files[1].gitBlob = command(
+      root,
+      'git',
+      'hash-object',
+      'test/feature.test.mjs',
+    );
+  });
+  assert.throws(
+    () => verifyRepositorySourceEvidence({
+      root: fixture.root,
+      execute: true,
+      expectedHead: fixture.head,
+      expectedTree: fixture.tree,
+    }),
+    (error) => {
+      assert.ok(error instanceof Error);
+      const prefix = 'verification_command_failed: ';
+      assert.ok(error.message.startsWith(prefix));
+      const diagnostic = JSON.parse(error.message.slice(prefix.length));
+      assert.equal(diagnostic.bundleId, 'example-source');
+      assert.equal(diagnostic.index, 0);
+      assert.equal(diagnostic.status, 1);
+      assert.equal(diagnostic.signal, null);
+      assert.equal(diagnostic.timedOut, false);
+      assert.equal(diagnostic.stdout.truncated, false);
+      assert.match(diagnostic.stdout.sha256, /^sha256:[0-9a-f]{64}$/u);
+      assert.match(
+        Buffer.from(diagnostic.stdout.tailBase64, 'base64').toString('utf8'),
+        /functional-evidence-failure-marker/u,
+      );
+      assert.match(diagnostic.stderr.sha256, /^sha256:[0-9a-f]{64}$/u);
+      return true;
+    },
+  );
+});
+
 test('module identity must be a registered string', () => {
   assertRejected((evidence) => {
     evidence.records['TEST-001'].moduleId = 1;
@@ -307,21 +401,148 @@ test('work-item keys, modules, capabilities and source state are closed-world', 
   }, /unknown_capability/u);
 });
 
+function inlineRustOwnerFixture(t, { declareTest = true, testSource, runIgnored = false } = {}) {
+  const expectedTarget = 'rust/crates/fixture/src/lib.rs';
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'rust/Cargo.toml', '[workspace]\nmembers = ["crates/fixture"]\nresolver = "3"\n');
+    write(root, 'rust/crates/fixture/Cargo.toml', '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n');
+    write(root, 'rust/Cargo.lock', 'version = 4\n\n[[package]]\nname = "fixture"\nversion = "0.1.0"\n');
+    write(root, expectedTarget, [
+      'pub fn inline_feature() -> u32 { 1 }',
+      '#[cfg(test)]',
+      'mod tests {',
+      testSource ?? '#[test]\nfn selected_owner_test() { assert_eq!(super::inline_feature(), 1); }',
+      '}',
+      '',
+    ].join('\n'));
+    const bundle = evidence.bundles['example-source'];
+    bundle.files.push({
+      path: expectedTarget, role: 'implementation', mode: '100644', language: 'rust',
+      gitBlob: command(root, 'git', 'hash-object', expectedTarget),
+      symbols: [{ kind: 'function', name: 'inline_feature' },
+        ...(declareTest ? [{ kind: 'test', name: 'selected_owner_test' }] : [])],
+    });
+    bundle.verificationCommands = [{
+      program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 30,
+      args: ['test', '--locked', '-p', 'fixture', '--lib', 'tests::selected_owner_test',
+        '--', '--exact', ...(runIgnored ? ['--ignored'] : []), '--nocapture'],
+      expectedTargets: [expectedTarget],
+    }];
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  return fixture;
+}
+
+test('Rust implementation files with explicit inline test symbols execute their real exact Cargo owner', (t) => {
+  const fixture = inlineRustOwnerFixture(t);
+  const cargo = command(fixture.root, 'rustup', 'which', '--toolchain', '1.98.0', 'cargo');
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-inline-rust-owner-target-'));
+  const oldPath = process.env.PATH;
+  const oldTarget = process.env.CARGO_TARGET_DIR;
+  process.env.PATH = `${path.dirname(cargo)}${path.delimiter}${oldPath ?? ''}`;
+  process.env.CARGO_TARGET_DIR = target;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    if (oldTarget === undefined) delete process.env.CARGO_TARGET_DIR;
+    else process.env.CARGO_TARGET_DIR = oldTarget;
+    fs.rmSync(target, { recursive: true, force: true });
+  });
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.verificationCommandsExecuted, true);
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+  assert.deepEqual(receipt.commandObservations[0].args, [
+    'test', '--locked', '-p', 'fixture', '--lib', 'tests::selected_owner_test',
+    '--', '--exact', '--nocapture',
+  ]);
+});
+
+test('an exact ignored Rust recovery owner requires actual execution and still rejects skipped success', (t) => {
+  const cargo = command(process.cwd(), 'rustup', 'which', '--toolchain', '1.98.0', 'cargo');
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-ignored-rust-owner-target-'));
+  const oldPath = process.env.PATH;
+  const oldTarget = process.env.CARGO_TARGET_DIR;
+  process.env.PATH = `${path.dirname(cargo)}${path.delimiter}${oldPath ?? ''}`;
+  process.env.CARGO_TARGET_DIR = target;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    if (oldTarget === undefined) delete process.env.CARGO_TARGET_DIR;
+    else process.env.CARGO_TARGET_DIR = oldTarget;
+    fs.rmSync(target, { recursive: true, force: true });
+  });
+  const testSource = '#[test]\n#[ignore = "isolated recovery fixture"]\nfn selected_owner_test() { assert_eq!(super::inline_feature(), 1); }';
+  const skipped = inlineRustOwnerFixture(t, { testSource });
+  assert.throws(() => verifyRepositorySourceEvidence({ root: skipped.root, execute: true }),
+    /verification_test_execution_incomplete/u);
+  const selected = inlineRustOwnerFixture(t, { testSource, runIgnored: true });
+  const receipt = verifyRepositorySourceEvidence({ root: selected.root, execute: true });
+  assert.equal(receipt.verificationCommandsExecuted, true);
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.deepEqual(receipt.commandObservations[0].args.slice(-4),
+    ['--', '--exact', '--ignored', '--nocapture']);
+  const commandValue = receipt.commandObservations[0];
+  for (const args of [
+    [...commandValue.args, '--ignored'],
+    commandValue.args.filter(argument => argument !== '--exact'),
+    commandValue.args.map(argument => argument === '--exact' ? '--ignored' : argument),
+  ]) {
+    assert.throws(() => validateCommand({
+      program: 'cargo', args, workdir: 'rust', expectedExitCode: 0,
+      timeoutSeconds: 30, expectedTargets: ['rust/crates/fixture/src/lib.rs'],
+    }, 'isolated recovery', new Set(['rust/crates/fixture/src/lib.rs'])), /cargo_command_not_allowlisted/u);
+  }
+});
+
+test('inline Rust tests without explicit test symbols cannot become command owners', (t) => {
+  const fixture = inlineRustOwnerFixture(t, { declareTest: false });
+  assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+    /command_target_not_declared_test/u);
+});
+
+test('a Rust implementation function or inert test spelling cannot pretend to be an inline test owner', (t) => {
+  for (const testSource of [
+    'fn selected_owner_test() {}',
+    '// #[test]\nfn selected_owner_test() {}',
+    'const DECOY: &str = "#[test] fn selected_owner_test() {}";\nfn selected_owner_test() {}',
+  ]) {
+    const fixture = inlineRustOwnerFixture(t, { testSource });
+    assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+      /source_symbol_missing: .*:test:selected_owner_test/u);
+  }
+});
+
+test('inline ownership does not grant JavaScript implementation-role files a test role', () => {
+  assertRejected((evidence, _root, blobs) => {
+    const bundle = evidence.bundles['example-source'];
+    bundle.files[1].role = 'implementation';
+    bundle.files.push({
+      path: 'test/orphan.test.mjs', role: 'test', mode: '100644', language: 'javascript',
+      gitBlob: blobs.orphanTestBlob,
+      symbols: [{ kind: 'test', name: 'orphan_test' }],
+    });
+  }, /command_target_not_declared_test/u);
+});
+
 // These exercise the actual verifier process boundary. The synthetic Cargo
 // executable tests transcript policy only; it is not Rust execution evidence.
-function executableCargoFixture(t, transcript) {
+function executableCargoFixture(t, transcript, { unscoped = false } = {}) {
   const fixture = createFixture((evidence, root) => {
-    write(root, 'rust/tests/selected.rs', '#[test]\nfn selected_owner_test() {}\n');
+    const expectedTarget = 'rust/crates/fixture/src/tests.rs';
+    write(root, expectedTarget, '#[test]\nfn selected_owner_test() {}\n');
     const bundle = evidence.bundles['example-source'];
     bundle.files[1] = {
-      path: 'rust/tests/selected.rs', role: 'test', mode: '100644', language: 'rust',
-      gitBlob: command(root, 'git', 'hash-object', 'rust/tests/selected.rs'),
+      path: expectedTarget, role: 'test', mode: '100644', language: 'rust',
+      gitBlob: command(root, 'git', 'hash-object', expectedTarget),
       symbols: [{ kind: 'test', name: 'selected_owner_test' }],
     };
     bundle.verificationCommands[0] = {
       program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 10,
-      args: ['test', '--locked', '-p', 'fixture', 'selected_owner_test', '--', '--exact', '--nocapture'],
-      expectedTargets: ['rust/tests/selected.rs'],
+      args: unscoped
+        ? ['test', '--locked', '-p', 'fixture', 'selected_owner_test', '--', '--exact', '--nocapture']
+        : ['test', '--locked', '-p', 'fixture', '--lib', 'selected_owner_test', '--', '--exact', '--nocapture'],
+      expectedTargets: [expectedTarget],
     };
   });
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-test-transcript-'));
@@ -354,18 +575,75 @@ for (const [name, transcript] of [
     const fixture = executableCargoFixture(t, transcript);
     const receipt = path.join(os.tmpdir(), `hepta-rejected-receipt-${path.basename(fixture.root)}.json`);
     assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true, receipt }),
-      /verification_test_execution_incomplete/u);
+      /verification_artifact_not_elf/u);
     assert.equal(fs.existsSync(receipt), false, 'failure must not publish an acceptance receipt');
   });
 }
 
-test('Cargo exact selected execution permits other binaries with zero matching tests', (t) => {
+test('synthetic Cargo launcher cannot manufacture exact selected execution from zero summaries', (t) => {
   const fixture = executableCargoFixture(t,
     `${zeroCargoSummary}\u001b[32mtest selected_owner_test ... ok\u001b[0m\n${oneCargoSummary}${zeroCargoSummary}`);
+  assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true }), /verification_artifact_not_elf/u);
+});
+
+test('Cargo owner commands cannot fall back to package-wide unscoped execution', (t) => {
+  const fixture = executableCargoFixture(t, '', { unscoped: true });
+  assert.throws(
+    () => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+    /cargo_command_not_allowlisted/u,
+  );
+});
+
+function nestedScopedCargoFixture(t, testTarget = 'owner_suite') {
+  const expectedTarget = 'rust/crates/fixture/tests/owner_suite/nested.rs';
+  const fixture = createFixture((evidence, root) => {
+    write(root, expectedTarget, '#[test]\nfn selected_owner_test() {}\n');
+    write(root, 'rust/Cargo.toml', '[workspace]\nmembers = ["crates/fixture"]\nresolver = "3"\n');
+    write(root, 'rust/crates/fixture/Cargo.toml', '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n');
+    write(root, 'rust/Cargo.lock', 'version = 4\n\n[[package]]\nname = "fixture"\nversion = "0.1.0"\n');
+    write(root, 'rust/crates/fixture/tests/owner_suite.rs', '#[path = "owner_suite/nested.rs"] mod nested;\n');
+    const bundle = evidence.bundles['example-source'];
+    bundle.files[1] = {
+      path: expectedTarget, role: 'test', mode: '100644', language: 'rust',
+      gitBlob: command(root, 'git', 'hash-object', expectedTarget),
+      symbols: [{ kind: 'test', name: 'selected_owner_test' }],
+    };
+    bundle.verificationCommands[0] = {
+      program: 'cargo', workdir: 'rust', expectedExitCode: 0, timeoutSeconds: 10,
+      args: [
+        'test', '--locked', '-p', 'fixture', '--test', testTarget,
+        'nested::selected_owner_test', '--', '--exact', '--nocapture',
+      ],
+      expectedTargets: [expectedTarget],
+    };
+  });
+  const cargo = command(fixture.root, 'rustup', 'which', '--toolchain', '1.98.0', 'cargo');
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-nested-rust-owner-target-'));
+  const oldPath = process.env.PATH, oldTarget = process.env.CARGO_TARGET_DIR;
+  process.env.PATH = `${path.dirname(cargo)}${path.delimiter}${oldPath ?? ''}`;
+  process.env.CARGO_TARGET_DIR = target;
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+    if (oldTarget === undefined) delete process.env.CARGO_TARGET_DIR; else process.env.CARGO_TARGET_DIR = oldTarget;
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  });
+  return fixture;
+}
+
+test('nested Rust owner modules bind their exact Cargo integration-test binary', (t) => {
+  const fixture = nestedScopedCargoFixture(t);
   const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
   assert.equal(receipt.commandObservations.length, 1);
   assert.equal(receipt.commandObservations[0].status, 0);
-  assert.deepEqual(receipt.authorityClaims, authorityClaims());
+});
+
+test('nested Rust owner modules cannot bind a different Cargo integration-test binary', (t) => {
+  const fixture = nestedScopedCargoFixture(t, 'other_suite');
+  assert.throws(
+    () => verifyRepositorySourceEvidence({ root: fixture.root, execute: false }),
+    /cargo_command_not_allowlisted/u,
+  );
 });
 
 for (const [name, body] of [
@@ -381,5 +659,361 @@ for (const [name, body] of [
     t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
     assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true }),
       /verification_test_execution_incomplete/u);
+  });
+}
+
+// These commands really run through Node's test runner. They alter only the
+// owned fixture checkout and must never produce a receipt for its earlier SHA.
+for (const [name, mutation] of [
+  ['tracked implementation', "fs.appendFileSync('src/feature.mjs', '// changed after execution\\n');"],
+  ['registry hidden by assume-unchanged', "git(['update-index', '--assume-unchanged', 'docs/system/truth/modules.v1.json']); fs.appendFileSync('docs/system/truth/modules.v1.json', ' ');"],
+  ['evidence document', "fs.appendFileSync('docs/system/evidence/repository-source-implementation-v1.json', ' ');"],
+  ['same-tree replacement HEAD', "git(['-c', 'commit.gpgsign=false', 'commit', '--quiet', '--allow-empty', '-m', 'concurrent fixture head']);"],
+]) {
+  test(`post-execution source drift rejects ${name} without creating a receipt`, (t) => {
+    const fixture = createFixture((evidence, root) => {
+      write(root, 'test/feature.test.mjs', [
+        "import test from 'node:test';",
+        "import fs from 'node:fs';",
+        "import { spawnSync } from 'node:child_process';",
+        "function git(args) { const r = spawnSync('git', args, {encoding: 'utf8'}); if (r.status !== 0) throw new Error(r.stderr); }",
+        `test('feature_test', () => { ${mutation} });`,
+        '',
+      ].join('\n'));
+      evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');
+    });
+    const output = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-source-receipt-'));
+    t.after(() => { fs.rmSync(fixture.root, {recursive: true, force: true}); fs.rmSync(output, {recursive: true, force: true}); });
+    const receipt = path.join(output, 'receipt.json');
+    assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: true,
+      expectedHead: fixture.head, expectedTree: fixture.tree, receipt}),
+    /source_subject_changed|source_worktree_blob_mismatch/u);
+    assert.equal(fs.existsSync(receipt), false);
+  });
+}
+
+test('assume-unchanged cannot substitute source bytes for the indexed Git blob', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  command(fixture.root, 'git', 'update-index', '--assume-unchanged', 'src/feature.mjs');
+  fs.appendFileSync(path.join(fixture.root, 'src/feature.mjs'), '// hidden source mutation\n');
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: false,
+    expectedHead: fixture.head, expectedTree: fixture.tree}), /source_worktree_blob_mismatch/u);
+});
+
+
+test('ignored executable-mode drift cannot match a source input Git mode', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  command(fixture.root, 'git', 'config', 'core.filemode', 'false');
+  fs.chmodSync(path.join(fixture.root, 'src/feature.mjs'), 0o755);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: false,
+    expectedHead: fixture.head, expectedTree: fixture.tree}), /source_worktree_blob_mismatch/u);
+});
+
+test('skip-worktree cannot substitute the canonical evidence document before execution', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  const relative = 'docs/system/evidence/repository-source-implementation-v1.json';
+  command(fixture.root, 'git', 'update-index', '--skip-worktree', relative);
+  fs.appendFileSync(path.join(fixture.root, relative), ' ');
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.throws(() => verifyRepositorySourceEvidence({root: fixture.root, execute: true,
+    expectedHead: fixture.head, expectedTree: fixture.tree}), /source_worktree_blob_mismatch/u);
+});
+
+
+test('ordinary source-verifier CLI refuses a successful test that changes its source subject', (t) => {
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', [
+      "import test from 'node:test';",
+      "import fs from 'node:fs';",
+      "test('feature_test', () => fs.appendFileSync('src/feature.mjs', '// CLI observed drift'));",
+      '',
+    ].join('\n'));
+    evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');
+  });
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-source-cli-receipt-'));
+  t.after(() => { fs.rmSync(fixture.root, {recursive: true, force: true}); fs.rmSync(output, {recursive: true, force: true}); });
+  const receipt = path.join(output, 'receipt.json');
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('../bin/verify-source-implementation-evidence.mjs', import.meta.url)),
+    '--root', fixture.root, '--expected-head', fixture.head, '--expected-tree', fixture.tree,
+    '--execute', '--receipt', receipt,
+  ], {encoding: 'utf8', timeout: 30_000});
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /source_subject_changed/u);
+  assert.equal(fs.existsSync(receipt), false);
+  assert.doesNotMatch(result.stdout, /repository_source_evidence_verified/u);
+});
+
+test('committed CLI replay subject binds the whole real Git tree and retains plain dirty diagnostics', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  assert.deepEqual(captureCommittedSourceSubject(fixture.root),
+    {commit: fixture.head, tree: fixture.tree, committedClean: true});
+  write(fixture.root, 'untracked-input.mjs', 'export const changed = true;');
+  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+});
+
+function addUnmaterializedReference(fixture) {
+  const commit = fixture.head;
+  write(fixture.root, '.gitmodules', '[submodule "reference"]\n\tpath = references/immutable\n\turl = https://example.invalid/reference.git\n');
+  fs.mkdirSync(path.join(fixture.root, 'references'), { recursive: true });
+  command(fixture.root, 'git', 'add', '.gitmodules');
+  command(fixture.root, 'git', 'update-index', '--add', '--cacheinfo', `160000,${commit},references/immutable`);
+  command(fixture.root, 'git', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'Unmaterialized immutable reference');
+  fixture.head = command(fixture.root, 'git', 'rev-parse', 'HEAD');
+  fixture.tree = command(fixture.root, 'git', 'rev-parse', 'HEAD^{tree}');
+  return commit;
+}
+
+test('committed source captures exact empty gitlink references and retains absent dirty diagnostics without parent Git fallback', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const commit = addUnmaterializedReference(fixture);
+  const absent = captureCommittedSourceSubject(fixture.root);
+  assert.equal(absent.committedClean, false);
+  assert.equal(absent.gitlinkReferenceProfile, undefined);
+  const leaf = path.join(fixture.root, 'references/immutable');
+  fs.mkdirSync(leaf);
+  assert.notEqual(command(leaf, 'git', 'rev-parse', 'HEAD'), commit);
+  const empty = captureCommittedSourceSubject(fixture.root);
+  assert.equal(empty.gitlinkReferenceProfile.version, 1);
+  assert.equal(empty.gitlinkReferenceProfile.references[0].commit, commit);
+  assert.equal(empty.gitlinkReferenceProfile.references[0].state, 'empty_directory');
+  assert.deepEqual(captureCommittedSourceSubject(fixture.root), empty);
+  fs.renameSync(leaf, path.join(fixture.root, '.git/old-empty-reference'));
+  fs.mkdirSync(leaf);
+  assert.notDeepEqual(captureCommittedSourceSubject(fixture.root), empty);
+  command(fixture.root, 'git', 'update-index', '--cacheinfo', `160000,${'a'.repeat(40)},references/immutable`);
+  // Dirty sources remain diagnostic subjects and cannot claim acceptance.
+  assert.equal(captureCommittedSourceSubject(fixture.root).committedClean, false);
+});
+
+test('committed gitlink reference profile rejects hidden files materialized repositories and aliases', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const commit = addUnmaterializedReference(fixture);
+  const leaf = path.join(fixture.root, 'references/immutable');
+  const assertAliasRejected = () => {
+    let subject;
+    try { subject = captureCommittedSourceSubject(fixture.root); }
+    catch (cause) {
+      // Newer Git refuses the alias before our dirty-source observation. Both
+      // paths must remain closed; unrelated Git or source errors still fail.
+      assert.match(cause.message, /^git_command_failed: status --porcelain=v1 --untracked-files=all: error: expected submodule path '[^']+' not to be a symbolic link$/u);
+      return;
+    }
+    assert.equal(subject.committedClean, false);
+    assert.equal(subject.gitlinkReferenceProfile, undefined);
+  };
+  fs.mkdirSync(leaf);
+  fs.writeFileSync(path.join(leaf, '.hidden'), 'nested bytes are not accepted');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_gitlink_materialized/u);
+  fs.rmSync(path.join(leaf, '.hidden'));
+  fs.rmSync(leaf, { recursive: true });
+  command(fixture.root, 'git', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', fixture.root, leaf);
+  command(leaf, 'git', 'checkout', '--quiet', '--detach', commit);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_gitlink_materialized/u);
+  fs.rmSync(leaf, { recursive: true });
+  fs.mkdirSync(path.join(fixture.root, '.git/other-empty'));
+  fs.symlinkSync(path.join(fixture.root, '.git/other-empty'), leaf);
+  assertAliasRejected();
+  fs.rmSync(leaf);
+  fs.rmdirSync(path.join(fixture.root, 'references'));
+  fs.symlinkSync(path.join(fixture.root, '.git/other-empty'), path.join(fixture.root, 'references'));
+  assertAliasRejected();
+});
+
+test('held empty gitlink reference rejects actual named replacement during directory observation', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  addUnmaterializedReference(fixture);
+  const leaf = path.join(fixture.root, 'references/immutable');
+  fs.mkdirSync(leaf);
+  const original = fs.opendirSync;
+  let changed = false;
+  fs.opendirSync = function observedDirectory(named, ...args) {
+    if (!changed && fs.readlinkSync(named) === leaf) {
+      changed = true;
+      fs.renameSync(leaf, path.join(fixture.root, '.git/replaced-empty'));
+      fs.mkdirSync(leaf);
+    }
+    return original.call(this, named, ...args);
+  };
+  try { assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_gitlink_changed/u); }
+  finally { fs.opendirSync = original; }
+  assert.equal(changed, true);
+});
+
+test('actual owner child receives producer pinned Node and strips spoofed oracle and secret environment', (t) => {
+  const expectedNode = fs.realpathSync(process.execPath);
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', [
+      "import assert from 'node:assert/strict';",
+      "import fs from 'node:fs';",
+      "import test from 'node:test';",
+      "import { spawnSync } from 'node:child_process';",
+      `test('feature_test', () => { assert.equal(process.env.HEPTA_TEST_NODE, ${JSON.stringify(expectedNode)});`,
+      "for (const key of ['OPENAI_API_KEY', 'HEPTA_AUTHORITY_PRIVATE_KEY', 'NODE_OPTIONS']) assert.equal(process.env[key], undefined);",
+      `const child=spawnSync(process.env.HEPTA_TEST_NODE,['--version'],{encoding:'utf8',env:{}}); assert.equal(child.status,0); assert.equal(child.stdout.trim(),${JSON.stringify(process.version)}); });`,
+      '',
+    ].join('\n'));
+    evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');
+  });
+  const replacements = { HEPTA_TEST_NODE: '/definitely/spoofed/ambient-node', OPENAI_API_KEY: 'fixture-secret', HEPTA_AUTHORITY_PRIVATE_KEY: 'fixture-private-key', NODE_OPTIONS: '--require=/definitely/ambient-injection' };
+  const prior = Object.fromEntries(Object.keys(replacements).map(key => [key, process.env[key]]));
+  t.after(() => {
+    for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  });
+  Object.assign(process.env, replacements);
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+});
+
+test('actual strict route schema bounds captured gitlink profile and refuses authority or nested source projections', (t) => {
+  const fixture = createFixture();
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gitlink-schema-'));
+  t.after(() => { fs.rmSync(fixture.root, { recursive: true, force: true }); fs.rmSync(output, { recursive: true, force: true }); });
+  addUnmaterializedReference(fixture);
+  fs.mkdirSync(path.join(fixture.root, 'references/immutable'));
+  const subject = captureCommittedSourceSubject(fixture.root);
+  const hash = `sha256:${'a'.repeat(64)}`;
+  const outcome = { outcome: 'report', exitCode: 0, stdout: {}, diagnostic: null };
+  const record = { version: 1, kind: 'NodeRustRouteAcceptanceRecordV1', scope: 'local-readonly-command-behavior-no-external-authority', subject,
+    runtime: { node: { version: 'v22.23.1', sha256: hash }, cargoVersion: 'cargo 1.98.0', buildArgs: ['build'], nativeOwners: { 'hepta-paper-rust': { sha256: hash } } },
+    authority: { productionActivation: false, targetHostQualification: false, releaseAuthority: false, submissionAuthority: false, writerCutover: false, nodeRetirement: false },
+    rows: [{ routeId: 'operator/workspace', argumentContractSha256: hash, behaviorContractSha256: hash, cases: [{ caseId: 'schema-fixture', inputSha256: hash, nodeArgv: ['workspace'], nativeArgv: ['workspace'], environment: {}, node: outcome, native: outcome, retry: null, effectsUnchanged: true, passed: true }] }], recordSha256: hash };
+  const schema = fileURLToPath(new URL('../../docs/migration/node-rust-route-acceptance.v1.schema.json', import.meta.url));
+  const checker = fileURLToPath(new URL('../../docs/rust/tools/strict_json_schema.py', import.meta.url));
+  const input = path.join(output, 'instance.json');
+  const validate = value => {
+    fs.writeFileSync(input, JSON.stringify(value));
+    const result = spawnSync('python3', [checker, '--schema', schema, '--instance', input], { encoding: 'utf8', timeout: 30_000 });
+    assert.ifError(result.error);
+    return result;
+  };
+  assert.equal(validate(record).status, 0);
+  const legacy = structuredClone(record); delete legacy.subject.gitlinkReferenceProfile;
+  assert.equal(validate(legacy).status, 0);
+  for (const mutate of [
+    value => { value.subject.gitlinkReferenceProfile.version = 2; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].state = 'absent'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].mode = '100644'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].commit = 'wrong'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].path = '../escape'; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].parents = []; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].parents = Array(4097).fill(value.subject.gitlinkReferenceProfile.references[0].parents[0]); },
+    value => { value.subject.gitlinkReferenceProfile.references = Array(16385).fill(value.subject.gitlinkReferenceProfile.references[0]); },
+    value => { value.subject.gitlinkReferenceProfile.references[0].leaf = null; },
+    value => { value.subject.gitlinkReferenceProfile.references[0].leaf.ino = 'unbound'; },
+    value => { value.subject.gitlinkReferenceProfile.nestedSourceBytesAccepted = true; },
+    value => { value.subject.gitlinkReferenceProfile.releaseAuthority = true; },
+    value => { value.authority.releaseAuthority = true; },
+  ]) {
+    const changed = structuredClone(record); mutate(changed);
+    const result = validate(changed);
+    assert.notEqual(result.status, 0, 'malformed profile or authority projection passed actual strict validator');
+  }
+  // Structural schema success above grants no route acceptance; the ordinary
+  // consumer still independently executes and compares current actual inputs.
+});
+
+for (const flag of ['--assume-unchanged', '--skip-worktree']) {
+  test(`committed CLI replay rejects real Git ${flag} before native building`, (t) => {
+    const fixture = createFixture();
+    t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+    command(fixture.root, 'git', 'update-index', flag, 'src/feature.mjs');
+    fs.appendFileSync(path.join(fixture.root, 'src/feature.mjs'), '// hidden replay input\n');
+    assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+    assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_index_hidden_input_flag/u);
+  });
+}
+
+test('committed CLI replay rejects unchanged Git stat-cache with changed same-length bytes', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  const file = path.join(fixture.root, 'src/feature.mjs');
+  command(fixture.root, 'git', 'config', 'core.trustctime', 'false');
+  command(fixture.root, 'git', 'config', 'core.checkStat', 'minimal');
+  const stamp = new Date('2020-01-01T00:00:00.000Z');
+  fs.utimesSync(file, stamp, stamp);
+  command(fixture.root, 'git', 'update-index', '--refresh');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('return 1', 'return 9'));
+  fs.utimesSync(file, stamp, stamp);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_worktree_blob_mismatch/u);
+});
+
+test('committed CLI replay rejects executable-mode and redirected-worktree substitutions', (t) => {
+  const fixture = createFixture(), other = createFixture();
+  t.after(() => { fs.rmSync(fixture.root, {recursive: true, force: true}); fs.rmSync(other.root, {recursive: true, force: true}); });
+  command(fixture.root, 'git', 'config', 'core.filemode', 'false');
+  fs.chmodSync(path.join(fixture.root, 'src/feature.mjs'), 0o755);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_worktree_blob_mismatch/u);
+  fs.chmodSync(path.join(fixture.root, 'src/feature.mjs'), 0o644);
+  write(fixture.root, 'hidden-worktree-input', 'never a current clean subject');
+  command(fixture.root, 'git', 'config', 'core.worktree', other.root);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_git_worktree_root_mismatch/u);
+});
+
+test('committed CLI replay rejects a readable corrupt Git blob with unchanged working bytes', (t) => {
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  const blob = command(fixture.root, 'git', 'rev-parse', 'HEAD:src/feature.mjs');
+  const file = path.join(fixture.root, '.git/objects', blob.slice(0, 2), blob.slice(2));
+  const original = inflateSync(fs.readFileSync(file));
+  const corrupted = Buffer.from(original.toString('utf8').replace('return 1', 'return 9'));
+  assert.equal(corrupted.length, original.length);
+  fs.chmodSync(file, 0o600); fs.writeFileSync(file, deflateSync(corrupted));
+  assert.match(command(fixture.root, 'git', 'cat-file', 'blob', blob), /return 9/u);
+  assert.equal(command(fixture.root, 'git', 'status', '--porcelain=v1'), '');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /git_command_failed: fsck/u);
+});
+
+test('committed CLI replay refuses Git configuration which can skip object integrity or fetch implicitly', (t) => {
+  for (const [key, value] of [['fsck.hashMismatch', 'ignore'], ['remote.origin.promisor', 'true'], ['include.path', '/dev/null']]) {
+    const fixture = createFixture();
+    t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+    command(fixture.root, 'git', 'config', key, value);
+    assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_git_integrity_bypass_configuration/u);
+  }
+  const fixture = createFixture();
+  t.after(() => fs.rmSync(fixture.root, {recursive: true, force: true}));
+  command(fixture.root, 'git', 'config', 'extensions.worktreeConfig', 'true');
+  command(fixture.root, 'git', 'config', '--worktree', 'fsck.hashMismatch', 'ignore');
+  assert.throws(() => captureCommittedSourceSubject(fixture.root), /source_git_integrity_bypass_configuration/u);
+});
+
+
+test('readable Node owner title remains exact source and execution identity', t => {
+  const title = 'owner title with spaces, exact punctuation (v1)';
+  const fixture = createFixture((evidence, root) => {
+    write(root, 'test/feature.test.mjs', `import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest(${JSON.stringify(title)}, () => assert.equal(2 + 3, 5));\n`);
+    const file = evidence.bundles['example-source'].files[1];
+    file.symbols = [{ kind: 'test', name: title }];
+    file.gitBlob = command(root, 'git', 'hash-object', file.path);
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const receipt = verifyRepositorySourceEvidence({ root: fixture.root, execute: true });
+  assert.equal(receipt.commandObservations.length, 1);
+  assert.equal(receipt.commandObservations[0].status, 0);
+  assert.deepEqual(receipt.authorityClaims, authorityClaims());
+});
+for (const title of ['bad\ntitle', 'x'.repeat(513)]) {
+  test('unbounded or control-bearing Node title refuses before executing its owner '+title.length, t => {
+    const fixture = createFixture(evidence => {
+      evidence.bundles['example-source'].files[1].symbols[0].name = title;
+    });
+    t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+    assert.throws(() => verifyRepositorySourceEvidence({ root: fixture.root, execute: true }), /string_domain_invalid/u);
   });
 }

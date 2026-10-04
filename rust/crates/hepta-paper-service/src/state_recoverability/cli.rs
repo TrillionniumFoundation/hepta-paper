@@ -1,6 +1,11 @@
 //! Complete state-backup command composition. Process profiles remain the
 //! default; an explicit independently pinned socket profile owns both clients.
 mod arguments;
+mod status;
+pub(crate) use status::{
+    StateBackupStatusObservationV1, StateBackupStatusReadV1,
+    observe_ordinary_state_backup_status_v1, ordinary_state_backup_status_help_v1,
+};
 pub(super) mod inputs;
 use super::*;
 use super::{
@@ -27,6 +32,30 @@ pub struct StateBackupCliContextV1 {
     pub working_directory: PathBuf,
     pub environment: BTreeMap<String, String>,
 }
+/// The real frontend reuses this command's parser to resolve a typed root.
+/// Help and grammar refusal precede any deployment-marker lookup.
+pub fn native_state_backup_cli_context_v1(
+    argv: &[String],
+    working_directory: PathBuf,
+    environment: BTreeMap<String, String>,
+) -> std::result::Result<StateBackupCliContextV1, String> {
+    let parsed = arguments::parse(argv)?;
+    let workspace_root = if parsed.help {
+        working_directory.clone()
+    } else {
+        crate::native_workspace::resolve_native_command_workspace_root_v1(
+            &working_directory,
+            &environment,
+            parsed.workspace.as_deref().map(Path::new),
+        )?
+    };
+    Ok(StateBackupCliContextV1 {
+        workspace_root,
+        working_directory,
+        environment,
+    })
+}
+
 pub enum StateBackupCliOutputV1 {
     Help(&'static str),
     Report { report: Value, exit_code: i32 },

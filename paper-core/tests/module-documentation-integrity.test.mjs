@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { validateModuleDocumentation } from '../../docs/tools/validate-module-documentation.mjs';
@@ -56,7 +57,7 @@ test('live repository has complete one-to-one module documentation', () => {
   assert.equal(result.report.manifests, 32);
 });
 
-test('missing required section fails closed', () => {
+test('renaming an explanatory section is advisory, not a correctness failure', () => {
   const root = createFixture();
   try {
     const index = JSON.parse(fs.readFileSync(path.join(root, 'docs/modules/module-documentation.v1.json'), 'utf8'));
@@ -64,8 +65,9 @@ test('missing required section fails closed', () => {
     const spec = fs.readFileSync(path.join(root, entry.specPath), 'utf8').replace('## Failure, recovery, and idempotency', '## Removed failure section');
     fs.writeFileSync(path.join(root, entry.specPath), spec);
     const result = validateModuleDocumentation({ root });
-    assert.equal(result.ok, false);
-    assert.match(result.failures.join('\n'), /missing heading/);
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    assert.match(result.advisories.join('\n'), /missing heading/);
+    assert.equal(result.report.implementationProjection.modules['module.submission-port'].productionActivationVerified, false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -157,15 +159,6 @@ const hostileCases = [
     const file = path.join(root, WRITER_SPEC);
     fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('staticActivation: disabled', 'staticActivation: authoritative'));
   }, /specification staticActivation mismatch/],
-  ['empty mandatory section', (root) => {
-    const file = path.join(root, WRITER_SPEC);
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## Inputs and outputs[\s\S]*?(?=## State and authority)/, '## Inputs and outputs\n\n'));
-  }, /empty section/],
-  ['heading hidden inside a code fence', (root) => {
-    const file = path.join(root, WRITER_SPEC);
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Inputs and outputs', '```text\n## Inputs and outputs\n```'));
-  }, /missing heading/],
-  ['duplicate mandatory heading', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), '\n## Inputs and outputs\nDuplicated.\n'), /duplicate heading/],
   ['oversized specification', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), 'x'.repeat(1024 * 1024)), /byte limit/],
   ['duplicate raw JSON key', (root) => {
     const file = path.join(root, WRITER_MANIFEST);
@@ -176,6 +169,33 @@ const hostileCases = [
   }, /duplicate JSON property/],
   ['unindexed symbolic document', (root) => fs.symlinkSync(path.join(root, WRITER_SPEC), path.join(root, 'docs/modules/specs/unindexed.md')), /symbolic module document/],
 ];
+
+const proseShapeCases = [
+  ['empty mandatory section', (root) => {
+    const file = path.join(root, WRITER_SPEC);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## Inputs and outputs[\s\S]*?(?=## State and authority)/, '## Inputs and outputs\n\n'));
+  }, /empty section/],
+  ['heading hidden inside a code fence', (root) => {
+    const file = path.join(root, WRITER_SPEC);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Inputs and outputs', '```text\n## Inputs and outputs\n```'));
+  }, /missing heading/],
+  ['duplicate mandatory heading', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), '\n## Inputs and outputs\nDuplicated.\n'), /duplicate heading/],
+];
+for (const [name, mutate, expected] of proseShapeCases) {
+  test(`module documentation advises on ${name} without weakening typed authority`, () => {
+    const root = createFixture();
+    try {
+      mutate(root);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, true, result.failures.join('\n'));
+      assert.match(result.advisories.join('\n'), expected);
+      changeJson(root, WRITER_MANIFEST, (value) => { value.sideEffectClasses.push('submission'); });
+      const invalid = validateModuleDocumentation({ root });
+      assert.equal(invalid.ok, false);
+      assert.match(invalid.failures.join('\n'), /authority ceiling/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
 
 for (const [name, mutate, expected] of hostileCases) {
   test(`module documentation rejects ${name}`, () => {
@@ -246,6 +266,90 @@ test('equivalent prose does not require magic authority keywords', () => {
     const escalated = validateModuleDocumentation({ root });
     assert.equal(escalated.ok, false);
     assert.match(escalated.failures.join('\n'), /authority ceiling/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('documented unfinished work is allowed without granting authority', () => {
+  const root = createFixture();
+  try {
+    fs.appendFileSync(path.join(root, WRITER_SPEC),
+      '\nTODO: GAP-HOST-002 retains its restore-drill and target-host evidence requirements. This note grants no additional authority.\n');
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    changeJson(root, WRITER_MANIFEST, (value) => {
+      value.sideEffectClasses.push('submission');
+    });
+    const escalated = validateModuleDocumentation({ root });
+    assert.equal(escalated.ok, false);
+    assert.match(escalated.failures.join('\n'), /authority ceiling/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const marker of ['TODO', 'TBD', 'PLACEHOLDER', 'FIXME']) {
+  test(`a bare ${marker} explanatory section produces advice, not authority`, () => {
+    const root = createFixture();
+    try {
+      const file = path.join(root, WRITER_SPEC);
+      const source = fs.readFileSync(file, 'utf8').replace(
+        /## Inputs and outputs[\s\S]*?(?=## State and authority)/,
+        `## Inputs and outputs\n\n${marker}\n\n`,
+      );
+      fs.writeFileSync(file, source);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, true, result.failures.join('\n'));
+      assert.match(result.advisories.join('\n'), /placeholder-only section/);
+      assert.equal(result.report.implementationProjection.modules['module.commit-sequencer'].productionActivationVerified, false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const heading of ['Identity', 'Open blockers', 'Operational runbook']) {
+  test(`machine-referenced ${heading} section remains unique and mandatory`, () => {
+    const root = createFixture();
+    try {
+      const file = path.join(root, WRITER_SPEC);
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`## ${heading}`, '## Other text'));
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, false);
+      assert.match(result.failures.join('\n'), /missing heading|mismatch|work-state projection/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+// Exercise the authoritative matrix writer in a disposable source-only fixture.
+// Empty promotion inputs do not claim qualification or consume real evidence.
+test('source promotion generator reproduces the committed module matrix', () => {
+  const root = createFixture();
+  try {
+    const evidenceDirectory = path.join(root, 'docs/system/evidence');
+    fs.mkdirSync(evidenceDirectory, { recursive: true });
+    for (const name of ['repository-source-implementation-v1', 'rust-functional-source-closure-v1']) {
+      fs.writeFileSync(path.join(evidenceDirectory, `${name}.json`), JSON.stringify({
+        kind: 'RepositorySourceImplementationEvidenceV1', records: {},
+      }));
+    }
+    const truthPaths = ['docs/system/truth/modules.v1.json', 'docs/system/truth/work-items.v2.json'];
+    const before = truthPaths.map((relative) => JSON.parse(fs.readFileSync(path.join(root, relative), 'utf8')));
+    const result = spawnSync(process.execPath, [path.join(ROOT, 'docs/tools/apply-source-promotions.mjs'), '--write'], {
+      cwd: root, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.promotionCount, 0);
+    assert.deepEqual(report.promotedModules, []);
+    assert.deepEqual(report.changedSpecs, []);
+    assert.ok(Object.values(report.authorityClaims).every((value) => value === false));
+    for (const [index, relative] of truthPaths.entries()) {
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, relative), 'utf8')), before[index]);
+    }
+    const matrix = 'docs/modules/MODULE_DOCUMENTATION_MATRIX.md';
+    assert.equal(fs.readFileSync(path.join(root, matrix), 'utf8'), fs.readFileSync(path.join(ROOT, matrix), 'utf8'));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

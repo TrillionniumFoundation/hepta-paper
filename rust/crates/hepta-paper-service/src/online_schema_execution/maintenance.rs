@@ -108,6 +108,34 @@ pub fn reserve_schema_maintenance_v1<T: MutationAuthorityTransportV1>(
         ));
     }
     let request = plan.reserve_request(authority, &iso(before)?)?;
+    reserve_exact_schema_maintenance_v1(plan, request, authority, clock)
+}
+
+/// Installed recovery retains this exact request durably before invoking the
+/// authority. Replay can obtain the same signed result after an unknown reply;
+/// it cannot renew a lease or substitute another observed plan.
+pub(crate) fn reserve_exact_schema_maintenance_v1<T: MutationAuthorityTransportV1>(
+    plan: ObservedSchemaTransitionPlanV1,
+    request: Value,
+    authority: &mut PinnedMutationAuthorityV1<T>,
+    clock: &mut dyn MutationClockV1,
+) -> Result<QuiescedSchemaMaintenanceV1> {
+    let before = clock.now_millis()?;
+    let requested_at = request["requestedAt"].as_str().ok_or_else(|| {
+        error("autonomous_research_online_schema_transition_reservation_request_invalid")
+    })?;
+    let requested = timestamp(&request["requestedAt"])
+        .ok_or_else(|| error("autonomous_research_online_schema_transition_clock_invalid"))?;
+    let planned = timestamp(&plan.value()["plannedAt"])
+        .ok_or_else(|| error("autonomous_research_online_schema_transition_clock_invalid"))?;
+    if requested < planned
+        || requested > before
+        || request != plan.reserve_request(authority, requested_at)?
+    {
+        return Err(error(
+            "autonomous_research_online_schema_transition_reservation_request_invalid",
+        ));
+    }
     plan.assert_current()?;
     let invoke_at = clock.now_millis()?;
     if invoke_at < before {

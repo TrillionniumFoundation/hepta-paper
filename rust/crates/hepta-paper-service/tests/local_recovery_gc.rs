@@ -46,6 +46,8 @@ fn steps() -> Vec<WorkflowStepV1> {
 fn definition(temp: &Temp) -> LocalWorkflowV1 {
     LocalWorkflowV1 {
         version: 1,
+        provider_call_budget: None,
+        research_profile: None,
         template: template(&temp.state(), WorkerBindingV1::Native).unwrap(),
         steps: steps(),
     }
@@ -112,6 +114,9 @@ fn template(
         independent_reviewer: "TEAM-EVIDENCE".into(),
         rollback_version: "0.9.0".into(),
         execution: match &binding {
+            WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. } => {
+                panic!("this native/process fixture does not issue broker requests")
+            }
             WorkerBindingV1::Native => ModuleExecutionV1::InProcess {
                 implementation_hash: native_implementation_hash_v1()?,
             },

@@ -105,6 +105,12 @@ const results = requests.map(request => {
     else if (request.operation === 'load') {
       retained = loadExistingLocalReleaseIntegritySigningKey(runtimeRoot,{...options,includePrivate:request.includePrivate===true});
       value = {publicPath:retained.publicPath,publicKeyFingerprint:retained.publicKeyFingerprint,privateRetained:Buffer.isBuffer(retained.privateKeyPem)};
+    } else if (request.operation === 'ordinary-cli') {
+      const selectedEnvironment = { ...environment, HEPTA_PAPER_WORKSPACE_ROOT: request.workspaceRoot || root };
+      const child = spawnSync(process.execPath,[path.join(root,'paper-core/bin/hepta-paper.mjs'),...request.argv],{cwd:root,encoding:'utf8',env:selectedEnvironment});
+      if (child.status===1) return {exitCode:1,stdout:null,error:child.stderr.match(/(?:^|\n)Error: ([^\n]+)/)?.[1] || 'oracle_unrecognized_error'};
+      if (child.status===2 && !child.stdout) return {exitCode:2,stdout:null,error:JSON.parse(child.stderr)};
+      return {exitCode:child.status,stdout:request.argv.includes('--help')?child.stdout.trimEnd():JSON.parse(child.stdout),error:null};
     } else if (request.operation === 'cli') {
       const child = spawnSync(process.execPath,[path.join(root,'paper-core/bin/release-integrity-key.mjs'),...request.argv],{cwd:root,encoding:'utf8',env:environment});
       if (child.status===1) return {ok:false,error:child.stderr.match(/(?:^|\n)Error: ([^\n]+)/)?.[1] || 'oracle_unrecognized_error'};

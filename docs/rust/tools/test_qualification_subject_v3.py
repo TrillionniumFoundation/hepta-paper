@@ -713,7 +713,8 @@ class QualificationCliIntegrationTests(unittest.TestCase):
                 producer_manifest_sha256=legacy['source']['producerManifestSha256'])
             derived = derive(legacy, exact)
             self.assertEqual(derived['status'], 'source_qualified_nonactivating')
-            self.assertEqual(len(legacy['observedChecks']), 20)
+            self.assertEqual(len(legacy['observedChecks']), len(fixture.contexts))
+            self.assertEqual({row['context'] for row in legacy['observedChecks']}, set(fixture.contexts))
             self.assertIn('docs/rust/tools/qualification_subject_integrity.py', legacy['source']['boundFiles'])
             self.assertTrue(all(value is False for value in derived['authority'].values()))
 

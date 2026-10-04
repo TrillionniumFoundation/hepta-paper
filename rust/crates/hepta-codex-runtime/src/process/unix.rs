@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -15,11 +16,13 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use super::{
     io::{
-        StreamKind, receive_output, receive_stdin_result, spawn_output_reader, spawn_stdin_writer,
+        CombinedOutputBudget, StreamKind, receive_output, receive_stdin_result,
+        spawn_output_reader, spawn_output_reader_with_capture, spawn_stdin_writer,
     },
     types::{
         BoundedProcessError, BoundedProcessRequestV1, BoundedProcessResultV1,
-        MAXIMUM_ARGUMENT_BYTES, MAXIMUM_ARGUMENT_COUNT, ProcessLimitsV1, ProcessTerminationReason,
+        CapturedBoundedProcessResultV1, MAXIMUM_ARGUMENT_BYTES, MAXIMUM_ARGUMENT_COUNT,
+        ProcessLimitsV1, ProcessTerminationReason,
     },
 };
 
@@ -41,7 +44,7 @@ pub fn run_bounded_process_with_spawn_hook<F>(
 where
     F: FnOnce(u32) -> Result<(), BoundedProcessError>,
 {
-    run_with_controls(request, limits, on_spawn, None)
+    run_with_controls(request, limits, on_spawn, None, None, None)
 }
 
 /// Run the same bounded process-group owner with a sticky caller interruption.
@@ -52,7 +55,39 @@ pub fn run_bounded_process_with_cancellation(
     limits: ProcessLimitsV1,
     cancelled: &AtomicBool,
 ) -> Result<BoundedProcessResultV1, BoundedProcessError> {
-    run_with_controls(request, limits, |_| Ok(()), Some(cancelled))
+    run_with_controls(request, limits, |_| Ok(()), Some(cancelled), None, None)
+}
+
+/// Capture full bounded stdout through the same process-group/TERM/KILL owner.
+/// Existing limits, stderr/tail policies and failed-cleanup semantics are unchanged.
+pub fn run_bounded_process_capturing_stdout_with_cancellation(
+    request: &BoundedProcessRequestV1,
+    limits: ProcessLimitsV1,
+    cancelled: &AtomicBool,
+) -> Result<CapturedBoundedProcessResultV1, BoundedProcessError> {
+    run_bounded_process_capturing_stdout_with_cancellation_and_combined_output_limit_v1(
+        request, limits, cancelled, None,
+    )
+}
+
+/// Opt in to a shared observed/retained stdout and stderr byte limit.
+/// The existing process group, FD, cancellation and cleanup owner remains in use.
+pub fn run_bounded_process_capturing_stdout_with_cancellation_and_combined_output_limit_v1(
+    request: &BoundedProcessRequestV1,
+    limits: ProcessLimitsV1,
+    cancelled: &AtomicBool,
+    maximum_combined_output_bytes: Option<u64>,
+) -> Result<CapturedBoundedProcessResultV1, BoundedProcessError> {
+    let mut stdout = Vec::new();
+    let process = run_with_controls(
+        request,
+        limits,
+        |_| Ok(()),
+        Some(cancelled),
+        Some(&mut stdout),
+        maximum_combined_output_bytes,
+    )?;
+    Ok(CapturedBoundedProcessResultV1 { process, stdout })
 }
 
 fn run_with_controls<F>(
@@ -60,11 +95,22 @@ fn run_with_controls<F>(
     limits: ProcessLimitsV1,
     on_spawn: F,
     cancelled: Option<&AtomicBool>,
+    stdout_capture: Option<&mut Vec<u8>>,
+    maximum_combined_output_bytes: Option<u64>,
 ) -> Result<BoundedProcessResultV1, BoundedProcessError>
 where
     F: FnOnce(u32) -> Result<(), BoundedProcessError>,
 {
     let limits = limits.validate()?;
+    if maximum_combined_output_bytes.is_some_and(|value| {
+        value == 0
+            || value
+                > limits
+                    .maximum_stdout_bytes
+                    .saturating_add(limits.maximum_stderr_bytes)
+    }) {
+        return Err(BoundedProcessError::InvalidLimits);
+    }
     validate_request(request, limits)?;
     let kill_utility = resolve_kill_utility()?;
 
@@ -102,24 +148,41 @@ where
         return Err(error);
     }
 
-    let result = match cancelled {
-        Some(flag) => supervise_spawned_group_with_cancellation(
+    let result = if let Some(capture) = stdout_capture {
+        let never_cancelled = AtomicBool::new(false);
+        supervise_with_capture(
             &mut child,
             process_id,
             request,
             limits,
             &kill_utility,
             started,
-            flag,
-        ),
-        None => supervise_spawned_group(
-            &mut child,
-            process_id,
-            request,
-            limits,
-            &kill_utility,
-            started,
-        ),
+            (
+                cancelled.unwrap_or(&never_cancelled),
+                Some(capture),
+                maximum_combined_output_bytes,
+            ),
+        )
+    } else {
+        match cancelled {
+            Some(flag) => supervise_spawned_group_with_cancellation(
+                &mut child,
+                process_id,
+                request,
+                limits,
+                &kill_utility,
+                started,
+                flag,
+            ),
+            None => supervise_spawned_group(
+                &mut child,
+                process_id,
+                request,
+                limits,
+                &kill_utility,
+                started,
+            ),
+        }
     };
     if result.is_err() {
         cleanup_after_error(&mut child, &kill_utility, process_id, limits);
@@ -156,6 +219,27 @@ pub(super) fn supervise_spawned_group_with_cancellation(
     started: Instant,
     cancelled: &AtomicBool,
 ) -> Result<BoundedProcessResultV1, BoundedProcessError> {
+    supervise_with_capture(
+        child,
+        process_id,
+        request,
+        limits,
+        kill_utility,
+        started,
+        (cancelled, None, None),
+    )
+}
+
+fn supervise_with_capture(
+    child: &mut Child,
+    process_id: u32,
+    request: &BoundedProcessRequestV1,
+    limits: ProcessLimitsV1,
+    kill_utility: &Path,
+    started: Instant,
+    controls: (&AtomicBool, Option<&mut Vec<u8>>, Option<u64>),
+) -> Result<BoundedProcessResultV1, BoundedProcessError> {
+    let (cancelled, stdout_capture, maximum_combined_output_bytes) = controls;
     let stdout = child
         .stdout
         .take()
@@ -165,12 +249,16 @@ pub(super) fn supervise_spawned_group_with_cancellation(
         .take()
         .ok_or(BoundedProcessError::MissingPipe("stderr"))?;
     let (limit_tx, limit_rx) = mpsc::channel();
-    let stdout_rx = spawn_output_reader(
+    let combined =
+        maximum_combined_output_bytes.map(|maximum| Arc::new(CombinedOutputBudget::new(maximum)));
+    let stdout_rx = spawn_output_reader_with_capture(
         stdout,
         StreamKind::Stdout,
         limits.maximum_stdout_bytes,
         limits.maximum_tail_bytes,
         limit_tx.clone(),
+        stdout_capture.is_some(),
+        combined.clone(),
     );
     let stderr_rx = spawn_output_reader(
         stderr,
@@ -178,6 +266,7 @@ pub(super) fn supervise_spawned_group_with_cancellation(
         limits.maximum_stderr_bytes,
         limits.maximum_tail_bytes,
         limit_tx,
+        combined,
     );
     let stdin_rx = spawn_stdin_writer(child.stdin.take(), request.stdin.clone());
 
@@ -198,6 +287,9 @@ pub(super) fn supervise_spawned_group_with_cancellation(
                 reason = Some(match stream {
                     StreamKind::Stdout => ProcessTerminationReason::StdoutLimitExceeded,
                     StreamKind::Stderr => ProcessTerminationReason::StderrLimitExceeded,
+                    StreamKind::CombinedOutput => {
+                        ProcessTerminationReason::CombinedOutputLimitExceeded
+                    }
                 });
             } else if started.elapsed() >= timeout {
                 reason = Some(ProcessTerminationReason::TimedOut);
@@ -259,6 +351,12 @@ pub(super) fn supervise_spawned_group_with_cancellation(
     receive_stdin_result(stdin_rx, remaining)?;
     let stdout = receive_output(stdout_rx, remaining, "stdout")?;
     let stderr = receive_output(stderr_rx, remaining, "stderr")?;
+    if reason.is_none()
+        && maximum_combined_output_bytes
+            .is_some_and(|limit| stdout.bytes.saturating_add(stderr.bytes) > limit)
+    {
+        reason = Some(ProcessTerminationReason::CombinedOutputLimitExceeded);
+    }
     if reason.is_none() && stdout.bytes > limits.maximum_stdout_bytes {
         reason = Some(ProcessTerminationReason::StdoutLimitExceeded);
     }
@@ -272,6 +370,13 @@ pub(super) fn supervise_spawned_group_with_cancellation(
         ));
     }
 
+    if let Some(capture) = stdout_capture {
+        *capture = stdout
+            .captured
+            .ok_or(BoundedProcessError::OutputReaderDisconnected(
+                "stdout capture",
+            ))?;
+    }
     Ok(BoundedProcessResultV1 {
         process_id,
         exit_code: status.code(),

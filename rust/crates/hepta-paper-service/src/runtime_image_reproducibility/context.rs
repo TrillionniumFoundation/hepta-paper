@@ -21,12 +21,15 @@ fn walk(
     excluded: &BTreeSet<String>,
     records: &mut Vec<Value>,
     total: &mut u64,
+    control: Option<control::OperationControl<'_>>,
 ) -> Result<()> {
+    control::check(control)?;
     let mut paths = fs::read_dir(dir)?
         .map(|e| e.map(|e| e.path()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     paths.sort();
     for p in paths {
+        control::check(control)?;
         ensure(
             records.len() < 100_000,
             "runtime_reproducibility_context_resource_limit",
@@ -47,7 +50,7 @@ fn walk(
         let mode = st.mode() & 0o777;
         if st.is_dir() {
             records.push(json!({"path":format!("{rel}/"),"type":"directory","mode":mode}));
-            walk(root, &p, excluded, records, total)?;
+            walk(root, &p, excluded, records, total, control)?;
         } else if st.is_file() {
             let bytes = read_source(&p, 64 * 1024 * 1024)?;
             *total += bytes.len() as u64;
@@ -69,6 +72,14 @@ pub fn inspect_runtime_image_build_input_closure_v1(
     root: &Path,
     definition: &Value,
 ) -> Result<Value> {
+    inspect_with_control(root, definition, None)
+}
+pub(super) fn inspect_with_control(
+    root: &Path,
+    definition: &Value,
+    control: Option<control::OperationControl<'_>>,
+) -> Result<Value> {
+    control::check(control)?;
     ensure(
         definition.is_object()
             && definition.as_object().is_some_and(|o| {
@@ -156,7 +167,7 @@ pub fn inspect_runtime_image_build_input_closure_v1(
         )?;
     }
     let mut records = Vec::new();
-    walk(&context, &context, &excluded, &mut records, &mut 0)?;
+    walk(&context, &context, &excluded, &mut records, &mut 0, control)?;
     records.sort_by(|a, b| s(&a["path"]).cmp(s(&b["path"])));
     let actual: BTreeSet<_> = records
         .iter()
@@ -170,6 +181,7 @@ pub fn inspect_runtime_image_build_input_closure_v1(
     let legacy: Vec<_> = declared
         .iter()
         .map(|p| {
+            control::check(control)?;
             let data = read_source(&context.join(p), 64 * 1024 * 1024)?;
             Ok(json!({"path":format!("{prefix}/{p}"),"sha256":digest(&data)}))
         })
@@ -238,13 +250,31 @@ pub fn inspect_runtime_image_build_input_closure_v1(
         contract::input_valid(&closure),
         "runtime_reproducibility_input_closure_invalid",
     )?;
+    control::check(control)?;
     Ok(closure)
 }
 /// Always read the repository's current provenance; never accept a receipt's
 /// previous commit/tree/content identity as the current source authority.
 pub fn current_runtime_image_release_binding_v1(root: &Path) -> Result<Value> {
-    let provenance = crate::operational_status::current_operational_code_provenance_v1(root)
-        .map_err(|_| Error("runtime_reproducibility_code_provenance_invalid".into()))?;
+    release_binding_with_control(root, None)
+}
+pub(super) fn release_binding_with_control(
+    root: &Path,
+    control: Option<control::OperationControl<'_>>,
+) -> Result<Value> {
+    control::check(control)?;
+    let provenance = match control {
+        Some(control) => {
+            crate::operational_status::current_operational_code_provenance_with_deadline_v1(
+                root,
+                control.cancelled(),
+                control.deadline(),
+            )
+        }
+        None => crate::operational_status::current_operational_code_provenance_v1(root),
+    }
+    .map_err(|_| Error("runtime_reproducibility_code_provenance_invalid".into()))?;
+    control::check(control)?;
     let mut release = json!({});
     for k in [
         "packageVersion",

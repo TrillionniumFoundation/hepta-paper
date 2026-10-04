@@ -4,6 +4,8 @@
 //! and passive state safety. No returned diagnostic grants dispatch authority.
 //! It never invokes a provider, recovery command or authority RPC; inherited
 //! current-code observation executes read-only Git queries.
+pub mod cli;
+
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Value, json};
 use std::path::Path;

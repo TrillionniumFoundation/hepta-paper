@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "kind": "ManuscriptRevisionInputV1",
+  "previousManuscript": "",
+  "previousManuscriptHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "review": "",
+  "reviewHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "instructions": "Address the retained review without silently discarding unresolved objections."
+}

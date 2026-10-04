@@ -112,12 +112,17 @@ impl Fixture {
     fn options(&self) -> SchemaTransitionPlanOptionsV1<'_> {
         options(&self.setup)
     }
-    fn resume<'a>(&'a self, id: &'a str) -> ResumeSchemaNormalizationOptionsV1<'a> {
+    fn resume<'a>(
+        &'a self,
+        id: &'a str,
+        plan_hash: &'a str,
+    ) -> ResumeSchemaNormalizationOptionsV1<'a> {
         ResumeSchemaNormalizationOptionsV1 {
             runtime_root: Path::new(self.setup["runtimeRoot"].as_str().unwrap()),
             state_database_manifest: &self.setup["stateDatabaseManifest"],
             writer_manifest: &self.setup["writerManifest"],
             expected_transition_id: id,
+            expected_plan_hash: plan_hash,
             machine_genesis: None,
         }
     }
@@ -203,13 +208,14 @@ fn actual_ten_database_normalization_records_match_node_and_keep_exclusive_lock(
     normalized
         .assert_current(&authority, &mut || Ok(BASE))
         .unwrap();
+    let plan_hash = normalized.plan()["planHash"].as_str().unwrap().to_owned();
     let id = normalized.plan()["transitionId"]
         .as_str()
         .unwrap()
         .to_owned();
     assert_eq!(
         fail(resume_schema_normalization_v1(
-            fixture.resume(&id),
+            fixture.resume(&id, &plan_hash),
             &authority,
             &mut || Ok(BASE),
             &mut NoSchemaNormalizationCheckpointV1
@@ -218,7 +224,7 @@ fn actual_ten_database_normalization_records_match_node_and_keep_exclusive_lock(
     );
     drop(normalized);
     let mut restored = resume_schema_normalization_v1(
-        fixture.resume(&id),
+        fixture.resume(&id, &plan_hash),
         &authority,
         &mut || Ok(BASE),
         &mut NoSchemaNormalizationCheckpointV1,
@@ -247,7 +253,7 @@ fn actual_ten_database_normalization_records_match_node_and_keep_exclusive_lock(
         }
         fs::write(fixture.journal(), serde_json::to_vec(&record).unwrap()).unwrap();
         let code = fail(resume_schema_normalization_v1(
-            fixture.resume(&id),
+            fixture.resume(&id, &plan_hash),
             &authority,
             &mut || Ok(BASE),
             &mut NoSchemaNormalizationCheckpointV1,
@@ -278,7 +284,7 @@ fn actual_ten_database_normalization_records_match_node_and_keep_exclusive_lock(
     drop(database);
     let changed_bytes = fs::read(&path).unwrap();
     let code = fail(resume_schema_normalization_v1(
-        fixture.resume(&id),
+        fixture.resume(&id, &plan_hash),
         &authority,
         &mut || Ok(BASE),
         &mut NoSchemaNormalizationCheckpointV1,
@@ -328,8 +334,9 @@ fn already_installed_normalization_recovery_matches_node() {
     }));
     assert_eq!(expected["ok"], true, "{expected}");
     let id = plan_value["transitionId"].as_str().unwrap();
+    let plan_hash = plan_value["planHash"].as_str().unwrap();
     let recovered = resume_schema_normalization_v1(
-        fixture.resume(id),
+        fixture.resume(id, plan_hash),
         &authority,
         &mut || Ok(BASE),
         &mut NoSchemaNormalizationCheckpointV1,
@@ -420,9 +427,10 @@ fn actual_process_crash_after_checkpoint_and_before_publication_resumes_signed_b
         );
         assert!(fixture.journal().exists());
         let id = plan.value()["transitionId"].as_str().unwrap();
+        let plan_hash = plan.value()["planHash"].as_str().unwrap();
         assert!(
             fail(resume_schema_normalization_v1(
-                fixture.resume(id),
+                fixture.resume(id, plan_hash),
                 &authority,
                 &mut || Ok(BASE + 60000),
                 &mut NoSchemaNormalizationCheckpointV1
@@ -430,7 +438,7 @@ fn actual_process_crash_after_checkpoint_and_before_publication_resumes_signed_b
             .contains("reservation_invalid")
         );
         let mut recovered = resume_schema_normalization_v1(
-            fixture.resume(id),
+            fixture.resume(id, plan_hash),
             &authority,
             &mut || Ok(BASE),
             &mut NoSchemaNormalizationCheckpointV1,
@@ -486,13 +494,14 @@ fn pristine_rebind_normalization_preserves_verified_genesis_and_matches_node() {
     normalized
         .assert_current(&authority, &mut || Ok(BASE))
         .unwrap();
+    let plan_hash = normalized.plan()["planHash"].as_str().unwrap().to_owned();
     let id = normalized.plan()["transitionId"]
         .as_str()
         .unwrap()
         .to_owned();
     drop(normalized);
     let mut recovered = resume_schema_normalization_v1(
-        fixture.resume(&id),
+        fixture.resume(&id, &plan_hash),
         &authority,
         &mut || Ok(BASE),
         &mut NoSchemaNormalizationCheckpointV1,
@@ -642,7 +651,10 @@ fn signed_node_engine_wal_reservation_is_rejected_before_native_source_writes() 
         })
         .collect::<Vec<_>>();
     let code = fail(resume_schema_normalization_v1(
-        fixture.resume(plan["transitionId"].as_str().unwrap()),
+        fixture.resume(
+            plan["transitionId"].as_str().unwrap(),
+            plan["planHash"].as_str().unwrap(),
+        ),
         &authority,
         &mut || Ok(BASE),
         &mut NoSchemaNormalizationCheckpointV1,
@@ -678,4 +690,128 @@ fn actual_wall_clock_signed_lease_completes_ten_database_wal_normalization() {
     normalized.assert_current(&authority, &mut clock).unwrap();
     assert_eq!(normalized.records().as_array().unwrap().len(), 10);
     assert!(started.elapsed() < std::time::Duration::from_secs(59));
+}
+
+#[test]
+fn normalization_recovery_rejects_rehashed_unsigned_plan() {
+    use hepta_legacy_compatibility::production_hash_record_v1;
+    use hepta_paper_service::sqlite_mutation_coordinator::contracts::schema_transition::schema_transition_identity_v1;
+
+    let fixture = Fixture::new(false);
+    let mut authority = fixture.authority();
+    let plan =
+        build_schema_transition_plan_v1(fixture.options(), &authority, &mut || Ok(BASE)).unwrap();
+    let original_plan = plan.value().clone();
+    let token = reserve_schema_maintenance_v1(plan, &mut authority, &mut || Ok(BASE)).unwrap();
+    let normalized = normalize_schema_maintenance_v1(
+        token,
+        &authority,
+        &mut || Ok(BASE),
+        &mut NoSchemaNormalizationCheckpointV1,
+    )
+    .unwrap();
+    drop(normalized);
+    let original_journal = fs::read(fixture.journal()).unwrap();
+    let mut journal: Value = serde_json::from_slice(&original_journal).unwrap();
+    journal["plan"]["plannedAt"] = json!("2026-09-16T11:59:59.000Z");
+    let mut payload = journal["plan"].clone();
+    let fields = payload.as_object_mut().unwrap();
+    fields.remove("planHash");
+    fields.remove("transitionId");
+    journal["plan"]["planHash"] = json!(
+        production_hash_record_v1("AutonomousResearchOnlineSchemaTransitionPlan", &payload,)
+            .unwrap()
+            .as_str()
+    );
+    // The authority reservation deliberately does not sign plannedAt/planHash.
+    // A self-consistent hash and the same transition cannot select a new plan.
+    assert_eq!(
+        schema_transition_identity_v1(&journal["plan"]).unwrap(),
+        original_plan["transitionId"]
+    );
+    authority
+        .verify_historical_schema_transition_reservation(
+            &journal["reservation"],
+            &journal["request"],
+        )
+        .unwrap();
+    assert_ne!(journal["plan"]["planHash"], original_plan["planHash"]);
+    let root = Path::new(fixture.setup["runtimeRoot"].as_str().unwrap());
+    let paths: Vec<_> = original_plan["instances"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| root.join(row["sourceRelativePath"].as_str().unwrap()))
+        .collect();
+    let before: Vec<_> = paths.iter().map(|path| fs::read(path).unwrap()).collect();
+    let substituted = serde_json::to_vec(&journal).unwrap();
+    fs::write(fixture.journal(), &substituted).unwrap();
+    let result = resume_schema_normalization_v1(
+        fixture.resume(
+            original_plan["transitionId"].as_str().unwrap(),
+            original_plan["planHash"].as_str().unwrap(),
+        ),
+        &authority,
+        &mut || Ok(BASE),
+        &mut NoSchemaNormalizationCheckpointV1,
+    );
+    assert_eq!(
+        fail(result),
+        "autonomous_research_online_schema_transition_normalization_plan_pin_mismatch"
+    );
+    assert_eq!(
+        paths
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect::<Vec<_>>(),
+        before
+    );
+    assert_eq!(fs::read(fixture.journal()).unwrap(), substituted);
+    // Restoring the exact original journal allows ordinary recovery against the
+    // independently retained pin; no new signed reservation is requested.
+    fs::write(fixture.journal(), original_journal).unwrap();
+    let restored = resume_schema_normalization_v1(
+        fixture.resume(
+            original_plan["transitionId"].as_str().unwrap(),
+            original_plan["planHash"].as_str().unwrap(),
+        ),
+        &authority,
+        &mut || Ok(BASE),
+        &mut NoSchemaNormalizationCheckpointV1,
+    )
+    .unwrap();
+    assert_eq!(restored.plan(), &original_plan);
+    assert_eq!(restored.records().as_array().unwrap().len(), 10);
+}
+
+#[test]
+fn normalization_recovery_missing_plan_pin_refuses_before_source_or_clock_observation() {
+    let fixture = Fixture::new(false);
+    let authority = fixture.authority();
+    let absent = fixture.root.join("must-not-be-observed");
+    for pin in [
+        "",
+        "sha256:short",
+        "sha256:GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    ] {
+        let mut args = fixture.resume("not-observed", pin);
+        args.runtime_root = &absent;
+        let calls = std::cell::Cell::new(0);
+        let result = resume_schema_normalization_v1(
+            args,
+            &authority,
+            &mut || {
+                calls.set(calls.get() + 1);
+                Ok(BASE)
+            },
+            &mut NoSchemaNormalizationCheckpointV1,
+        );
+        assert_eq!(
+            fail(result),
+            "autonomous_research_online_schema_transition_normalization_plan_pin_invalid"
+        );
+        assert_eq!(calls.get(), 0);
+        assert!(!absent.exists());
+        assert!(!fixture.journal().exists());
+    }
 }

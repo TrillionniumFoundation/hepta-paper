@@ -21,11 +21,29 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { productionOracleProfile } from './production-record-hash-v1.mjs';
 
 let runtime;
-function create(root) {
+function create(root, privateRuntimeOwner) {
   if (!root.startsWith('/tmp/hepta-native-schema-checkpoint-')) throw new Error('isolated_fixture_required');
   const generated = fixture({after(){}});
   const runtimeRoot = path.join(root, 'runtime');
   fs.renameSync(generated.runtimeRoot, runtimeRoot); fs.rmdirSync(generated.parent);
+  if (privateRuntimeOwner !== undefined) {
+    if (process.getuid() !== 0 || privateRuntimeOwner?.uid !== 65534
+        || privateRuntimeOwner?.gid !== 65534
+        || Object.keys(privateRuntimeOwner).sort().join(',') !== 'gid,uid') {
+      throw new Error('private_root_uid65534_reader_fixture_required');
+    }
+    // Select the source principal before the real plan/execution/signatures.
+    // Chowning a signed source later would invalidate its original ctime/hash.
+    const serviceOwner = target => {
+      const observed = fs.lstatSync(target);
+      if (observed.isSymbolicLink()) throw new Error('private_fixture_symlink_refused');
+      if (observed.isDirectory()) {
+        for (const name of fs.readdirSync(target)) serviceOwner(path.join(target, name));
+      }
+      fs.chownSync(target, 65534, 65534);
+    };
+    serviceOwner(runtimeRoot);
+  }
   const raw = createAuthority(runtimeRoot), clock = controlledClock();
   const pair = crypto.generateKeyPairSync('ed25519');
   const sign = value => {
@@ -76,7 +94,7 @@ function create(root) {
 for await (const line of readline.createInterface({input:process.stdin,crlfDelay:Infinity})) {
   try {
     const input = JSON.parse(line); let value;
-    if (input.operation === 'fixture') value = create(input.root);
+    if (input.operation === 'fixture') value = create(input.root, input.privateRuntimeOwner);
     else if (input.operation === 'validate') {
       const inventory = input.current ? resolveAutonomousResearchStateDatabaseInventory({runtimeRoot:runtime.runtimeRoot,manifest:stateDatabaseManifest}) : JSON.parse(fs.readFileSync(path.join(runtime.checkpointRoot,'POST_INVENTORY.json'),'utf8'));
       value = validateAutonomousResearchOnlineSchemaTransitionAuditReceipt({receipt:JSON.parse(fs.readFileSync(runtime.auditPath,'utf8')),inventory,writerManifest:runtime.input.writerManifest,authorityClient:runtime.client});

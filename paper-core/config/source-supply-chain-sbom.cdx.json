@@ -48,7 +48,7 @@
       },
       {
         "name": "hepta:sbom:package-lock-sha256",
-        "value": "sha256:d689c3532fe1c3e5bf5884e7d194cd359836bae8fd0f8d210978bf951f26b63d"
+        "value": "sha256:ed436e71e1484c7272e7d8653c39066f5a4303dccabaedd5854c0cdda48abb5f"
       }
     ]
   },
@@ -830,10 +830,10 @@
     },
     {
       "type": "library",
-      "bom-ref": "urn:hepta:npm-lock-component:43662699bdfb51a0be2f0d69d384cafc2e2ab616083d9d8336d46402ff62e99a",
+      "bom-ref": "urn:hepta:npm-lock-component:7b8ef0f908dcfb446b4530ada75c822239bdff2e9af7dda70b70eaee4b124e8b",
       "name": "brace-expansion",
-      "version": "5.0.9",
-      "purl": "pkg:npm/brace-expansion@5.0.9",
+      "version": "5.0.12",
+      "purl": "pkg:npm/brace-expansion@5.0.12",
       "properties": [
         {
           "name": "hepta:npm:package-lock-path",
@@ -851,7 +851,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "49c43822ebc8105d533253fb66dfaf8c9ffff7394f6f64837315b13376e4f2ceade8619d27b28ed5d09c4e274e3c929e3d6df42c4ff6713ef00b23e1a3dfd6c6"
+          "content": "628bd0debce168b308ac38cd0cc90d4b4d6d79af77aa11211b9c72f1febe47497e770dca8bee6c0a822823de368ae2d94c75a881692d830543854d3d88d12299"
         }
       ],
       "licenses": [
@@ -862,7 +862,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz"
+          "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz"
         }
       ]
     },
@@ -2821,12 +2821,6 @@
       ]
     },
     {
-      "ref": "urn:hepta:npm-lock-component:43662699bdfb51a0be2f0d69d384cafc2e2ab616083d9d8336d46402ff62e99a",
-      "dependsOn": [
-        "urn:hepta:npm-lock-component:619d2c2e35e4d8bcb7e7cb81112ecd96cffbf0fcd39ec06b03983dd1228ebe91"
-      ]
-    },
-    {
       "ref": "urn:hepta:npm-lock-component:45069f267cb16c12e0a960ceda68d7f8b0827dd32ed84c20ebac4d3b9d1af443",
       "dependsOn": []
     },
@@ -2907,6 +2901,12 @@
       "ref": "urn:hepta:npm-lock-component:79e41483031d1cd0e53648f00cd886e33f56b0526c4a35706859e4b95225ab5e",
       "dependsOn": [
         "urn:hepta:npm-lock-component:c2db7c5e07b97ef5a1c59f163762c347b652e86773b8b2fd84f74a01107ffd0b"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:7b8ef0f908dcfb446b4530ada75c822239bdff2e9af7dda70b70eaee4b124e8b",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:619d2c2e35e4d8bcb7e7cb81112ecd96cffbf0fcd39ec06b03983dd1228ebe91"
       ]
     },
     {
@@ -3078,7 +3078,7 @@
     {
       "ref": "urn:hepta:npm-lock-component:f2e2e4fd26de67dadfa55996748f1d59b38c2506503b34ab9cc71a173c0cdf5c",
       "dependsOn": [
-        "urn:hepta:npm-lock-component:43662699bdfb51a0be2f0d69d384cafc2e2ab616083d9d8336d46402ff62e99a"
+        "urn:hepta:npm-lock-component:7b8ef0f908dcfb446b4530ada75c822239bdff2e9af7dda70b70eaee4b124e8b"
       ]
     },
     {

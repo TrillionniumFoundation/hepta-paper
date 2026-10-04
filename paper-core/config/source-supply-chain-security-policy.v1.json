@@ -86,6 +86,24 @@
       "ruleId": "pem-private-key",
       "lineSha256": "sha256:cd8414f73987b99d22e22420833206480d10175f74531d9363ff86f07b166092",
       "reason": "Exact Rust rejection-parser marker or invalid synthetic fixture; reviewed line contains no private-key material. Any byte or path change invalidates this exception."
+    },
+    {
+      "path": "rust/crates/hepta-paper-service/src/external_authority_intake/release_v3.rs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:06d10a6a49644e7dc166869c55f1ca0999b6ca03b0fdd88c2303698b50bda673",
+      "reason": "Reviewed exact private-key rejection marker or deliberately invalid fixture; no encoded key material. Any path or line-byte change invalidates this exception."
+    },
+    {
+      "path": "rust/crates/hepta-paper-service/src/external_authority_intake/release_v3.rs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:2d500938994bd795434fb9130abd800a6ecd07dd9c4cbc84cd26a167a1d0f663",
+      "reason": "Reviewed exact private-key rejection marker or deliberately invalid fixture; no encoded key material. Any path or line-byte change invalidates this exception."
+    },
+    {
+      "path": "rust/oracle/release-attestor-intake-v3.mjs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:e0da9f6fe6e25c8713a71d77fc4b2c178a957113ec01736c0903b8e5c4cb6aa9",
+      "reason": "Reviewed exact private-key rejection marker or deliberately invalid fixture; no encoded key material. Any path or line-byte change invalidates this exception."
     }
   ]
 }

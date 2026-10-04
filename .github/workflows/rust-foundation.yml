@@ -36,6 +36,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Verify scientific host source contracts
+        shell: bash
+        run: python3 -B .github/scripts/test_scientific_host_source.py
+
       - name: Install qualified production Node oracle runtime
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -46,6 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(node --version)" = "v22.23.1"
+          printf 'HEPTA_TEST_NODE=%s\n' "$(realpath "$(command -v node)")" >> "$GITHUB_ENV"
           node --input-type=module -e 'console.log(JSON.stringify({ node: process.version, versions: process.versions, collator: new Intl.Collator().resolvedOptions() }))'
 
       - name: Install locked Node oracle dependencies
@@ -67,12 +72,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Dry-run compatibility records retain historical executor identifiers.
+          # Reject dependencies in the actual direct and locked transitive graph.
           if grep -RniE 'openclaw' \
-            --include='*.rs' \
             --include='Cargo.toml' \
-            --include='*.toml' \
-            rust/crates rust/Cargo.toml rust/rust-toolchain.toml; then
-            echo 'OpenClaw is forbidden in the Rust source and manifest graph.' >&2
+            --include='Cargo.lock' \
+            rust/crates rust/vendor rust/Cargo.toml rust/Cargo.lock; then
+            echo 'OpenClaw dependencies are forbidden in the Rust manifest and lock graph.' >&2
             exit 1
           fi
 
@@ -177,17 +183,9 @@ jobs:
             2>&1 | tee "/tmp/hepta-rust-validation/native-authority-fixture-build.log"
           test -x rust/target/debug/examples/native-authority-fixture-client
 
-      - name: Run tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test \
-            --manifest-path rust/Cargo.toml \
-            --workspace \
-            --all-features \
-            --locked \
-            2>&1 | tee /tmp/hepta-rust-validation/test.log
-
+      # Source-only feedback does not need a privileged scientific host. Keep
+      # the complete workspace test command behind the unchanged host gate;
+      # compilation and documentation are never reported as behavior evidence.
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
@@ -201,6 +199,21 @@ jobs:
             --locked \
             --no-deps \
             2>&1 | tee /tmp/hepta-rust-validation/rustdoc.log
+
+      - name: Prepare and verify scientific test host
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            2>&1 | tee /tmp/hepta-rust-validation/test.log
 
       - name: Upload Rust validation logs
         if: always()

@@ -121,7 +121,7 @@ function buildMatrix(modules, moduleIndex) {
   const lines = [
     '# Module documentation matrix',
     '',
-    'This matrix is generated from the canonical static module registry and the committed one-to-one documentation index. A `complete` row means the module has a normative specification and machine manifest with all required sections; it does **not** mean the module is target-host qualified, externally authorized, or production activated.',
+    'This matrix is generated from the canonical static module registry and the committed one-to-one documentation index. A `complete` documentation status means the module has a normative specification and machine manifest meeting the structural coverage contract; it does **not** mean the module is target-host qualified, externally authorized, or production activated.',
     '',
     '| Module | Kind | Static state | Activation | Authority | Qualification | Specification | Manifest |',
     '|---|---|---|---|---|---|---|---|',
@@ -140,7 +140,11 @@ function buildMatrix(modules, moduleIndex) {
     'node docs/tools/validate-module-documentation.mjs',
     '```',
     '',
-    'The validator fails on missing/orphan specifications or manifests, registry drift, missing required headings, placeholder language, missing implementation roots, and absent authority-specific safety contracts.',
+    'The [structural coverage policy](README.md#structural-coverage-and-implementation-scope) defines the validator contract.',
+    'Missing/orphan specifications or manifests, registry drift, missing implementation',
+    'roots, inconsistent typed authority/effect contracts and invalid machine-referenced',
+    'sections fail. Other template headings and placeholder-only explanatory prose',
+    'produce advisories. Actual safety is established by the owning runtime and tests.',
     '',
   );
   return lines.join('\n');

@@ -37,6 +37,10 @@ jobs:
         with:
           node-version: '22.23.1'
 
+      - name: Prepare and verify scientific test host
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
+
       - name: Install qualified Rust toolchain
         shell: bash
         run: |
@@ -70,18 +74,30 @@ jobs:
           export PATH="$(dirname "$node_bin"):$(dirname "$cargo_bin"):$(dirname "$git_bin"):/bin"
           export CARGO_TARGET_DIR=/tmp/repository-source-evidence-target-head
           rm -rf "$CARGO_TARGET_DIR"
+          # Real broker lifecycle evidence requires the actual durable pre-exec
+          # binary. Each exact/push/merge target is fresh and cannot borrow it
+          # from another job or a developer's previously built workspace.
+          cargo build --manifest-path rust/Cargo.toml --locked \
+            -p hepta-codex-runtime --bin hepta-codex-preexec-gate
+          test -x "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
+          sha256sum "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
-          node paper-core/tests/source-implementation-evidence-hardening.mjs \
-            --base "$base" \
-            --target "$head" \
-            --receipt /tmp/repository-source-evidence-hardening-head.json
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --expected-head "$head" \
-            --expected-tree "$tree" \
-            --execute \
-            --receipt /tmp/repository-source-evidence-head.json
-          test -s /tmp/repository-source-evidence-hardening-head.json
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
+          git diff --exit-code -- package.json package-lock.json
+          export HEPTA_EVIDENCE_BASE="$base" HEPTA_EVIDENCE_TARGET="$head" HEPTA_EVIDENCE_HEAD="$head" HEPTA_EVIDENCE_TREE="$tree"
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/repository-node-oracle-head.json -- /bin/bash -euc '
+            node paper-core/tests/source-implementation-evidence-hardening.mjs \
+              --base "$HEPTA_EVIDENCE_BASE" \
+              --target "$HEPTA_EVIDENCE_HEAD" \
+              --receipt /tmp/repository-source-evidence-hardening-head.json
+            node paper-core/bin/verify-source-implementation-evidence.mjs \
+              --expected-head "$HEPTA_EVIDENCE_HEAD" \
+              --expected-tree "$HEPTA_EVIDENCE_TREE" \
+              --execute \
+              --receipt /tmp/repository-source-evidence-head.json
+            test -s /tmp/repository-source-evidence-hardening-head.json
+          '
           test -s /tmp/repository-source-evidence-head.json
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
@@ -97,13 +113,25 @@ jobs:
           tree="$(git rev-parse HEAD^{tree})"
           export CARGO_TARGET_DIR=/tmp/repository-source-evidence-target-push
           rm -rf "$CARGO_TARGET_DIR"
+          # Real broker lifecycle evidence requires the actual durable pre-exec
+          # binary. Each exact/push/merge target is fresh and cannot borrow it
+          # from another job or a developer's previously built workspace.
+          cargo build --manifest-path rust/Cargo.toml --locked \
+            -p hepta-codex-runtime --bin hepta-codex-preexec-gate
+          test -x "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
+          sha256sum "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --expected-head "$head" \
-            --expected-tree "$tree" \
-            --execute \
-            --receipt /tmp/repository-source-evidence-head.json
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
+          git diff --exit-code -- package.json package-lock.json
+          export HEPTA_EVIDENCE_HEAD="$head" HEPTA_EVIDENCE_TREE="$tree"
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/repository-node-oracle-push.json -- /bin/bash -euc '
+            node paper-core/bin/verify-source-implementation-evidence.mjs \
+              --expected-head "$HEPTA_EVIDENCE_HEAD" \
+              --expected-tree "$HEPTA_EVIDENCE_TREE" \
+              --execute \
+              --receipt /tmp/repository-source-evidence-head.json
+          '
           test -s /tmp/repository-source-evidence-head.json
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
@@ -117,6 +145,7 @@ jobs:
           path: |
             /tmp/repository-source-evidence-head.json
             /tmp/repository-source-evidence-hardening-head.json
+            /tmp/repository-node-oracle-head.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
@@ -126,7 +155,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: repository-source-evidence-head-${{ github.sha }}
-          path: /tmp/repository-source-evidence-head.json
+          path: |
+            /tmp/repository-source-evidence-head.json
+            /tmp/repository-node-oracle-push.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
@@ -149,6 +180,10 @@ jobs:
         with:
           node-version: '22.23.1'
 
+      - name: Prepare and verify scientific test host
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
+
       - name: Install qualified Rust toolchain
         shell: bash
         run: |
@@ -166,26 +201,8 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           target="${{ github.event.pull_request.head.sha }}"
           test "$(git rev-parse HEAD)" = "$target"
-          git cat-file -e "$base^{commit}"
-          git cat-file -e "$target^{commit}"
-
-          merge_tree="$(git merge-tree --write-tree "$base" "$target")"
-          test "$(printf '%s' "$merge_tree" | wc -c)" -eq 40
-          printf '%s' "$merge_tree" | grep -Eq '^[0-9a-f]{40}$'
-
-          commit_date="$(git show -s --format=%cI "$target")"
-          merge="$(
-            printf 'Repository source evidence prospective merge\n\nbase %s\ntarget %s\n' "$base" "$target" |
-              GIT_AUTHOR_NAME='hepta-source-evidence' \
-              GIT_AUTHOR_EMAIL='source-evidence@invalid.example' \
-              GIT_AUTHOR_DATE="$commit_date" \
-              GIT_COMMITTER_NAME='hepta-source-evidence' \
-              GIT_COMMITTER_EMAIL='source-evidence@invalid.example' \
-              GIT_COMMITTER_DATE="$commit_date" \
-              git commit-tree "$merge_tree" -p "$base" -p "$target"
-          )"
-          test "$(printf '%s' "$merge" | wc -c)" -eq 40
-          printf '%s' "$merge" | grep -Eq '^[0-9a-f]{40}$'
+          merge="$(node docs/tools/prepare-prospective-merge.mjs --base "$base" --target "$target")"
+          merge_tree="$(git rev-parse "$merge^{tree}")"
           git checkout --detach "$merge"
 
           tree="$(git rev-parse HEAD^{tree})"
@@ -199,18 +216,30 @@ jobs:
           export PATH="$(dirname "$node_bin"):$(dirname "$cargo_bin"):$(dirname "$git_bin"):/bin"
           export CARGO_TARGET_DIR=/tmp/repository-source-evidence-target-merge
           rm -rf "$CARGO_TARGET_DIR"
+          # Real broker lifecycle evidence requires the actual durable pre-exec
+          # binary. Each exact/push/merge target is fresh and cannot borrow it
+          # from another job or a developer's previously built workspace.
+          cargo build --manifest-path rust/Cargo.toml --locked \
+            -p hepta-codex-runtime --bin hepta-codex-preexec-gate
+          test -x "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
+          sha256sum "$CARGO_TARGET_DIR/debug/hepta-codex-preexec-gate"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
-          node paper-core/tests/source-implementation-evidence-hardening.mjs \
-            --base "$base" \
-            --target "$target" \
-            --receipt /tmp/repository-source-evidence-hardening-merge.json
-          node paper-core/bin/verify-source-implementation-evidence.mjs \
-            --expected-head "$merge" \
-            --expected-tree "$tree" \
-            --execute \
-            --receipt /tmp/repository-source-evidence-merge.json
-          test -s /tmp/repository-source-evidence-hardening-merge.json
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py
+          git diff --exit-code -- package.json package-lock.json
+          export HEPTA_EVIDENCE_BASE="$base" HEPTA_EVIDENCE_TARGET="$target" HEPTA_EVIDENCE_HEAD="$merge" HEPTA_EVIDENCE_TREE="$tree"
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/repository-node-oracle-merge.json -- /bin/bash -euc '
+            node paper-core/tests/source-implementation-evidence-hardening.mjs \
+              --base "$HEPTA_EVIDENCE_BASE" \
+              --target "$HEPTA_EVIDENCE_TARGET" \
+              --receipt /tmp/repository-source-evidence-hardening-merge.json
+            node paper-core/bin/verify-source-implementation-evidence.mjs \
+              --expected-head "$HEPTA_EVIDENCE_HEAD" \
+              --expected-tree "$HEPTA_EVIDENCE_TREE" \
+              --execute \
+              --receipt /tmp/repository-source-evidence-merge.json
+            test -s /tmp/repository-source-evidence-hardening-merge.json
+          '
           test -s /tmp/repository-source-evidence-merge.json
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
@@ -224,6 +253,7 @@ jobs:
           path: |
             /tmp/repository-source-evidence-merge.json
             /tmp/repository-source-evidence-hardening-merge.json
+            /tmp/repository-node-oracle-merge.json
           if-no-files-found: error
           retention-days: 90
           compression-level: 0

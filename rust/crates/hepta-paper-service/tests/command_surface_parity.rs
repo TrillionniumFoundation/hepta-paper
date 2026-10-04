@@ -65,6 +65,11 @@ fn rust_output(root: &std::path::Path, flag: Option<&str>) -> std::process::Outp
 
 fn rust_result(root: &std::path::Path, flag: Option<&str>) -> Value {
     let output = rust_output(root, flag);
+    assert!(
+        !output.stdout.is_empty(),
+        "native command produced no inspection: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).expect("Rust JSON")
 }
 
@@ -231,11 +236,11 @@ fn malformed_script_containers_follow_node_object_key_coercion() {
         ("null", serde_json::Value::Null),
     ];
     for (label, scripts) in cases {
-        let fixture = temp_fixture().with_file_name(format!(
-            "hepta-command-surface-coercion-{label}-{}",
-            std::process::id()
+        let fixture = temp_fixture();
+        let oracle_fixture = fixture.with_file_name(format!(
+            "{}-oracle",
+            fixture.file_name().unwrap().to_string_lossy()
         ));
-        let oracle_fixture = fixture.with_file_name(format!("{label}-oracle"));
         let package = serde_json::json!({
             "name": "fixture",
             "version": 1,
@@ -269,7 +274,12 @@ fn malformed_script_containers_follow_node_object_key_coercion() {
                 .expect("Rust UTF-8")
                 .trim_end_matches('\n')
                 .to_owned();
-            assert_eq!(actual_raw, expected_result["raw"], "{label} {flag:?}");
+            assert_eq!(
+                actual_raw,
+                expected_result["raw"],
+                "{label} {flag:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         let output = rust_output(&fixture, Some("--write-package"));
@@ -286,7 +296,12 @@ fn malformed_script_containers_follow_node_object_key_coercion() {
             .expect("Rust UTF-8")
             .trim_end_matches('\n')
             .to_owned();
-        assert_eq!(actual_raw, expected_result["raw"], "{label} write");
+        assert_eq!(
+            actual_raw,
+            expected_result["raw"],
+            "{label} write: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert_eq!(
             fs::read(fixture.join("package.json")).expect("Rust package bytes"),
             fs::read(oracle_fixture.join("package.json")).expect("Node package bytes"),

@@ -109,7 +109,7 @@ percentage. Current next steps are:
 
 The following remain outside repository-local proof:
 
-- protected-main policy export, denial probes, and independent decision;
+- live protected-branch required checks, signed integration, and safe-reference enforcement;
 - private 263-file legacy replay and acknowledgement;
 - target-host listener, systemd, cgroup, storage, reboot, corruption, and soak;
 - independent capability-key lifecycle;

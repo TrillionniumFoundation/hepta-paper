@@ -48,6 +48,35 @@ pub fn portal_target_qualification_cli_at_v1(
     environment: &BTreeMap<String, String>,
     now_unix_ms: i64,
 ) -> Result<PortalTargetQualificationCliOutputV1> {
+    inner(argv, environment, now_unix_ms, None)
+}
+pub(crate) fn portal_target_qualification_cli_with_control_v1(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    now_unix_ms: i64,
+    worker_root: &std::path::Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<PortalTargetQualificationCliOutputV1> {
+    inner(
+        argv,
+        environment,
+        now_unix_ms,
+        Some((worker_root, cancelled, deadline)),
+    )
+}
+fn inner(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    now_unix_ms: i64,
+    control: Option<(
+        &std::path::Path,
+        &std::sync::atomic::AtomicBool,
+        std::time::Instant,
+    )>,
+) -> Result<PortalTargetQualificationCliOutputV1> {
+    let active = control.map(|(_, cancelled, deadline)| (cancelled, deadline));
+    checkpoint(active)?;
     let mut values = BTreeMap::<String, String>::new();
     let mut repeated = BTreeMap::<String, Vec<String>>::new();
     let mut flags = std::collections::BTreeSet::new();
@@ -142,6 +171,30 @@ pub fn portal_target_qualification_cli_at_v1(
         now_unix_ms,
         ..Default::default()
     };
+    if let Some((worker_root, _, _)) = control {
+        for path in [
+            &mut options.registry_path,
+            &mut options.trust_store_path,
+            &mut options.candidate_path,
+        ] {
+            if let Some(selected) = path.as_deref() {
+                *path = Some(
+                    crate::native_workspace::resolve_native_workspace_root_v1(
+                        worker_root,
+                        selected,
+                        None,
+                    )
+                    .map_err(error)?,
+                );
+            }
+        }
+        // The incumbent path.resolve(String(null || '')) selects the physical
+        // worker cwd, including the default blocked status report.
+        if options.registry_path.is_none() && action != "preflight" {
+            options.registry_path = Some(worker_root.to_owned());
+        }
+    }
+    checkpoint(active)?;
     if action == "preflight" {
         for (flag, field) in [
             ("expected-subject-hash", "portalTargetSubjectHash"),
@@ -186,9 +239,10 @@ pub fn portal_target_qualification_cli_at_v1(
                     "portal_target_qualification_import_execute_confirmation_required",
                 ));
             }
-            execute_portal_target_qualification_import_v1(&options)?
+            execute_inner(&options, active)?
         }
     };
+    checkpoint(active)?;
     let exit_code = if ["status", "preflight"].contains(&action)
         && flags.contains("require-ready")
         && report["ready"] != true

@@ -839,7 +839,8 @@
       "activation": "disabled",
       "paths": [
         "paper-domain/submission",
-        "paper-adapters"
+        "paper-adapters",
+        "rust/crates/hepta-paper-service/src/native_business/local_submission_preflight/mod.rs"
       ],
       "capabilityIds": [
         "CAP-SUBMIT",

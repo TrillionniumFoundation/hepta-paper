@@ -9,7 +9,7 @@ impl PreparedInitialOnlineMutationCompositionV1 {
         // Also binds origin/generation, resident expiry and restore-source age.
         // No filesystem, SQLite, RPC or signature I/O follows the shared sample.
         self.fence
-            .assert_activation_binding_valid_at_v1(&self.fence_binding, now)
+            .assert_activation_binding_time(&self.fence_binding, now)
     }
     pub(super) fn assert_evidence_valid_at(&self, now: i64) -> Result<()> {
         transaction::NativeTransactionEvidenceV1::from(self).assert_evidence_valid_at(now)

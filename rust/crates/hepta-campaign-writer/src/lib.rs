@@ -23,9 +23,9 @@ mod control;
 mod cutover;
 
 pub use control::{
-    CONTROL_STREAM_SCHEMA_V1, DurableControlEntryV1, DurableControlLogV1, LOCAL_WRITER_SCHEMA_V1,
-    LocalEventCursorV1, LocalEventPageV1, LocalEventV1, LocalRecoverySeedV1,
-    LocalRecoverySnapshotV1,
+    CONTROL_STREAM_SCHEMA_V1, ControlSnapshotScopeV1, DurableControlEntryV1, DurableControlLogV1,
+    LOCAL_WRITER_SCHEMA_V1, LocalEventCursorV1, LocalEventPageV1, LocalEventV1,
+    LocalRecoverySeedV1, LocalRecoverySnapshotV1,
 };
 
 pub use cutover::{
@@ -1578,6 +1578,8 @@ pub enum CampaignWriterError {
     InvalidPolicy,
     #[error("database is not an explicitly created local-only writer store")]
     NotLocalDatabase,
+    #[error("control snapshot scope does not match the durable writer identity")]
+    ControlSnapshotScopeMismatch,
     #[error("durable control log conflicts with its persisted binding or sequence")]
     ControlLogConflict,
     #[error("campaign writer database path is invalid")]

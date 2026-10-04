@@ -102,3 +102,13 @@ Document disabled, shadow, canary, authoritative, retiring, and retired transiti
 ## Open blockers
 
 List only stable work-item, risk, milestone, issue, and external-gap IDs with their current static state. Do not copy a dated narrative or claim that static documentation closes independently controlled evidence.
+
+## Template validation boundary
+
+The headings above are writing guidance. Explanatory heading names, paragraph
+length and placeholder wording are advisory, not implementation evidence.
+`Identity`, `Open blockers` and `Operational runbook` retain machine-projection
+or manifest-anchor checks. Typed authority, owner, protocol, capacity, recovery,
+rollout and dependency contracts remain mandatory and fail closed. The registry,
+manifest and `validate-module-documentation.mjs --json` projection own those facts;
+rewriting prose does not grant qualification or release/submission authority.

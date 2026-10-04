@@ -84,6 +84,12 @@ class RSourceRouteTests(unittest.TestCase):
         self.assertFalse(result["independentAcceptance"])
         self.assertFalse(result["productionAuthorized"])
 
+    def test_single_maintainer_source_route_keeps_machine_requirements(self) -> None:
+        self.assertFalse(self.route["acceptance"]["independentReviewRequired"])
+        for name in ("currentBuildClosureVerificationRequired", "exactHeadBaseMergeRequired",
+                     "targetHostQualificationRequired"):
+            self.assertTrue(self.route["acceptance"][name])
+
     def test_static_route_cannot_claim_original_gitlink_or_acceptance(self) -> None:
         for mutate in [
             lambda value: value["originalGitlink"].update(verified=True),
@@ -91,7 +97,7 @@ class RSourceRouteTests(unittest.TestCase):
             lambda value: value["authority"].update(sourceContentVerified=True),
             lambda value: value["authority"].update(originalGitlinkVerified=True),
             lambda value: value["authority"].update(productionAuthorized=True),
-            lambda value: value["acceptance"].update(independentReviewRequired=False),
+            lambda value: value["acceptance"].update(independentReviewRequired=True),
         ]:
             candidate = copy.deepcopy(self.route)
             mutate(candidate)

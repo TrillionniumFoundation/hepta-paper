@@ -1,4 +1,5 @@
 use super::*;
+mod server_control;
 mod server_tests;
 use crate::sqlite_mutation_coordinator::{DATABASE_ROLES, contracts::schema_transition::*};
 use ed25519_dalek::pkcs8::EncodePrivateKey;

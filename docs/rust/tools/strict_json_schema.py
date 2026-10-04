@@ -24,7 +24,7 @@ ANNOTATIONS = {
 ASSERTIONS = {
     "$ref", "type", "const", "enum", "required", "properties",
     "additionalProperties", "propertyNames", "minProperties", "maxProperties", "minItems",
-    "maxItems", "uniqueItems", "items", "contains", "minContains", "maxContains", "minLength", "maxLength", "pattern",
+    "maxItems", "uniqueItems", "prefixItems", "items", "contains", "minContains", "maxContains", "minLength", "maxLength", "pattern",
     "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "format",
     "allOf", "anyOf", "oneOf", "not", "if", "then", "else",
 }
@@ -211,7 +211,7 @@ def validate_schema_definition(schema: Any, root: Any) -> None:
                     fail_definition(location, f"{key} must be an object")
                 pending.extend((value, f"{location}.{key}.{name}", depth + 1)
                                for name, value in selected[key].items())
-        for key in ("allOf", "anyOf", "oneOf"):
+        for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
             if key in selected:
                 if not isinstance(selected[key], list) or not selected[key]:
                     fail_definition(location, f"{key} must be a nonempty array")
@@ -385,12 +385,17 @@ def _validate(instance: Any, schema: Any, root: Any, path: str, budget: list[int
             values = [json_equality_key(value) for value in instance]
             if len(values) != len(set(values)):
                 fail(path, "array items are not unique")
+        prefix = schema.get("prefixItems", [])
+        for index, subschema in enumerate(prefix[:len(instance)]):
+            _validate(instance[index], subschema, root, f"{path}[{index}]", budget)
         items = schema.get("items")
         if items is not None:
             if not isinstance(items, (dict, bool)):
                 fail(path, "items must be a schema object")
-            for index, value in enumerate(instance):
-                _validate(value, items, root, f"{path}[{index}]", budget)
+            # Draft 2020-12 items applies only after prefixItems in this same
+            # schema object. A prefix in an allOf/ref sibling does not move it.
+            for index in range(len(prefix), len(instance)):
+                _validate(instance[index], items, root, f"{path}[{index}]", budget)
 
     if isinstance(instance, str):
         minimum = schema.get("minLength")

@@ -18,12 +18,30 @@ import stat
 import subprocess
 import tempfile
 
-PUBLIC_TREE = 'd6b31b7145b97ae01c71e76b34ef7c5cb1a3e082'
-MANIFEST_BLOB = '0053ff8c14a375874bc5c0ea4f0f6071d648b1eb'
 ROOT = Path(__file__).resolve().parents[3]
-TARGET = 'runtime-images/r-scientific/source-cas'
-MAX_FILE = 32 * 1024 * 1024
-MAX_TOTAL = 128 * 1024 * 1024
+ROUTE_PATH = ROOT / 'docs/rust/qualification/r-source-route.v1.json'
+with ROUTE_PATH.open('rb') as _route_file:
+    _route_bytes = _route_file.read(1024 * 1024 + 1)
+if len(_route_bytes) > 1024 * 1024:
+    raise ValueError('public_r_source_cas_route_byte_limit')
+ROUTE = json.loads(_route_bytes)
+if (ROUTE.get('kind') != 'HeptaRSourceRouteV1' or ROUTE.get('schemaVersion') != 1
+        or ROUTE.get('targetPath') != 'runtime-images/r-scientific/source-cas'
+        or ROUTE['contentObservation']['gitlinkCommitQualified'] is not False
+        or ROUTE['contentObservation']['productionAuthorized'] is not False
+        or ROUTE['contentObservation']['packageExecutionAllowed'] is not False):
+    raise ValueError('public_r_source_cas_route_scope')
+PUBLIC_TREE = ROUTE['publicHistoricalRoute']['subtree']
+MANIFEST_BLOB = ROUTE['publicHistoricalRoute']['manifestBlob']
+TARGET = ROUTE['targetPath']
+FILE_COUNT = ROUTE['publicHistoricalRoute']['fileCount']
+PACKAGE_COUNT = ROUTE['publicHistoricalRoute']['packageCount']
+MAX_FILE = ROUTE['contentObservation']['maximumFileBytes']
+MAX_TOTAL = ROUTE['contentObservation']['maximumTotalBytes']
+if (FILE_COUNT != 107 or PACKAGE_COUNT != 104
+        or type(MAX_FILE) is not int or not 0 < MAX_FILE <= 16 * 1024 * 1024
+        or type(MAX_TOTAL) is not int or not 0 < MAX_TOTAL <= 128 * 1024 * 1024):
+    raise ValueError('public_r_source_cas_route_limits')
 
 
 def require(condition: bool, message: str) -> None:
@@ -48,7 +66,7 @@ def capture(root: Path) -> dict[str, bytes]:
     require(git(root, 'rev-parse', PUBLIC_TREE + '^{tree}').decode().strip() == PUBLIC_TREE,
             'source_tree_unavailable')
     rows = git(root, 'ls-tree', '-rlz', PUBLIC_TREE).split(b'\0')[:-1]
-    require(len(rows) == 107, 'source_inventory_invalid')
+    require(len(rows) == FILE_COUNT, 'source_inventory_invalid')
     result = {}
     total = 0
     for row in rows:
@@ -71,12 +89,12 @@ def capture(root: Path) -> dict[str, bytes]:
 
 
 def validate_bundle(files: dict[str, bytes]) -> None:
-    require(len(files) == 107 and blob_hash(files.get('manifest.json', b'')) == MANIFEST_BLOB,
+    require(len(files) == FILE_COUNT and blob_hash(files.get('manifest.json', b'')) == MANIFEST_BLOB,
             'manifest_identity_mismatch')
     manifest = json.loads(files['manifest.json'])
     require(manifest['kind'] == 'RRuntimeSourceCasManifest'
             and manifest['status'] == 'r_runtime_source_cas_complete'
-            and manifest['packageCount'] == len(manifest['packages']) == 104,
+            and manifest['packageCount'] == len(manifest['packages']) == PACKAGE_COUNT,
             'manifest_invalid')
     names = set()
     packages = set()
@@ -126,7 +144,7 @@ def verify_existing(target: Path, files: dict[str, bytes]) -> None:
 
 
 def publish(root: Path, files: dict[str, bytes]) -> str:
-    require(0 < len(files) <= 107 and all(isinstance(raw, bytes)
+    require(0 < len(files) <= FILE_COUNT and all(isinstance(raw, bytes)
             and len(raw) <= MAX_FILE and bool(re.fullmatch(r'[A-Za-z0-9_.\-/]+', name))
             and all(part not in ('', '.', '..') for part in name.split('/'))
             for name, raw in files.items())
@@ -166,7 +184,8 @@ def main() -> None:
     files = capture(ROOT)
     status = publish(ROOT, files)
     print(json.dumps({'kind': 'PublicRSourceCasMaterialization', 'status': status,
-        'sourceTree': PUBLIC_TREE, 'fileCount': len(files), 'packageCount': 104,
+        'sourceTree': PUBLIC_TREE, 'fileCount': len(files), 'packageCount': PACKAGE_COUNT,
+        'gitlinkCommitQualified': False,
         'gitlinkCommitVerified': False, 'productionAuthorized': False,
         'qualificationClaimed': False}, sort_keys=True))
 

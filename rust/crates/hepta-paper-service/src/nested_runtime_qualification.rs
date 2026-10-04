@@ -21,6 +21,18 @@ impl From<&str> for NestedRuntimeQualificationError {
         Self(value.to_owned())
     }
 }
+type Control<'a> = Option<(&'a std::sync::atomic::AtomicBool, std::time::Instant)>;
+fn checkpoint(control: Control<'_>) -> Result<()> {
+    if let Some((cancelled, deadline)) = control {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("nested_runtime_platform_verification_cancelled".into());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("nested_runtime_platform_verification_deadline_exceeded".into());
+        }
+    }
+    Ok(())
+}
 type Result<T> = std::result::Result<T, NestedRuntimeQualificationError>;
 const REPORT: &str = "NestedRuntimePlatformQualificationVerificationReport";
 
@@ -32,7 +44,8 @@ struct Loaded {
     bundles: [Value; 3],
     bundle_hashes: [String; 3],
 }
-fn load(request: &Value) -> Result<Loaded> {
+fn load(request: &Value, control: Control<'_>) -> Result<Loaded> {
+    checkpoint(control)?;
     ensure(
         id(&request["profileId"])
             && id(&request["runtimeClassName"])
@@ -54,7 +67,7 @@ fn load(request: &Value) -> Result<Loaded> {
         NestedRuntimeQualificationError::from("nested_runtime_platform_evidence_path_not_canonical")
     })?;
     let path = resolve(&cwd, &request["configPath"])?;
-    let (config, config_hash) = read_json(&path, 256 * 1024)?;
+    let (config, config_hash) = read_json_with_control(&path, 256 * 1024, control)?;
     ensure(
         request["expectedConfigContentHash"] == config_hash,
         "nested_runtime_platform_configuration_content_hash_mismatch",
@@ -104,8 +117,11 @@ fn load(request: &Value) -> Result<Loaded> {
         )?;
     }
     let base = path.parent().unwrap_or(std::path::Path::new("/"));
-    let (trust_value, trust_content_hash) =
-        read_json(&resolve(base, &config["trustStorePath"])?, 1024 * 1024)?;
+    let (trust_value, trust_content_hash) = read_json_with_control(
+        &resolve(base, &config["trustStorePath"])?,
+        1024 * 1024,
+        control,
+    )?;
     ensure(
         config["expectedTrustStoreContentHash"] == trust_content_hash,
         "nested_runtime_platform_trust_store_content_hash_mismatch",
@@ -141,7 +157,12 @@ fn load(request: &Value) -> Result<Loaded> {
             sha(&request[hash_field]),
             "nested_runtime_platform_bundle_content_hash_missing",
         )?;
-        let (value, digest) = read_json(&resolve(base, &config[path_field])?, 4 * 1024 * 1024)?;
+        checkpoint(control)?;
+        let (value, digest) = read_json_with_control(
+            &resolve(base, &config[path_field])?,
+            4 * 1024 * 1024,
+            control,
+        )?;
         ensure(
             request[hash_field] == digest,
             "nested_runtime_platform_bundle_content_hash_mismatch",
@@ -216,6 +237,18 @@ pub fn verify_nested_runtime_platform_qualification_file_v1(
 /// Missing/invalid evidence returns a hashed blocked report; malformed request
 /// shape or clock returns an error. File reads reject aliases and duplicate keys.
 pub fn verify_nested_runtime_platform_qualification_v1(input: &Value) -> Result<Value> {
+    verify_inner(input, None)
+}
+/// Same verifier and wire; the ordinary adapter retains its original control.
+pub(crate) fn verify_nested_runtime_platform_qualification_with_control_v1(
+    input: &Value,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<Value> {
+    verify_inner(input, Some((cancelled, deadline)))
+}
+fn verify_inner(input: &Value, control: Control<'_>) -> Result<Value> {
+    checkpoint(control)?;
     let allowed = [
         "configPath",
         "expectedConfigContentHash",
@@ -256,10 +289,16 @@ pub fn verify_nested_runtime_platform_qualification_v1(input: &Value) -> Result<
             request[key] = n.into();
         }
     }
-    let loaded = match load(&request) {
+    let loaded = match load(&request, control) {
         Ok(v) => v,
-        Err(error) => return blocked(&request["now"], vec![error.to_string()], None),
+        Err(error) => {
+            // Cancellation/expiry cannot be reclassified as an ordinary
+            // missing-evidence blocked report.
+            checkpoint(control)?;
+            return blocked(&request["now"], vec![error.to_string()], None);
+        }
     };
+    checkpoint(control)?;
     let config = &loaded.config;
     let limits = [
         config["qualificationMaximumLifetimeMs"]
@@ -311,6 +350,7 @@ pub fn verify_nested_runtime_platform_qualification_v1(input: &Value) -> Result<
             false
         }
     };
+    checkpoint(control)?;
     let conformance = subjects::conformance(
         &loaded.bundles[1]["subject"],
         &qualification,
@@ -337,6 +377,7 @@ pub fn verify_nested_runtime_platform_qualification_v1(input: &Value) -> Result<
             false
         }
     };
+    checkpoint(control)?;
     let independence = subjects::independence(
         &loaded.bundles[2]["subject"],
         &qualification,
@@ -362,6 +403,7 @@ pub fn verify_nested_runtime_platform_qualification_v1(input: &Value) -> Result<
             false
         }
     };
+    checkpoint(control)?;
     let observations = json!({"configurationContentHash":loaded.config_hash,"trustStoreContentHash":loaded.trust_content_hash,"qualificationBundleContentHash":loaded.bundle_hashes[0],"conformanceBundleContentHash":loaded.bundle_hashes[1],"authorityIndependenceBundleContentHash":loaded.bundle_hashes[2],"qualificationSubjectHash":qualification.subject_hash,"conformanceSubjectHash":conformance.subject_hash,"authorityIndependenceSubjectHash":independence.subject_hash});
     if !blockers.is_empty() || !q_auth || !c_auth || !i_auth {
         if blockers.is_empty() {
@@ -409,4 +451,39 @@ pub fn verify_nested_runtime_platform_qualification_v1(input: &Value) -> Result<
         report[format!("deploymentOperator{suffix}")] = config["deploymentOperator"][field].clone();
     }
     finish(report)
+}
+
+#[cfg(test)]
+mod ordinary_control_tests {
+    use super::*;
+    use std::{
+        sync::atomic::AtomicBool,
+        time::{Duration, Instant},
+    };
+    #[test]
+    fn inherited_cancel_and_deadline_cannot_become_blocked_or_ready_report() {
+        let cancelled = AtomicBool::new(true);
+        let deadline = Instant::now().checked_add(Duration::from_secs(1)).unwrap();
+        let error = verify_nested_runtime_platform_qualification_with_control_v1(
+            &json!({}),
+            &cancelled,
+            deadline,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "nested_runtime_platform_verification_cancelled"
+        );
+        let active = AtomicBool::new(false);
+        let error = verify_nested_runtime_platform_qualification_with_control_v1(
+            &json!({}),
+            &active,
+            Instant::now(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "nested_runtime_platform_verification_deadline_exceeded"
+        );
+    }
 }

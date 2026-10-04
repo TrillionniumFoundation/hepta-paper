@@ -138,6 +138,18 @@ fn verify_initial_finalization(db: &Connection, ctx: &Context) -> Result<()> {
     // authority and database scope must still authenticate that historical row.
     let mut historical = ctx.trust.clone();
     historical["writerManifestHash"] = request["writerManifestHash"].clone();
+    if crate::online_schema_execution::cli::node_history::legacy_v021::is_legacy_schema_reserve_v021(
+        &request,
+    ) {
+        // The explicit old wire is historical evidence only. Independently
+        // replay every retained epoch and actual SQL head under the existing
+        // service key before the unchanged current-v2 reserve can proceed.
+        return super::migration::verify_native_settled_history_in_held_transaction(
+            db,
+            &ctx.configuration,
+            &ctx.signing_key.verifying_key(),
+        );
+    }
     if request["version"].as_f64() != Some(1.0)
         || !verify_schema_transition_reservation_v1(
             &reservation,

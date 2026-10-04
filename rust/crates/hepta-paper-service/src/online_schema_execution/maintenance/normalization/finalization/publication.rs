@@ -15,6 +15,86 @@ use crate::{
 };
 use std::path::PathBuf;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
+const V2_GENESIS_KEYS: &[&str] = &[
+    "databaseRole",
+    "databaseInstanceId",
+    "schemaContractId",
+    "schemaHash",
+    "globalSequence",
+    "globalHash",
+    "databaseSequence",
+    "databaseHash",
+    "stateHash",
+];
+#[derive(Clone, Copy)]
+enum AuditWireContext {
+    Other,
+    Reservation,
+    GenesisArray,
+    GenesisRow,
+}
+fn write_audit_json(value: &Value, output: &mut Vec<u8>, context: AuditWireContext) -> Result<()> {
+    match value {
+        Value::Object(map) => {
+            output.push(b'{');
+            let keys: Vec<&str> = if matches!(context, AuditWireContext::GenesisRow) {
+                ensure(
+                    map.len() == V2_GENESIS_KEYS.len()
+                        && V2_GENESIS_KEYS.iter().all(|key| map.contains_key(*key)),
+                    "autonomous_research_online_schema_transition_audit_genesis_shape_invalid",
+                )?;
+                V2_GENESIS_KEYS.to_vec()
+            } else {
+                map.keys().map(String::as_str).collect()
+            };
+            for (index, key) in keys.into_iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                serde_json::to_writer(&mut *output, key).map_err(|_| invalid())?;
+                output.push(b':');
+                let child = match (context, key) {
+                    (AuditWireContext::Other, "reservation") => AuditWireContext::Reservation,
+                    (AuditWireContext::Reservation, "databaseGenesis") => {
+                        AuditWireContext::GenesisArray
+                    }
+                    _ => AuditWireContext::Other,
+                };
+                write_audit_json(&map[key], output, child)?;
+            }
+            output.push(b'}');
+        }
+        Value::Array(rows) => {
+            output.push(b'[');
+            for (index, row) in rows.iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                let child = if matches!(context, AuditWireContext::GenesisArray) {
+                    AuditWireContext::GenesisRow
+                } else {
+                    AuditWireContext::Other
+                };
+                write_audit_json(row, output, child)?;
+            }
+            output.push(b']');
+        }
+        _ => serde_json::to_writer(output, value).map_err(|_| invalid())?,
+    }
+    Ok(())
+}
+fn audit_bytes(receipt: &Value) -> Result<Vec<u8>> {
+    if receipt["version"] != 2 {
+        return serde_json::to_vec(receipt).map_err(|_| invalid());
+    }
+    let mut output = Vec::new();
+    write_audit_json(receipt, &mut output, AuditWireContext::Other)?;
+    ensure(
+        serde_json::from_slice::<Value>(&output).map_err(|_| invalid())? == *receipt,
+        "autonomous_research_online_schema_transition_audit_wire_projection_invalid",
+    )?;
+    Ok(output)
+}
 fn invalid() -> crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError {
     error("autonomous_research_online_schema_transition_final_receipt_invalid")
 }
@@ -77,19 +157,20 @@ impl PreparedSchemaTransitionAuditV1 {
         Ok(())
     }
 }
-/// Prepare v1's exact Node audit from actual ten-database post-state and all three
+/// Prepare the exact Node audit from actual ten-database post-state and all three
 /// real historical signatures. Historical receipt publication may finish after
 /// receipt expiry; fresh runtime readiness remains a separate signed challenge.
-/// V2 needs an owned target-configuration restart proof, which is unavailable in
-/// this API. No caller boolean or signed source-config receipt can bypass it.
+/// V2 is admitted only after the target authority has signed an observation with
+/// `authorityConfigurationActivated=true`; no caller boolean or source-config
+/// receipt can substitute for that restart-bound fact.
 pub fn prepare_schema_transition_audit_v1<T: MutationAuthorityTransportV1>(
     input: SchemaTransitionAuditInputV1<'_>,
     inventory: &ObservedStateDatabaseInventoryV1,
     authority: &PinnedMutationAuthorityV1<T>,
 ) -> Result<PreparedSchemaTransitionAuditV1> {
     ensure(
-        input.plan["version"] == 1,
-        "autonomous_research_pristine_schema_rebind_target_configuration_restart_required",
+        [json!(1), json!(2)].contains(&input.plan["version"]),
+        "autonomous_research_online_schema_transition_final_receipt_version_invalid",
     )?;
     ensure(
         crate::sqlite_mutation_coordinator::sha(&json!(input.expected_plan_hash))
@@ -117,7 +198,7 @@ pub fn prepare_schema_transition_audit_v1<T: MutationAuthorityTransportV1>(
     // to be paired with a different ten-database state. The observer owns the
     // descriptor-pinned inventory and checks every installation record against
     // the actual post-state before any FINAL.json bytes are assembled.
-    let _post_state = super::observe_schema_transition_post_state_v1(
+    let post_state = super::observe_schema_transition_post_state_v1(
         inventory.runtime_root(),
         input.state_database_manifest,
         input.plan,
@@ -143,10 +224,14 @@ pub fn prepare_schema_transition_audit_v1<T: MutationAuthorityTransportV1>(
             "autonomous_research_online_schema_transition_final_receipt_post_state_mismatch",
         )?;
     }
-    let pristine = hash(
-        "AutonomousResearchInitialSchemaTransitionPristineStateNotApplicable",
-        &json!({"transitionId":input.plan["transitionId"]}),
-    )?;
+    let pristine = if input.plan["version"] == 2 {
+        post_state.pristine_runtime_state_hash().to_owned()
+    } else {
+        hash(
+            "AutonomousResearchInitialSchemaTransitionPristineStateNotApplicable",
+            &json!({"transitionId":input.plan["transitionId"]}),
+        )?
+    };
     ensure(
         input.finalize_request["postInventoryHash"] == inventory.value()["inventoryHash"]
             && input.finalize_request["postPristineRuntimeStateHash"] == pristine
@@ -154,8 +239,19 @@ pub fn prepare_schema_transition_audit_v1<T: MutationAuthorityTransportV1>(
             && input.observe_request["postPristineRuntimeStateHash"] == pristine,
         "autonomous_research_online_schema_transition_final_receipt_post_state_mismatch",
     )?;
+    if input.plan["version"] == 2 {
+        ensure(
+            input.reservation["targetAuthorityConfigurationHash"]
+                == input.finalization["targetAuthorityConfigurationHash"]
+                && crate::sqlite_mutation_coordinator::sha(
+                    &input.finalization["targetAuthorityConfigurationHash"],
+                )
+                && input.observation["authorityConfigurationActivated"] == true,
+            "autonomous_research_pristine_schema_rebind_target_configuration_not_activated",
+        )?;
+    }
     let mut receipt = json!({
-        "version":1,"kind":"AutonomousResearchOnlineSchemaTransitionAuditReceipt",
+        "version":input.plan["version"],"kind":"AutonomousResearchOnlineSchemaTransitionAuditReceipt",
         "status":"autonomous_research_online_schema_transition_ready",
         "protocol":input.plan["protocol"],"transitionId":input.plan["transitionId"],
         "planHash":input.plan["planHash"],"databaseScopeHash":input.plan["databaseScopeHash"],
@@ -171,12 +267,17 @@ pub fn prepare_schema_transition_audit_v1<T: MutationAuthorityTransportV1>(
         "externalAuthorityVerified":true,"crossDatabaseAtomicityClaimed":false,
         "recoveryProtocol":"external-authority-state-machine-idempotent-phases-v1"
     });
+    if input.plan["version"] == 2 {
+        receipt["transitionMode"] = input.plan["transitionMode"].clone();
+        receipt["sourceWriterManifestHash"] = input.plan["sourceWriterManifestHash"].clone();
+        receipt["authorityConfigurationActivated"] = json!(true);
+    }
     receipt["schemaTransitionReceiptHash"] = hash(
         "AutonomousResearchOnlineSchemaTransitionAuditReceipt",
         &receipt,
     )?
     .into();
-    let bytes = serde_json::to_vec(&receipt).map_err(|_| invalid())?;
+    let bytes = audit_bytes(&receipt)?;
     ensure(bytes.len() <= MAX_BYTES, &invalid().code)?;
     verify_audit(
         &receipt,
@@ -270,7 +371,7 @@ pub fn publish_schema_transition_final_receipt_v1<T: MutationAuthorityTransportV
         old.as_ref().map(|(_, _, hash)| hash.as_str()) == expected_previous_file_sha256,
         "autonomous_research_online_schema_transition_final_receipt_conflict",
     )?;
-    let digest = repo.publish(&proof.receipt, expected_previous_file_sha256)?;
+    let digest = repo.publish_bytes(&proof.receipt, &proof.bytes, expected_previous_file_sha256)?;
     checkpoint.checkpoint("after_final_receipt_publication")?;
     proof.assert_current(inventory, authority)?;
     repo.assert_unchanged(&digest)?;

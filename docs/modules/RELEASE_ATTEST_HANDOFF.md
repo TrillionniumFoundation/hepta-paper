@@ -1,10 +1,13 @@
 # Native release-attestation inspection
 
-This handoff documents the Rust local inspection corresponding to
-`node paper-core/bin/release-evidence.mjs --execute`. The native command is a
-read-only preflight. It remains blocked for both unimplemented native
-implementation work and independently qualified release authority; supplying
-external credentials alone cannot turn this report into release evidence.
+This handoff documents native source inspection and the ordinary
+`maintenance release-attest` composition corresponding to
+`node paper-core/bin/release-evidence.mjs --execute`. The ordinary route now
+captures actual source, runs the fixed bounded replay and persists a locally
+signed blocked diagnostic through the existing publication owner. Complete
+native policy/runtime replay, ready bundle publication and independently
+qualified authority remain open; external credentials alone cannot complete
+these implementation gaps.
 
 ## Input and command
 
@@ -15,23 +18,219 @@ and release trust-layer counts. The command validates the release subject,
 evaluates the native release-state and trust gate implementations, and reuses
 the native archive identity and legacy freeze inspection.
 
+Request files use the frontend's shared `read_bounded` reader: no-follow,
+nonblocking regular-file reads with a finite byte cap and held/named metadata
+checks before and after reading. FIFO, directory, symlink and oversized inputs
+refuse before replay or signing inspection. The same reader preserves empty
+and binary CAS payloads, and `put` reads its payload before creating writable
+state. `frontend_request_bounds` executes these public commands and a fresh
+valid retry under the existing bounded process owner.
+
 ## Local boundary
 
 The report includes the release-state result, trust-layer result, drill report,
 deduplicated blockers, and a domain-separated report hash. The release-state
 and trust-layer values are explicitly marked as caller-supplied pure projections;
-they are not source-bound observations. Native source/provenance capture and
-release-snapshot binding are not implemented. It never reads a signing key,
+they are not source-bound observations. V1 retains those projections. The same
+command accepts a closed V2 `ReleaseAttestationSourceRequestV2` with
+`workspaceRoot`, root-owned ELF `gitExecutable` and SHA-256 pin, expected
+commit/tree, expected release-state snapshot hash and `timeoutMs`. V2 derives
+provenance and the snapshot from actual Git and the five fixed repository
+documents. It binds tree/index modes and blobs to actual read bytes, verifies
+Git object integrity, and retains source/tool descriptors and directory
+identities across the observations. The shared ordered serializer preserves
+the qualified Node snapshot hash and tag ordering. Cancellation reuses the
+existing bounded process-group owner with explicit resource limits.
+
+The V2 source owner limits each file to 32 MiB, all observed bytes and original
+blob responses to 2 GiB, source entries to 200,000, held directories to 4,096,
+and the operation deadline to the requested value up to 600,000 ms. These
+limits apply to V2 source inspection. V1 retains the existing archive/SQLite
+drill owner and its resource boundaries; V2 does not add limits to that drill.
+
+Successful V2 capture closes only provenance capture and snapshot binding. It
+retains five internal implementation blockers, four external qualification
+blockers and any observed release-state refusal. The current signed release
+capability remains unobserved. It never reads a signing key,
 writes runtime evidence, mutates or deletes a legacy database, publishes a
 bundle, or grants release or Node-retirement authority.
+
+The flat diagnostic also accepts closed V3 `ReleaseAttestationReplayRequest`
+with a V2 `source` request, `nodeExecutable`, its SHA-256 pin and `timeoutMs`.
+The native owner evaluates the fixed P0/P1 input corpora in Rust, executes the
+actual qualified Node implementations and minimal archived Python baseline on
+those same inputs, and compares the observed outputs. It reuses the existing
+bounded process-group owner and cancellation adapter. Node/Python are explicit
+differential dependencies; ordinary Rust calculations do not invoke them.
+
+V3 retains actual executable descriptors, full source captures before/after,
+and seven explicitly selected Node module/archive input descriptors during the
+oracle window. Named/held metadata, raw hashes and directory identities must
+remain unchanged. Captured stdout must match the complete measured byte count
+and hash; a truncated diagnostic tail cannot substitute for the complete
+output. The fixed input list is an observation scope, not a proof of every
+possible dynamic import. Resource limits and the selected input list are
+declared in `release_replay/execution.rs` and its `source_graph.rs` child.
+
+This closes the implemented fixed-corpus differential behavior. It does not
+complete restored-runtime replay, the whole retirement matrix or policy,
+signing integration, runtime publication or recovery. V3 preserves the V2
+machine blocker lists and false readiness/authority fields until those broader
+requirements are implemented and independently qualified.
+
+The same flat diagnostic accepts closed V4 `ReleaseAttestationPolicyReplayRequest`
+and V8 `ReleaseAttestationMeasuredPolicyReplayRequest` envelopes. These inspect
+the original 263-source matrix and run its ten fixed Node observer suites with
+held source, executable and archive inputs through the existing bounded process
+owner. V8 selects the fixed `immutable_263_source_inspection_v1` profile: only
+the original `bin/paperctl` path, matrix id and SHA-256 receive the measured
+16 MiB exception. Other files retain the original 4 MiB limit. Selected sources,
+archive, pipes, tools and the deadline keep explicit caps; caller fields cannot
+widen them. The exact machine limits and package/asset identities live in
+`release_replay/execution/policy`.
+
+The Node observers use seven exact lock-bound parser packages and fifteen held
+current-project runtime data assets. These assets are differential inputs, not
+members of the original archive or proof of a restored runtime; the empty R
+source CAS remains unqualified. Two Rust pure matching calculations compare the
+same actual inputs. Success of a Node suite never counts as a Rust policy port.
+Complete native policy/runtime ports, restored-runtime equivalence, signing,
+durable publication/recovery and independent external qualification remain
+required. V4/V8 retain blocked readiness and grant no authority.
+
+V9 `ReleaseAttestationNativeAstPolicyReplayRequest` adds the fixed
+`immutable_245_python_ast_observation_v1` profile. It observes the original 245
+Python sources with locked Rust parsing in the current native ELF worker,
+contained by the existing bounded process owner. The five original Python AST
+observers independently compare complete values on those same input bytes.
+The worker executes no input source; its closed schema, lexical/AST/read/output
+budgets and cancellation guards are declared by `release_replay/python_ast.rs`
+and `execution/policy/current_worker.rs`. The 75-case executable differential
+corpus covers auxiliary AST children, identifier normalization, source-path
+context, malformed input and actual running cancellation. These parse-only
+observations do not establish any complete policy/runtime suite or the normal
+registry route. V9 retains all broader blockers and grants no authority.
+
+V10 `ReleaseAttestationNativeRetirementPolicyReplayRequest` nests V9 and adds
+`immutable_referee_venue_retirement_policy_v1`. The existing locked Rust
+JavaScript parser reads the fixed venue/referee catalogs as data. The owner
+checks catalog/suite hashes, exact public symbols and effects, duplicate or
+unknown entries, bounded current production source and literal reference
+refusals. It compares the complete computed values with both actual original
+Node suites on the same source/archive inputs. These complete explicit
+retirement calculations establish neither behavioral replacements nor the
+remaining complete policy/runtime suites. The original source/archive/current
+ELF guards and existing process/cancellation owner stay in force; caller counts,
+paths, limits and signing-authority claims refuse. V10 remains a blocked flat
+diagnostic and does not close normal registry execution, signing, publication,
+recovery, host qualification or Node retirement.
+
+
+V11 `ReleaseAttestationNativeBuildPackagePolicyReplayRequest` nests V10 and adds
+`immutable_build_package_retirement_policy_v1`. It reads the fixed
+[build/package catalog](../../migration/build-package-retirements.mjs) as data,
+checks the matching archive AST and source references, and compares the actual
+local runner-contract artifact with the original fixed suite. V12
+`ReleaseAttestationNativeCommandDispositionPolicyReplayRequest` nests V11 and
+adds `immutable_760_command_disposition_policy_v1`. It regenerates the complete
+[command-disposition manifest](../../migration/P0_PAPERCTL_COMMAND_DISPOSITION.json)
+from the held parser/dispatch/mode sources and compares the whole original
+suite value. Matrix counts and accepted source rows come from the
+[canonical matrix](../../migration/legacy-semantic-migration-matrix.json) and
+actual `matrixPolicyReplay.nativeBuildPackageRetirementPolicy` /
+`matrixPolicyReplay.nativeCompleteCommandDispositionPolicy` report values.
+Neither a `native_route` disposition label nor a complete policy calculation
+establishes that command's Rust business implementation or release readiness.
+
+V13 `ReleaseAttestationNativeResearchRetirementPolicyReplayRequest` nests V12
+and adds `immutable_155_research_retirement_policy_v1`. The fixed
+[research retirement catalog](../../migration/research-verify-retirements.mjs)
+is read as data under its exact byte hash and a separate 64 KiB bound; older
+catalog profiles retain their 16 KiB bound. Actual archive bytes, public
+symbols, parse-only AST effects and current production references bind every
+retired source. The complete computed summary must match the original
+[research suite](../../migration/tests/p1-research-verify-retirements.mjs).
+Its two local execution harnesses remain explicitly retired: neither source
+body is executed and neither gains inherited execution or academic authority.
+The fixed missing-source fixture retains descriptor-held ENOENT edges before
+and after the Node observer; creation, deletion, symlink replacement and
+cancellation refuse. General research-adapter or arbitrary legacy harness API
+parity remains unclaimed. The isolated binary test fixture contains only this
+retirement subset; the production V13 owner still requires the original full
+245-source observation and all ten original Node suites.
+
+
+## Ordinary blocked diagnostic composition
+
+`hepta-paper-rust maintenance release-attest` accepts no forwarded arguments;
+a bare `--` also selects the same fixed execute operation. Its native
+`release-evidence --execute` implementation derives the Git executable pin,
+actual HEAD/tree and release-state snapshot through the held V2 source owner,
+then selects `immutable_source_only_blocked_integrity_v3` from the versioned
+`migration/fixtures/native-release-replay-profile.v3.json`. The closed profile
+contains exactly `version`, `kind`, `profile`, `nodeExecutable`,
+`nodeExecutableSha256`, `archivePath`, and `archiveSha256`; paths are absolute,
+tool hashes are lower-case SHA-256, and the archive identity is fixed. V1 and V2
+profiles are refused rather than reinterpreted. The profile grants no external
+authority and cannot select resource limits. The actual V13 research-retirement owner wraps V12 command disposition,
+V11 build/package, V10 retirement, V9 native AST, and V8 measured source replay. The existing source/object checks, 32 KiB profile, 4 MiB signed
+receipt and original 600,000 ms operation deadline remain enforced.
+
+This source-only ordinary profile still requires all ten fixed Node differential
+observers. It is not the Node-free product runtime or a completed release route;
+the remaining native calculations and separate production/development profiles
+must close before that claim becomes valid.
+
+Prepare a local V3 configuration by copying
+[`native-release-replay-profile.v3.example.json`](../../migration/fixtures/native-release-replay-profile.v3.example.json)
+to `migration/fixtures/native-release-replay-profile.v3.json`. Replace the two
+Node fields with the separately qualified absolute executable path and its
+actual `sha256:` byte pin; the example's placeholder path/hash are deliberately
+unusable. `version=3`, `kind=OrdinaryNativeReleaseReplayProfile`,
+`profile=immutable_source_only_blocked_integrity_v3` and the fixed archive hash
+remain unchanged. The archive path must name that actual immutable archive.
+Record the local configuration through the existing source/release-state
+workflow before capture, and preserve any older V1/V2 configuration. No template,
+configuration or private test key supplies release readiness or custody.
+
+The existing local integrity key signs the actual blocked payload. The owner
+recaptures source before and after signing/publication, verifies retained keys
+and profile metadata, and uses durable no-clobber publication for
+`NATIVE_BLOCKED_DRILL_v1_<payload-hash>.json`. Recovery verifies existing signed
+bytes and current source/key bindings, and requires the V13 blocked payload.
+Earlier signed payload versions are retained and refused rather than silently
+upgraded or deleted. The public nine-field signature and version-1 diagnostic
+envelope remain unchanged. Unknown, competing, stale or tampered artifacts
+remain retained on refusal. A post-publication failure does not unlink
+an artifact with unproved ownership. This composition ends with
+`release_evidence_bundle_not_ready`; ready bundle/CURRENT publication, exact
+post-publication rollback and complete restored runtime remain unimplemented.
+
+The pre-I/O isolation check applies specifically to
+`HEPTA_PAPER_RUNTIME_ISOLATED=1`. It is not a substitute for the existing signed,
+versioned and revocable research admission owner. Local blocked integrity
+signatures cannot grant release/submission authority. V1 typed negative zero
+remains an explicit data-domain gap: the native signer refuses its wire-type
+change, while the original Node signer canonicalizes it to integer zero.
+Repeated ordinary captures may produce different payloads because measured
+remaining time changes; this does not establish same-payload retry idempotency.
+
+The executable `release_evidence::tests` and `release_evidence::ordinary_tests`
+owners cover normal grammar, the actual
+original Node signature oracle, retained recovery, cancellation/deadlines,
+competing bytes, source/key revocation and resource refusals. Normal producer,
+retry and active source-child cancellation observations must be refreshed for
+the delivered subject. Private fixture keys establish local integrity behavior,
+not canonical or target-host custody.
 
 ## Implementation and external blockers
 
 The result is always `release_attestation_blocked` with
-`releaseEvidenceReady=false`. The report separates Rust implementation gaps
-(source/provenance capture, release-snapshot binding, p0/p1 differential and
-policy replay orchestration, signing integration, publication and recovery)
-from external qualification requirements (independent owner/operational
+`releaseEvidenceReady=false`. The V1 report retains its caller-projection
+implementation gaps. V2 closes source/provenance capture and release-snapshot
+binding, but retains actual conformance replay, policy replay, signing
+integration, publication and recovery as implementation gaps. Both distinguish
+these from external qualification requirements (independent owner/operational
 acceptance, release-key custody and physical deletion authority). A blocked
 report is printed before the CLI exits non-zero.
 
@@ -43,9 +242,39 @@ hardlink rejection, unchanged database bytes, and blocked CLI behavior. Compile
 and test with:
 
 ```sh
-rustup run 1.98.0 cargo check --manifest-path rust/Cargo.toml -p hepta-paper-service --all-targets --locked
-rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service release_attest -- --nocapture
+rustup run 1.98.0 cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+rustup run 1.98.0 cargo clippy --manifest-path rust/Cargo.toml -p hepta-paper-service --all-targets --locked -- -D warnings
+rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --test release_attest_source_capture --test release_attest --test release_replay --test release_replay_referee --test release_replay_execution --test release_replay_policy --test native_python_ast_worker
+rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --test frontend_request_bounds
+rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --lib release_evidence:: -- --nocapture
+rustup run 1.98.0 cargo test --manifest-path rust/Cargo.toml -p hepta-paper-service --locked --lib release_replay::execution::policy::research_policy::tests -- --nocapture
 ```
+
+Run the Node differential owners with the separately qualified Node 22
+executable on `PATH`. The research fixture selector also accepts
+`HEPTA_TEST_NODE`; it does not change the existing signature oracle's `PATH`
+selection or supply runtime qualification.
+
+The V2 tests inspect actual private Git repositories and replay the qualified
+Node release-state/provenance owners. They cover readable corrupt Git objects,
+common and worktree integrity-bypass configuration, hidden index flags,
+unchanged stat-cache hints, executable modes, replaced descriptors, cancellation
+and deadlines. Ordinary CLI tests verify both the blocked report and duplicate
+or unknown JSON field refusal. Private fixtures supply no release authority.
+
+The V3 tests run actual fixed-corpus Node/archived-Python differential checks
+and the flat `release-attest` CLI. They reject invalid corpora, false claimed
+results, dirty or divergent source, changed source/tool metadata and incorrect
+tool pins. Running Node/Python cancellation and deadline cases check actual
+process identities and complete group cleanup. They do not qualify a target
+host or supply external signing material.
+
+The policy tests reject caller acceptance counts, duplicate fields, substituted
+archive/profile identities and resource escalation before any oracle executes.
+Library owner tests enforce precise source limits, matrix contracts, closed
+package/runtime namespaces and process caps. The functional source manifest
+binds each executable selector; it does not register private host-run results
+as current signed-head or prospective-merge acceptance.
 
 This is a `partial_local_source` candidate only. The incumbent Node route
 remains required for complete release-evidence qualification.

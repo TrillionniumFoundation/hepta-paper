@@ -189,8 +189,9 @@ mod tests {
         assert!(
             invoke(
                 &process,
-                &json!({"large":"x".repeat(2*1024*1024)}),
-                &fixture.0
+                &serde_json::to_vec(&json!({"large":"x".repeat(2*1024*1024)})).unwrap(),
+                &fixture.0,
+                None,
             )
             .is_err()
         );
@@ -202,6 +203,6 @@ mod tests {
         let path = fixture.0.join("verifier.py");
         let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
         writeln!(file, "# changed").unwrap();
-        assert!(invoke(&process, &json!({}), &fixture.0).is_err());
+        assert!(invoke(&process, b"{}\n", &fixture.0, None).is_err());
     }
 }

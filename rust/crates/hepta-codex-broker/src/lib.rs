@@ -16,7 +16,11 @@ compile_error!("hepta-codex-broker V1 requires Linux SO_PEERCRED semantics");
 mod acknowledgement;
 mod admission;
 mod capability;
+mod client;
 mod codex_dispatch;
+mod commit_acknowledgement;
+mod cost_settlement;
+mod delivery;
 mod dispatch_backup;
 mod dispatch_containment;
 mod fake_execution;
@@ -25,6 +29,9 @@ mod journal;
 mod listener;
 mod output_schema;
 mod peer;
+mod prepared_result;
+mod product;
+mod product_daemon;
 mod response;
 mod server;
 mod service;
@@ -49,8 +56,23 @@ pub use capability::{
     capability_signing_bytes, verify_request_capability,
 };
 pub use codex_dispatch::{
-    CodexDispatchAuthorityV1, CodexDispatchError, CodexDispatchPlanV1, CodexDispatchResultV1,
-    run_reserved_codex_operation,
+    CodexDispatchAuthorityV1, CodexDispatchAuthorizationPointV1, CodexDispatchError,
+    CodexDispatchPlanV1, CodexDispatchResultV1, run_reserved_codex_operation,
+};
+pub use commit_acknowledgement::{
+    CommitBindingDatabaseScopeV2, CommitBindingResolverV2, CommitBoundAcknowledgementError,
+    CommitBoundAcknowledgementPolicyV2, CommitBoundAcknowledgementTrustStoreV2,
+    CommitBoundPreparedResultAcknowledgementV2, PreparedResultAcknowledgementSubjectV2,
+    PreparedResultCommitBindingV2, SqliteCommitBindingResolverV2,
+    VerifiedCommitBoundAcknowledgementV2, apply_commit_bound_acknowledgement_v2,
+    commit_bound_acknowledgement_hash_v2, commit_bound_acknowledgement_signing_bytes_v2,
+    verify_commit_bound_acknowledgement_subject_v2,
+    verify_persisted_commit_bound_acknowledgement_v2,
+};
+pub use cost_settlement::{
+    ProviderCostSettlementError, ProviderCostSettlementPolicyV1,
+    ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1, VerifiedProviderCostSettlementV1,
+    provider_cost_settlement_signing_bytes, verify_provider_cost_settlement,
 };
 pub use dispatch_backup::{
     CodexDispatchBackupBundleReceiptV1, CodexDispatchBackupEntryV1, CodexDispatchBackupManifestV1,
@@ -63,8 +85,9 @@ pub use fake_execution::{
     run_reserved_fake_operation,
 };
 pub use frame::{
-    BrokerFrameError, BrokerFramePolicyV1, DecodedRequestFrameV1, read_request_frame,
-    write_request_frame,
+    BrokerFrameError, BrokerFramePolicyV1, DecodedCommitAcknowledgementFrameV2,
+    DecodedRequestFrameV1, read_commit_bound_acknowledgement_frame, read_request_frame,
+    write_commit_bound_acknowledgement_frame, write_request_frame, write_result_query_frame,
 };
 pub use journal::{
     BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
@@ -79,6 +102,25 @@ pub use listener::{
 };
 pub use peer::{
     PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, PeerPrincipalV1, inspect_peer_identity,
+};
+pub use prepared_result::{
+    BrokerPreparedResultReceiptV1, finalize_codex_prepared_result, read_codex_prepared_output,
+};
+pub use product::{
+    ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, ProductCodexError,
+    ProductCodexOperationPublisherV1, ProductCodexOperationV1, ProductOperationSourceIdentityV1,
+    inspect_product_codex_operation_prompt_v1, product_codex_prompt_hash_v1,
+    publish_product_codex_operation_v1, recover_product_codex_prompt_hash_v1,
+};
+pub use product_daemon::{
+    LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,
+    ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationIdentityV1,
+    ProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError,
+    ProductCommitAcknowledgementConfigurationV2, ProductCommitBindingSourceV2,
+    ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
+    ProductServerConfigurationV1, compose_product_codex_broker,
+    load_product_codex_broker_configuration, run_product_codex_broker,
 };
 pub use response::{
     BrokerMachineCodeV1, BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseKindV1,
@@ -101,4 +143,14 @@ pub use trust_source::{
     CapabilityTrustBundleSourcePolicyV1, LoadedSignedCapabilityTrustBundleV1,
     TrustBundleSourceError, install_signed_capability_trust_bundle_from_source,
     load_signed_capability_trust_bundle,
+};
+
+pub use delivery::{
+    BrokerPreparedDeliveryV1, load_codex_prepared_delivery, read_prepared_delivery_frame,
+    write_prepared_delivery_frame,
+};
+
+pub use client::{
+    BrokerResultClientError, acknowledge_committed_result_v2, dispatch_signed_operation,
+    query_prepared_result,
 };

@@ -5,14 +5,7 @@ use hepta_paper_service::automation_runtime_reconciliation::{
     inspect_current_automation_runtime_reconciliation_v1,
     inspect_legacy_terminal_active_residue_v1,
 };
-use hepta_paper_service::native_workspace::resolve_native_workspace_root_v1;
-use std::{
-    env,
-    fs::OpenOptions,
-    io::Read,
-    os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
-};
+use std::{env, fs::OpenOptions, io::Read, os::unix::fs::OpenOptionsExt, path::PathBuf};
 
 fn usage() {
     println!(
@@ -21,21 +14,8 @@ fn usage() {
 }
 
 fn default_database() -> Result<PathBuf, String> {
-    let cwd = env::current_dir().map_err(|_| "working directory unavailable")?;
-    let workspace = env::var_os("HEPTA_PAPER_WORKSPACE_ROOT")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let compiled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let workspace = resolve_native_workspace_root_v1(&cwd, &compiled, workspace.as_deref())?;
-    let runtime_default = workspace
-        .parent()
-        .unwrap_or(&workspace)
-        .join("hepta-paper-runtime/native-runtime");
-    let runtime = env::var_os("HEPTA_PAPER_RUNTIME_ROOT")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
     Ok(
-        resolve_native_workspace_root_v1(&cwd, &runtime_default, runtime.as_deref())?
+        hepta_paper_service::native_workspace::current_native_command_runtime_root_v1()?
             .join("hepta-paper.sqlite"),
     )
 }

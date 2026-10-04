@@ -274,8 +274,8 @@ fn normalized_absolute(path: &Path) -> PathBuf {
     }
     normalized
 }
-fn node_repository_root() -> PathBuf {
-    normalized_absolute(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+fn node_repository_root() -> Result<PathBuf> {
+    crate::native_workspace::current_native_command_workspace_root_v1(None).map_err(error)
 }
 fn node_default_asset_root(repository_root: &Path) -> PathBuf {
     if let Ok(value) = std::env::var("HEPTA_PAPER_ASSET_ROOT")
@@ -302,8 +302,8 @@ fn node_default_runtime_root(repository_root: &Path) -> PathBuf {
         .join("hepta-paper-runtime")
         .join("native-runtime")
 }
-fn node_protected_roots() -> Vec<PathBuf> {
-    let repository_root = node_repository_root();
+fn node_protected_roots() -> Result<Vec<PathBuf>> {
+    let repository_root = node_repository_root()?;
     let mut roots = vec![
         PathBuf::from("/var/lib/hepta-paper"),
         PathBuf::from("/srv/hepta-paper"),
@@ -319,10 +319,10 @@ fn node_protected_roots() -> Vec<PathBuf> {
     {
         roots.push(normalized_absolute(Path::new(&value)));
     }
-    roots
+    Ok(roots
         .into_iter()
         .map(|root| normalized_absolute(&root))
-        .collect()
+        .collect())
 }
 fn canonical_existing_directory(path: &Path, role: &str, private: bool) -> Result<PathBuf> {
     let canonical = fs::canonicalize(path)
@@ -980,7 +980,7 @@ fn selected_trust_key(value: &Value, key_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_iso_millis(value: &str) -> Option<i64> {
+pub(crate) fn parse_iso_millis(value: &str) -> Option<i64> {
     if value.len() != 24
         || !value.ends_with('Z')
         || value.as_bytes().get(4) != Some(&b'-')
@@ -1095,7 +1095,7 @@ pub fn inspect_local_golden_dataset_provisioning_v1(
     {
         return Err(error("local_golden_dataset_identity_invalid"));
     }
-    let protected = node_protected_roots();
+    let protected = node_protected_roots()?;
     for (role, path) in [
         ("runtimeRoot", &options.runtime_root),
         ("controlRoot", &options.control_root),

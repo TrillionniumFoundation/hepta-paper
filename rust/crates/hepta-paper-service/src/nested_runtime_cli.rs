@@ -102,6 +102,33 @@ pub fn nested_runtime_qualification_cli_v1(
     environment: &BTreeMap<String, String>,
     now: &str,
 ) -> Result<NestedRuntimeCliOutputV1, String> {
+    inner(argv, environment, now, None)
+}
+pub(crate) fn nested_runtime_qualification_cli_with_control_v1(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    now: &str,
+    worker_root: &std::path::Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> Result<NestedRuntimeCliOutputV1, String> {
+    inner(
+        argv,
+        environment,
+        now,
+        Some((worker_root, cancelled, deadline)),
+    )
+}
+fn inner(
+    argv: &[String],
+    environment: &BTreeMap<String, String>,
+    now: &str,
+    control: Option<(
+        &std::path::Path,
+        &std::sync::atomic::AtomicBool,
+        std::time::Instant,
+    )>,
+) -> Result<NestedRuntimeCliOutputV1, String> {
     let mut args = BTreeMap::new();
     let mut tokens = argv.iter();
     while let Some(token) = tokens.next() {
@@ -157,7 +184,22 @@ pub fn nested_runtime_qualification_cli_v1(
             .or_else(|| environment.get(*variable).filter(|v| !v.is_empty()))
             .map_or(Value::Null, |v| json!(v));
     }
-    verify_nested_runtime_platform_qualification_v1(&request)
+    let report = if let Some((worker_root, cancelled, deadline)) = control {
+        if let Some(selected) = request["configPath"].as_str().filter(|s| !s.is_empty()) {
+            request["configPath"] = crate::native_workspace::resolve_native_workspace_root_v1(
+                worker_root,
+                std::path::Path::new(selected),
+                None,
+            )?
+            .to_string_lossy()
+            .into_owned()
+            .into();
+        }
+        crate::nested_runtime_qualification::verify_nested_runtime_platform_qualification_with_control_v1(&request, cancelled, deadline)
+    } else {
+        verify_nested_runtime_platform_qualification_v1(&request)
+    };
+    report
         .map(NestedRuntimeCliOutputV1::Report)
         .map_err(|e| e.to_string())
 }

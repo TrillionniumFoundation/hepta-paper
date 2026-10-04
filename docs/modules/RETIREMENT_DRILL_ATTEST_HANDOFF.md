@@ -62,7 +62,33 @@ The Rust report is not a compatibility claim for the Node command. The
 incumbent runs actual Node migration tests in an isolated restored runtime,
 captures release-state/provenance snapshots, signs with a separately managed
 release key, and publishes a receipt under a no-clobber identity-bound
-transaction. Those steps require the external replay archive, release signer,
-owner and operational authorities, and independent acceptance. Until those
-inputs are verified, this command remains a local blocked inspection and the
-Node route must remain available.
+transaction. The report separates missing implementation from external
+qualification. Restored-runtime replay, complete matrix/policy replay,
+provenance composition, signing integration and publication/recovery remain
+implementation work; a key or an account cannot substitute for those owners.
+Independent owner/operational acceptance, release-key custody and physical
+deletion authority require actual external evidence. The machine lists in
+`hepta-cutover/src/retirement_attest.rs` remain the source for this classification.
+The separate V3 release replay observer covers only its fixed minimal legacy
+P0/P1 corpus, and is not composed into this V1 drill. Both ordinary commands
+remain blocked until their actual requirements are satisfied.
+
+## Receipt-bound reference inspection
+
+`hepta-paper-rust retirement-reference ROOT` is a separate read-only V1 owner.
+It retains the root/directory descriptors, rejects escaped names, symlinks,
+hardlinks and nonregular members, and streams the selected original archives.
+It reuses the duplicate-free JSON parser and the existing bounded process-group
+owner for fixed `/usr/bin/lsattr`; ambient PATH cannot select that tool. SIGINT
+and SIGTERM use the ordinary CLI cancellation adapter. Unknown process outcomes,
+changed named/held metadata, expired operation time and exceeded read budgets
+refuse without a verified report or a mutation.
+
+Limits are declared in `hepta-paper-service/src/retirement_reference.rs`: 4 MiB
+per receipt, 1 GiB per archive, 4 GiB total reads, 128 archive entries, 256
+immutable entries and 120 seconds for the operation. The valid V1 report keeps
+the Node field/exit-code contract. A reference verification result grants no
+retirement, research, release or submission authority. The ordinary differential,
+unsafe path/file/input, fixed-tool and actual open-archive cancellation cases are
+in `tests/retirement_reference_parity.rs`; held-file replacement and bounded
+stream cases are in `src/retirement_reference/files.rs`.

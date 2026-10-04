@@ -3,7 +3,7 @@ mod inspect;
 mod path;
 mod types;
 
-pub use inspect::inspect_codex_runtime_identity;
+pub use inspect::{codex_runtime_identity_hash_v1, inspect_codex_runtime_identity};
 pub use types::{
     CodexHomeIdentityV1, CodexRuntimeIdentityV1, CredentialMaterialIdentityV1,
     CredentialMaterialStatus, DirectoryIdentityV1, ExecutableIdentityV1, FileSystemIdentityV1,

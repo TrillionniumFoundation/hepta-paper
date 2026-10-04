@@ -341,6 +341,20 @@ pub fn publish_runtime_image_reproducibility_offline_v2(
     receipt: &Value,
     context: &ReceiptVerificationContext<'_>,
 ) -> Result<Value> {
+    publish_with_wire(receipt_path, receipt, context, None)
+}
+pub(super) fn publish_with_wire(
+    receipt_path: &Path,
+    receipt: &Value,
+    context: &ReceiptVerificationContext<'_>,
+    observed_wire: Option<&[u8]>,
+) -> Result<Value> {
+    if let Some(bytes) = observed_wire {
+        ensure(
+            bytes.len() as u64 <= MAX && parse(bytes)? == *receipt,
+            "runtime_reproducibility_receipt_wire_invalid",
+        )?;
+    }
     let inspection = verify_runtime_image_reproducibility_receipt_v2(receipt, context)?;
     ensure(
         inspection["ready"] == true
@@ -373,9 +387,15 @@ pub fn publish_runtime_image_reproducibility_offline_v2(
     verify_database(&db_path, &parent, &database_file)?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
     schema(&db)?;
-    let mut bytes = serde_json::to_vec_pretty(receipt)
-        .map_err(|_| Error("runtime_reproducibility_json_invalid".into()))?;
-    bytes.push(b'\n');
+    let bytes = match observed_wire {
+        Some(bytes) => bytes.to_vec(),
+        None => {
+            let mut bytes = serde_json::to_vec_pretty(receipt)
+                .map_err(|_| Error("runtime_reproducibility_json_invalid".into()))?;
+            bytes.push(b'\n');
+            bytes
+        }
+    };
     ensure(
         bytes.len() as u64 <= MAX,
         "runtime_reproducibility_receipt_file_invalid",

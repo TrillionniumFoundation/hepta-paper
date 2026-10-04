@@ -76,7 +76,13 @@ Declared class: `deterministic`. The same canonical input, module version, confi
 
 ## Failure, recovery, and idempotency
 
-Fail closed on peer, capability, socket, runtime, schema, journal, gate, containment, stream, or prepared-result mismatch. Restart reconciliation distinguishes pre-release, may-have-started, prepared, and committed outcomes without duplicate provider calls.
+Fail closed on peer, capability, socket, runtime, schema, journal, gate,
+containment, stream, workspace or prepared-result mismatch. Dispatch persists the
+pre-release workspace inventory before provider release. Local finalization
+recomputes the descriptor-bound post-execution inventory and cross-checks the
+stream, output and schema-validation identities against the journal before
+publishing a prepared receipt. Restart re-enters only missing local transitions;
+it never repeats a released provider call.
 
 ## Security and privacy
 
@@ -92,17 +98,68 @@ Track readiness, admission/dispatch latency, busy and rejection rates, queue dep
 
 ## Operational runbook
 
-The embedding host must install `BrokerOperationDispatcherV1` through
-`BrokerServerV1::with_dispatcher`. Without this adapter, admission/reservation
-is not provider execution. The [dispatch operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md)
-is the executable API runbook; this specification does not invent a generic
-production launch command or provision credentials.
+The canonical executable is `hepta-codex-broker <absolute-config.json>`, matching
+both deployment manifest versions. `--help` and `-h` print usage without loading
+configuration, starting signal watchers, opening a listener or touching journals.
+The former unpublished `hepta-codex-product-broker` target is removed rather than
+kept as another product launcher.
+
+`load_product_codex_broker_configuration` returns an inspectable but externally
+immutable `LoadedProductCodexBrokerConfigurationV1`. Callers use `configuration()`
+and `identity()`; direct field mutation is no longer supported. The composer
+reopens the original configuration through that same bounded owner/principal
+loader and compares the full captured identity and policy before opening the
+runtime, journal or listener. This is a startup revalidation boundary, not a
+lifetime configuration-revocation feed or protection against every later race.
+
+The installed adapter is `ProductCodexDispatcherV1`, supplied through
+`BrokerServerV1::with_dispatcher`. It requires a canonical operation descriptor
+owned by a principal distinct from the broker. The dispatcher retains the operation-directory device/inode and refuses path replacement while allowing new descriptors in the original directory. That descriptor binds the exact
+campaign attempt, role/task, lease/revision, prompt and input-manifest bytes,
+initial workspace inventory, output schema, mutation policy, validity window and
+resource/cost ceilings. These authority inputs are revalidated before provider
+release and again before accepting provider output; the postflight check permits
+only workspace changes subsequently accepted by the durable mutation owner. The
+descriptor digest is carried into the durable prepared receipt.
+Without this adapter, admission/reservation is not provider execution. The
+[dispatch operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md)
+is the executable API runbook; credential and installed daemon composition remain
+separate deployment inputs.
+
+The normal authenticated RPC now exposes the original journal-bound prepared
+and acknowledged receipt digests using the existing V1 response kinds. Exact
+request retries do not redispatch. Exact signed acknowledgement replay retains
+its original subject/time/signature checks and returns the durable terminal
+without appending again; conflicting acknowledgements remain rejected. See the
+[consumer recovery contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md#consumer-visible-results-and-acknowledgement-recovery)
+for lost-response/restart behavior and actual test commands. The explicit
+`HEPTAQX1` read-only query now transports the journal-bound original receipt and
+actual output through the existing role broker without reservation or dispatch.
+The normal execution wire stays unchanged. The consumer checks the expected
+broker peer and exact request/receipt/output; current authority is rechecked
+before output chunks. Expired-request recovery authority remains separate.
+
+The explicit `HEPTAAX2` route accepts a V2 acknowledgement only after the broker
+independently resolves the named attempt from the canonical campaign-writer
+SQLite control stream. The resolver checks the configured database owner, mode,
+link, schema and explicit local-only/activated-writer scope, then invokes the
+existing control-plane replay kernel over the complete sequencer chain. Every
+resolved commit field and actual cost must match the signed acknowledgement and
+the original broker request/prepared receipt before the existing
+`ResultPrepared -> Acknowledged` journal transition. A signature cannot replace
+this commit observation. Lost replies replay the same immutable ACK; conflicting
+or re-signed substituted commits fail closed. The resolver is read-only and does
+not introduce another campaign ledger or writer.
 
 Before listener readiness call `recover_codex_dispatch_containment`, then the
 normal journal reconciliation. A replaced cgroup or unresolved released
 operation blocks admission; do not adopt a numeric PID or synthesize success.
-On shutdown stop admission and join the existing bounded workers. A provider
-timeout remains unknown until its original operation is reconciled.
+For a journal at `SchemaValidated`, `WorkspaceSnapshotted` or
+`MutationValidated`, invoke `finalize_codex_prepared_result` with the same bound
+workspace and mutation policy. It reuses the original evidence and advances only
+missing local transitions; it must not dispatch the provider again. On shutdown
+stop admission and join the existing bounded workers. A provider timeout remains
+unknown until its original operation is reconciled.
 
 For a backup, use `create_quiesced_codex_dispatch_backup` under its exclusive
 dispatch lock. Retain its manifest hash separately. Restore only with
@@ -118,7 +175,19 @@ Capability bindings: `CAP-EXE-BROKER`. Related work identifiers: `GAP-CODEX-001`
 
 ### Runtime migration implementation details
 
-See the [Codex dispatch implementation and operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md). It describes external execution-authority verification, permit and deadline binding, bounded stdin/stdout/stderr, cancellation, cgroup attachment and cleanup, output-schema validation, event journaling, and provider ambiguity. Its quiesced dispatch backup/restore contract binds shared/exclusive locking, journal and sidecar hash manifests, fresh restore destinations and rejection of active PID/cgroup authority recovery. The implementation roots explicitly include containment, event-stream, runtime and testkit crates. Local protocol tests cannot establish target-host cgroup, namespace or process-gate qualification.
+See the [Codex dispatch implementation and operations contract](../../../rust/crates/hepta-codex-broker/DISPATCH.md). It describes external execution-authority verification, permit and deadline binding, bounded stdin/stdout/stderr, cancellation, cgroup attachment and cleanup, output-schema validation, event journaling, provider ambiguity, descriptor-bound mutation validation and crash-reentrant prepared-result publication. Its quiesced dispatch backup/restore contract binds shared/exclusive locking, journal and all three sidecar hash manifests, fresh restore destinations and rejection of active PID/cgroup authority recovery. The implementation roots explicitly include containment, event-stream, workspace, runtime and testkit crates. Local protocol tests cannot establish target-host cgroup, namespace, process-gate or real credential qualification.
+
+The ordinary service and local workflow can now import an existing broker result
+through the [broker-prepared consumer](../LOCAL_WORKFLOW_HANDOFF.md#broker-prepared-result-consumption).
+It uses the existing CAS, verifier and SQLite sequencer without dispatching a
+provider. When the source names a commit-acknowledgement authority, the ordinary
+service sends the post-commit V2 frame and recovers an uncertain reply without
+provider re-execution or another debit. A broker source that also enables signed
+measured billing must use a different authority domain, receipt directory and
+public key for billing and ACK; shared logical authority is rejected before
+execution. This closes the source call chain only; distinct installed
+request/billing/ACK principals, live role canaries and production activation
+remain separate.
 
 ## Rollout and rollback
 

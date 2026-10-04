@@ -2,6 +2,7 @@
 //! distinct from human single-use live-commit authorization. No network or
 //! credential code is involved in any of the four operations.
 mod cli;
+pub(crate) use cli::portal_target_qualification_cli_with_control_v1;
 mod files;
 mod preflight;
 pub use cli::{PortalTargetQualificationCliOutputV1, portal_target_qualification_cli_at_v1};
@@ -19,6 +20,18 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[error("{0}")]
 pub struct PortalTargetQualificationError(pub String);
+type Control<'a> = Option<(&'a std::sync::atomic::AtomicBool, std::time::Instant)>;
+fn checkpoint(control: Control<'_>) -> Result<()> {
+    if let Some((cancelled, deadline)) = control {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(error("portal_target_qualification_cancelled"));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(error("portal_target_qualification_deadline_exceeded"));
+        }
+    }
+    Ok(())
+}
 type Result<T> = std::result::Result<T, PortalTargetQualificationError>;
 fn error(value: impl Into<String>) -> PortalTargetQualificationError {
     PortalTargetQualificationError(value.into())
@@ -289,6 +302,13 @@ pub fn plan_portal_target_qualification_import_v1(
 pub fn execute_portal_target_qualification_import_v1(
     options: &PortalTargetQualificationOperatorOptionsV1,
 ) -> Result<Value> {
+    execute_inner(options, None)
+}
+fn execute_inner(
+    options: &PortalTargetQualificationOperatorOptionsV1,
+    control: Control<'_>,
+) -> Result<Value> {
+    checkpoint(control)?;
     let expected = pin(
         options.expected_plan_hash.as_deref(),
         "portal_target_qualification_plan_hash_required",
@@ -296,12 +316,16 @@ pub fn execute_portal_target_qualification_import_v1(
     )?
     .ok_or_else(|| error("portal_target_qualification_plan_hash_required"))?;
     let initial = plan(options)?;
+    checkpoint(control)?;
     if initial.report["planHash"] != expected {
         return Err(error("portal_target_qualification_plan_hash_mismatch"));
     }
     let registry_path = PathBuf::from(text(&initial.report["registryPath"])?);
+    checkpoint(control)?;
     let lock = files::RegistryLock::acquire(&registry_path, &expected)?;
+    checkpoint(control)?;
     let before = plan(options)?;
+    checkpoint(control)?;
     if before.report["planHash"] != expected {
         return Err(error("portal_target_qualification_plan_stale"));
     }
@@ -310,16 +334,21 @@ pub fn execute_portal_target_qualification_import_v1(
     if let Some(current) = &before.current {
         current.assert_current()?;
     }
-    let publication = lock.publish(
-        &before.candidate.document.publication_bytes()?,
-        before.current.as_ref(),
-    )?;
+    checkpoint(control)?;
+    let bytes = before.candidate.document.publication_bytes()?;
+    let publication = if control.is_some() {
+        lock.publish_with_control(&bytes, before.current.as_ref(), control)?
+    } else {
+        lock.publish(&bytes, before.current.as_ref())?
+    };
+    checkpoint(control)?;
     let mut inspect_options = options.clone();
     inspect_options.registry_path = Some(registry_path.clone());
     inspect_options.expected_registry_hash = before.report["candidateRegistryHash"]
         .as_str()
         .map(str::to_owned);
     let inspection = inspect_portal_target_qualification_v1(&inspect_options).and_then(|report| {
+        checkpoint(control)?;
         before.trust.assert_current()?;
         lock.assert_current()?;
         if report["ready"] != true {
@@ -335,7 +364,11 @@ pub fn execute_portal_target_qualification_import_v1(
     });
     let inspection = match inspection {
         Ok(inspection) => {
+            checkpoint(control)?;
             publication.commit()?;
+            // A later cancellation can leave a durable registry. The original
+            // status/pin path observes it; no successful ACK is fabricated.
+            checkpoint(control)?;
             inspection
         }
         Err(failed) => {
@@ -350,4 +383,32 @@ pub fn execute_portal_target_qualification_import_v1(
     Ok(
         json!({"version":1,"kind":"PortalTargetQualificationRegistryImportReceipt","status":"portal_target_qualification_registry_imported","planHash":expected,"registryPath":registry_path,"registryHash":inspection["registryHash"],"generation":inspection["generation"],"targetVenueIds":before.report["targetVenueIds"],"inspection":inspection,"externalActionPerformed":false,"liveCommitPermitProduced":false,"liveCommitPermitConsumed":false,"humanSingleUseAuthorizationRequired":true}),
     )
+}
+
+#[cfg(test)]
+mod ordinary_control_tests {
+    use super::*;
+    use std::{
+        sync::atomic::AtomicBool,
+        time::{Duration, Instant},
+    };
+    #[test]
+    fn inherited_cancel_and_deadline_refuse_before_import_lock_or_publication() {
+        let options = PortalTargetQualificationOperatorOptionsV1::default();
+        let cancelled = AtomicBool::new(true);
+        let deadline = Instant::now().checked_add(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            execute_inner(&options, Some((&cancelled, deadline)))
+                .unwrap_err()
+                .to_string(),
+            "portal_target_qualification_cancelled"
+        );
+        let active = AtomicBool::new(false);
+        assert_eq!(
+            execute_inner(&options, Some((&active, Instant::now())))
+                .unwrap_err()
+                .to_string(),
+            "portal_target_qualification_deadline_exceeded"
+        );
+    }
 }

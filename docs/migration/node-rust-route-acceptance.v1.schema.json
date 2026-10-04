@@ -1,0 +1,2063 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hepta-paper/node-rust-route-acceptance-v1",
+  "title": "Current-subject local read-only command behavior record",
+  "description": "The independent consumer must rebuild and replay the ordinary Node/Rust command matrix. Schema validation alone grants no acceptance or authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "scope",
+    "subject",
+    "runtime",
+    "authority",
+    "rows",
+    "recordSha256"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "NodeRustRouteAcceptanceRecordV1"
+    },
+    "scope": {
+      "const": "local-readonly-command-behavior-no-external-authority"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "tree",
+        "committedClean"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "committedClean": {
+          "const": true
+        },
+        "gitlinkReferenceProfile": {
+          "$ref": "#/$defs/gitlinkReferenceProfile"
+        },
+        "publicRSourceContentProfile": {
+          "$ref": "#/$defs/publicRSourceContentProfile"
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionActivation",
+        "targetHostQualification",
+        "releaseAuthority",
+        "submissionAuthority",
+        "writerCutover",
+        "nodeRetirement"
+      ],
+      "properties": {
+        "productionActivation": {
+          "const": false
+        },
+        "targetHostQualification": {
+          "const": false
+        },
+        "releaseAuthority": {
+          "const": false
+        },
+        "submissionAuthority": {
+          "const": false
+        },
+        "writerCutover": {
+          "const": false
+        },
+        "nodeRetirement": {
+          "const": false
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node",
+        "cargoVersion",
+        "buildArgs",
+        "nativeOwners"
+      ],
+      "properties": {
+        "node": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "sha256"
+          ],
+          "properties": {
+            "version": {
+              "const": "v22.23.1"
+            },
+            "sha256": {
+              "$ref": "#/$defs/hash"
+            }
+          }
+        },
+        "cargoVersion": {
+          "type": "string",
+          "pattern": "^cargo 1\\.98\\.0\\b"
+        },
+        "buildArgs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "string"
+          }
+        },
+        "nativeOwners": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "hepta-paper-rust"
+          ],
+          "properties": {
+            "hepta-paper-rust": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sha256"
+              ],
+              "properties": {
+                "sha256": {
+                  "$ref": "#/$defs/hash"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "routeId",
+          "argumentContractSha256",
+          "behaviorContractSha256",
+          "cases"
+        ],
+        "properties": {
+          "routeId": {
+            "enum": [
+              "operator/workspace",
+              "verify/repository-assets",
+              "operator/store"
+            ]
+          },
+          "argumentContractSha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "behaviorContractSha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 512,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "caseId",
+                "inputSha256",
+                "nodeArgv",
+                "nativeArgv",
+                "environment",
+                "node",
+                "native",
+                "retry",
+                "effectsUnchanged",
+                "passed"
+              ],
+              "properties": {
+                "caseId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "inputSha256": {
+                  "$ref": "#/$defs/hash"
+                },
+                "nodeArgv": {
+                  "$ref": "#/$defs/argv"
+                },
+                "nativeArgv": {
+                  "$ref": "#/$defs/argv"
+                },
+                "environment": {
+                  "type": "object",
+                  "maxProperties": 4,
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "node": {
+                  "$ref": "#/$defs/outcome"
+                },
+                "native": {
+                  "$ref": "#/$defs/outcome"
+                },
+                "retry": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "node",
+                        "native",
+                        "effectsUnchanged"
+                      ],
+                      "properties": {
+                        "node": {
+                          "$ref": "#/$defs/outcome"
+                        },
+                        "native": {
+                          "$ref": "#/$defs/outcome"
+                        },
+                        "effectsUnchanged": {
+                          "type": "boolean"
+                        },
+                        "effectsSatisfied": {
+                          "const": true
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "effectsUnchanged": {
+                                "const": false
+                              }
+                            },
+                            "required": [
+                              "effectsUnchanged"
+                            ]
+                          },
+                          "then": {
+                            "required": [
+                              "effectsSatisfied"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "effectsUnchanged": {
+                  "type": "boolean"
+                },
+                "effectsSatisfied": {
+                  "const": true
+                },
+                "readCoordination": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/readCoordination"
+                    },
+                    {
+                      "$ref": "#/$defs/closedWalReadCoordination"
+                    }
+                  ]
+                },
+                "passed": {
+                  "const": true
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "effectsUnchanged": {
+                        "const": false
+                      }
+                    },
+                    "required": [
+                      "effectsUnchanged"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "effectsSatisfied",
+                      "readCoordination"
+                    ],
+                    "properties": {
+                      "caseId": {
+                        "pattern": "^(live-wal|closed-wal)/"
+                      },
+                      "effectsSatisfied": {
+                        "const": true
+                      },
+                      "readCoordination": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/$defs/readCoordination"
+                          },
+                          {
+                            "$ref": "#/$defs/closedWalReadCoordination"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "caseId": {
+                        "pattern": "^closed-wal/"
+                      }
+                    },
+                    "required": [
+                      "caseId"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "effectsSatisfied",
+                      "readCoordination"
+                    ],
+                    "properties": {
+                      "readCoordination": {
+                        "$ref": "#/$defs/closedWalReadCoordination"
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "retry": {
+                        "properties": {
+                          "effectsUnchanged": {
+                            "const": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "routeId": {
+                  "const": "operator/store"
+                }
+              },
+              "required": [
+                "routeId"
+              ]
+            },
+            "else": {
+              "properties": {
+                "cases": {
+                  "items": {
+                    "properties": {
+                      "effectsUnchanged": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "recordSha256": {
+      "$ref": "#/$defs/hash"
+    }
+  },
+  "$defs": {
+    "gitlinkReferenceParent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "dev",
+        "ino",
+        "mode",
+        "uid",
+        "gid"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/"
+        },
+        "dev": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "ino": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "uid": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "gid": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        }
+      }
+    },
+    "gitlinkReferenceLeaf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "dev",
+        "ino",
+        "mode",
+        "uid",
+        "gid",
+        "nlink",
+        "size",
+        "mtimeNs",
+        "ctimeNs"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^/"
+        },
+        "dev": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "ino": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "uid": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "gid": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "nlink": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "mtimeNs": {
+          "type": "string",
+          "pattern": "^-?[0-9]{1,30}$"
+        },
+        "ctimeNs": {
+          "type": "string",
+          "pattern": "^-?[0-9]{1,30}$"
+        }
+      }
+    },
+    "gitlinkReferenceProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "kind",
+        "observationScope",
+        "references"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "UnmaterializedGitlinkReferences"
+        },
+        "observationScope": {
+          "const": "selected_tree_and_index_commits_without_nested_source_bytes"
+        },
+        "references": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16384,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "mode",
+              "commit",
+              "state",
+              "parents",
+              "leaf"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\)(?!.*//).+$"
+              },
+              "mode": {
+                "const": "160000"
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "state": {
+                "const": "empty_directory"
+              },
+              "parents": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4096,
+                "items": {
+                  "$ref": "#/$defs/gitlinkReferenceParent"
+                }
+              },
+              "leaf": {
+                "$ref": "#/$defs/gitlinkReferenceLeaf"
+              }
+            }
+          }
+        }
+      }
+    },
+    "walPhysicalObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "walSha256",
+        "shmSha256",
+        "identity",
+        "times",
+        "walIdentity",
+        "walTimes"
+      ],
+      "properties": {
+        "walSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "shmSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dev",
+            "ino",
+            "uid",
+            "gid",
+            "mode",
+            "nlink",
+            "size"
+          ],
+          "properties": {
+            "dev": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "ino": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "uid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "gid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "mode": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "nlink": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            }
+          }
+        },
+        "times": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mtimeNs",
+            "ctimeNs"
+          ],
+          "properties": {
+            "mtimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            },
+            "ctimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            }
+          }
+        },
+        "walIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dev",
+            "ino",
+            "uid",
+            "gid",
+            "mode",
+            "nlink",
+            "size"
+          ],
+          "properties": {
+            "dev": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "ino": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "uid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "gid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "mode": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "nlink": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            }
+          }
+        },
+        "walTimes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mtimeNs",
+            "ctimeNs"
+          ],
+          "properties": {
+            "mtimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            },
+            "ctimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            }
+          }
+        }
+      }
+    },
+    "readCoordination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "firstReader",
+        "formatAndAllChecksumsVerified",
+        "shmIdentityPermissionsAndLengthUnchanged",
+        "headerRebuiltWithoutProductWrite",
+        "frameCount",
+        "allowedByteRanges",
+        "databaseWalAndOtherPathsUnchanged",
+        "physicalObservations"
+      ],
+      "properties": {
+        "kind": {
+          "const": "SQLiteColdWalReadCoordinationV1"
+        },
+        "firstReader": {
+          "enum": [
+            "node",
+            "native"
+          ]
+        },
+        "formatAndAllChecksumsVerified": {
+          "const": true
+        },
+        "shmIdentityPermissionsAndLengthUnchanged": {
+          "const": true
+        },
+        "headerRebuiltWithoutProductWrite": {
+          "const": true
+        },
+        "frameCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4061
+        },
+        "allowedByteRanges": {
+          "const": [
+            [
+              8,
+              12
+            ],
+            [
+              40,
+              48
+            ],
+            [
+              56,
+              60
+            ],
+            [
+              88,
+              96
+            ],
+            [
+              104,
+              108
+            ],
+            [
+              128,
+              132
+            ]
+          ]
+        },
+        "databaseWalAndOtherPathsUnchanged": {
+          "const": true
+        },
+        "physicalObservations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "byteChanges",
+            "before",
+            "afterNode",
+            "afterNative"
+          ],
+          "properties": {
+            "byteChanges": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "offset",
+                  "before",
+                  "afterNode",
+                  "afterNative"
+                ],
+                "properties": {
+                  "offset": {
+                    "type": "integer",
+                    "minimum": 8,
+                    "maximum": 131
+                  },
+                  "before": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "afterNode": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  },
+                  "afterNative": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 255
+                  }
+                }
+              }
+            },
+            "before": {
+              "$ref": "#/$defs/walPhysicalObservation"
+            },
+            "afterNode": {
+              "$ref": "#/$defs/walPhysicalObservation"
+            },
+            "afterNative": {
+              "$ref": "#/$defs/walPhysicalObservation"
+            }
+          }
+        }
+      }
+    },
+    "closedWalParentObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "size",
+        "times",
+        "names"
+      ],
+      "properties": {
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dev",
+            "ino",
+            "uid",
+            "gid",
+            "mode",
+            "nlink"
+          ],
+          "properties": {
+            "dev": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "ino": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "uid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "gid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "mode": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "nlink": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            }
+          }
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "times": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mtimeNs",
+            "ctimeNs"
+          ],
+          "properties": {
+            "mtimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            },
+            "ctimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            }
+          }
+        },
+        "names": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      }
+    },
+    "closedWalPhysicalObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "databaseSha256",
+        "databaseIdentity",
+        "databaseTimes",
+        "parent",
+        "files"
+      ],
+      "properties": {
+        "databaseSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "databaseIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "dev",
+            "ino",
+            "uid",
+            "gid",
+            "mode",
+            "nlink",
+            "size"
+          ],
+          "properties": {
+            "dev": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "ino": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "uid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "gid": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "mode": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "nlink": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]{1,20}$"
+            }
+          }
+        },
+        "databaseTimes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mtimeNs",
+            "ctimeNs"
+          ],
+          "properties": {
+            "mtimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            },
+            "ctimeNs": {
+              "type": "string",
+              "pattern": "^-?[0-9]{1,30}$"
+            }
+          }
+        },
+        "parent": {
+          "$ref": "#/$defs/closedWalParentObservation"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "identity",
+                    "times",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "const": "runtime/hepta-paper.sqlite-wal"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dev",
+                        "ino",
+                        "uid",
+                        "gid",
+                        "mode",
+                        "nlink",
+                        "size"
+                      ],
+                      "properties": {
+                        "dev": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "ino": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "uid": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "gid": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "nlink": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "size": {
+                          "enum": [
+                            "0"
+                          ]
+                        }
+                      }
+                    },
+                    "times": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "mtimeNs",
+                        "ctimeNs"
+                      ],
+                      "properties": {
+                        "mtimeNs": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]{1,30}$"
+                        },
+                        "ctimeNs": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]{1,30}$"
+                        }
+                      }
+                    },
+                    "sha256": {
+                      "const": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "path",
+                    "identity",
+                    "times",
+                    "sha256"
+                  ],
+                  "properties": {
+                    "path": {
+                      "const": "runtime/hepta-paper.sqlite-shm"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dev",
+                        "ino",
+                        "uid",
+                        "gid",
+                        "mode",
+                        "nlink",
+                        "size"
+                      ],
+                      "properties": {
+                        "dev": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "ino": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "uid": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "gid": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "nlink": {
+                          "type": "string",
+                          "pattern": "^[0-9]{1,20}$"
+                        },
+                        "size": {
+                          "enum": [
+                            "0",
+                            "32768"
+                          ]
+                        }
+                      }
+                    },
+                    "times": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "mtimeNs",
+                        "ctimeNs"
+                      ],
+                      "properties": {
+                        "mtimeNs": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]{1,30}$"
+                        },
+                        "ctimeNs": {
+                          "type": "string",
+                          "pattern": "^-?[0-9]{1,30}$"
+                        }
+                      }
+                    },
+                    "sha256": {
+                      "$ref": "#/$defs/hash"
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false
+        }
+      }
+    },
+    "closedWalReadCoordination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "firstReader",
+        "frameCount",
+        "initialCoordinationAbsent",
+        "databaseWalHeaderVerified",
+        "exactEmptyWalAndZeroFrameShmVerified",
+        "createdOwnershipPermissionsAndIdentityVerified",
+        "parentNamespaceOnlyValidatedCoordinationCreated",
+        "reusedCreatedFileIdentityUnchanged",
+        "databaseAndOtherPathsUnchanged",
+        "createdFilePaths",
+        "emptyWalSha256",
+        "zeroFrameShmSha256",
+        "physicalObservations"
+      ],
+      "properties": {
+        "kind": {
+          "const": "SQLiteClosedWalReadCoordinationV1"
+        },
+        "firstReader": {
+          "enum": [
+            "node",
+            "native"
+          ]
+        },
+        "frameCount": {
+          "const": 0
+        },
+        "initialCoordinationAbsent": {
+          "const": true
+        },
+        "databaseWalHeaderVerified": {
+          "const": true
+        },
+        "exactEmptyWalAndZeroFrameShmVerified": {
+          "const": true
+        },
+        "createdOwnershipPermissionsAndIdentityVerified": {
+          "const": true
+        },
+        "parentNamespaceOnlyValidatedCoordinationCreated": {
+          "const": true
+        },
+        "reusedCreatedFileIdentityUnchanged": {
+          "const": true
+        },
+        "databaseAndOtherPathsUnchanged": {
+          "const": true
+        },
+        "createdFilePaths": {
+          "const": [
+            "runtime/hepta-paper.sqlite-wal",
+            "runtime/hepta-paper.sqlite-shm"
+          ]
+        },
+        "emptyWalSha256": {
+          "const": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "zeroFrameShmSha256": {
+          "const": "sha256:fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb"
+        },
+        "physicalObservations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "before",
+            "stages"
+          ],
+          "properties": {
+            "before": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "databaseSha256",
+                "databaseIdentity",
+                "databaseTimes",
+                "parent",
+                "files"
+              ],
+              "properties": {
+                "databaseSha256": {
+                  "$ref": "#/$defs/hash"
+                },
+                "databaseIdentity": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "dev",
+                    "ino",
+                    "uid",
+                    "gid",
+                    "mode",
+                    "nlink",
+                    "size"
+                  ],
+                  "properties": {
+                    "dev": {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,20}$"
+                    },
+                    "ino": {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,20}$"
+                    },
+                    "uid": {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,20}$"
+                    },
+                    "gid": {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,20}$"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,20}$"
+                    },
+                    "nlink": {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,20}$"
+                    },
+                    "size": {
+                      "type": "string",
+                      "pattern": "^[0-9]{1,20}$"
+                    }
+                  }
+                },
+                "databaseTimes": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "mtimeNs",
+                    "ctimeNs"
+                  ],
+                  "properties": {
+                    "mtimeNs": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]{1,30}$"
+                    },
+                    "ctimeNs": {
+                      "type": "string",
+                      "pattern": "^-?[0-9]{1,30}$"
+                    }
+                  }
+                },
+                "parent": {
+                  "$ref": "#/$defs/closedWalParentObservation"
+                },
+                "files": {
+                  "const": [
+                    null,
+                    null
+                  ]
+                }
+              }
+            },
+            "stages": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "databaseSha256",
+                  "databaseIdentity",
+                  "databaseTimes",
+                  "parent",
+                  "files",
+                  "reader",
+                  "phase"
+                ],
+                "properties": {
+                  "databaseSha256": {
+                    "$ref": "#/$defs/hash"
+                  },
+                  "databaseIdentity": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "dev",
+                      "ino",
+                      "uid",
+                      "gid",
+                      "mode",
+                      "nlink",
+                      "size"
+                    ],
+                    "properties": {
+                      "dev": {
+                        "type": "string",
+                        "pattern": "^[0-9]{1,20}$"
+                      },
+                      "ino": {
+                        "type": "string",
+                        "pattern": "^[0-9]{1,20}$"
+                      },
+                      "uid": {
+                        "type": "string",
+                        "pattern": "^[0-9]{1,20}$"
+                      },
+                      "gid": {
+                        "type": "string",
+                        "pattern": "^[0-9]{1,20}$"
+                      },
+                      "mode": {
+                        "type": "string",
+                        "pattern": "^[0-9]{1,20}$"
+                      },
+                      "nlink": {
+                        "type": "string",
+                        "pattern": "^[0-9]{1,20}$"
+                      },
+                      "size": {
+                        "type": "string",
+                        "pattern": "^[0-9]{1,20}$"
+                      }
+                    }
+                  },
+                  "databaseTimes": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "mtimeNs",
+                      "ctimeNs"
+                    ],
+                    "properties": {
+                      "mtimeNs": {
+                        "type": "string",
+                        "pattern": "^-?[0-9]{1,30}$"
+                      },
+                      "ctimeNs": {
+                        "type": "string",
+                        "pattern": "^-?[0-9]{1,30}$"
+                      }
+                    }
+                  },
+                  "parent": {
+                    "$ref": "#/$defs/closedWalParentObservation"
+                  },
+                  "files": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "prefixItems": [
+                      {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "path",
+                              "identity",
+                              "times",
+                              "sha256"
+                            ],
+                            "properties": {
+                              "path": {
+                                "const": "runtime/hepta-paper.sqlite-wal"
+                              },
+                              "identity": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "dev",
+                                  "ino",
+                                  "uid",
+                                  "gid",
+                                  "mode",
+                                  "nlink",
+                                  "size"
+                                ],
+                                "properties": {
+                                  "dev": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "ino": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "uid": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "gid": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "mode": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "nlink": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "size": {
+                                    "enum": [
+                                      "0"
+                                    ]
+                                  }
+                                }
+                              },
+                              "times": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "mtimeNs",
+                                  "ctimeNs"
+                                ],
+                                "properties": {
+                                  "mtimeNs": {
+                                    "type": "string",
+                                    "pattern": "^-?[0-9]{1,30}$"
+                                  },
+                                  "ctimeNs": {
+                                    "type": "string",
+                                    "pattern": "^-?[0-9]{1,30}$"
+                                  }
+                                }
+                              },
+                              "sha256": {
+                                "const": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "path",
+                              "identity",
+                              "times",
+                              "sha256"
+                            ],
+                            "properties": {
+                              "path": {
+                                "const": "runtime/hepta-paper.sqlite-shm"
+                              },
+                              "identity": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "dev",
+                                  "ino",
+                                  "uid",
+                                  "gid",
+                                  "mode",
+                                  "nlink",
+                                  "size"
+                                ],
+                                "properties": {
+                                  "dev": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "ino": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "uid": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "gid": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "mode": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "nlink": {
+                                    "type": "string",
+                                    "pattern": "^[0-9]{1,20}$"
+                                  },
+                                  "size": {
+                                    "enum": [
+                                      "0",
+                                      "32768"
+                                    ]
+                                  }
+                                }
+                              },
+                              "times": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "mtimeNs",
+                                  "ctimeNs"
+                                ],
+                                "properties": {
+                                  "mtimeNs": {
+                                    "type": "string",
+                                    "pattern": "^-?[0-9]{1,30}$"
+                                  },
+                                  "ctimeNs": {
+                                    "type": "string",
+                                    "pattern": "^-?[0-9]{1,30}$"
+                                  }
+                                }
+                              },
+                              "sha256": {
+                                "$ref": "#/$defs/hash"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ],
+                    "items": false
+                  },
+                  "reader": {
+                    "enum": [
+                      "node",
+                      "native"
+                    ]
+                  },
+                  "phase": {
+                    "enum": [
+                      "complete",
+                      "interrupted",
+                      "retry"
+                    ]
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "phase": {
+                          "enum": [
+                            "complete",
+                            "retry"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "phase"
+                      ]
+                    },
+                    "then": {
+                      "properties": {
+                        "files": {
+                          "type": "array",
+                          "minItems": 2,
+                          "maxItems": 2,
+                          "prefixItems": [
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "path",
+                                "identity",
+                                "times",
+                                "sha256"
+                              ],
+                              "properties": {
+                                "path": {
+                                  "const": "runtime/hepta-paper.sqlite-wal"
+                                },
+                                "identity": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "dev",
+                                    "ino",
+                                    "uid",
+                                    "gid",
+                                    "mode",
+                                    "nlink",
+                                    "size"
+                                  ],
+                                  "properties": {
+                                    "dev": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "ino": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "uid": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "gid": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "mode": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "nlink": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "size": {
+                                      "enum": [
+                                        "0"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "times": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "mtimeNs",
+                                    "ctimeNs"
+                                  ],
+                                  "properties": {
+                                    "mtimeNs": {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]{1,30}$"
+                                    },
+                                    "ctimeNs": {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]{1,30}$"
+                                    }
+                                  }
+                                },
+                                "sha256": {
+                                  "const": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                                }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "path",
+                                "identity",
+                                "times",
+                                "sha256"
+                              ],
+                              "properties": {
+                                "path": {
+                                  "const": "runtime/hepta-paper.sqlite-shm"
+                                },
+                                "identity": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "dev",
+                                    "ino",
+                                    "uid",
+                                    "gid",
+                                    "mode",
+                                    "nlink",
+                                    "size"
+                                  ],
+                                  "properties": {
+                                    "dev": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "ino": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "uid": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "gid": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "mode": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "nlink": {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{1,20}$"
+                                    },
+                                    "size": {
+                                      "const": "32768"
+                                    }
+                                  }
+                                },
+                                "times": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "mtimeNs",
+                                    "ctimeNs"
+                                  ],
+                                  "properties": {
+                                    "mtimeNs": {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]{1,30}$"
+                                    },
+                                    "ctimeNs": {
+                                      "type": "string",
+                                      "pattern": "^-?[0-9]{1,30}$"
+                                    }
+                                  }
+                                },
+                                "sha256": {
+                                  "const": "sha256:fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb"
+                                }
+                              }
+                            }
+                          ],
+                          "items": false
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "maxLength": 2048
+      }
+    },
+    "outcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome",
+            "exitCode",
+            "stdout",
+            "diagnostic"
+          ],
+          "properties": {
+            "outcome": {
+              "const": "report"
+            },
+            "exitCode": {
+              "enum": [
+                0,
+                1,
+                2
+              ]
+            },
+            "stdout": {
+              "type": "object"
+            },
+            "diagnostic": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome",
+            "exitCode",
+            "error",
+            "stdout"
+          ],
+          "properties": {
+            "outcome": {
+              "const": "refusal"
+            },
+            "exitCode": {
+              "enum": [
+                1,
+                2
+              ]
+            },
+            "error": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stdout": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome",
+            "exitCode",
+            "signal",
+            "stdout"
+          ],
+          "properties": {
+            "outcome": {
+              "const": "unknown-result"
+            },
+            "exitCode": {
+              "type": "null"
+            },
+            "signal": {
+              "enum": [
+                "SIGTERM",
+                "SIGKILL"
+              ]
+            },
+            "stdout": {
+              "type": "null"
+            }
+          }
+        }
+      ]
+    },
+    "publicRSourcePhysicalInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "dev",
+        "ino",
+        "mode",
+        "uid",
+        "gid",
+        "nlink",
+        "size",
+        "mtimeNs",
+        "ctimeNs"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^runtime-images/r-scientific/source-cas(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$"
+        },
+        "dev": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "ino": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "uid": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "gid": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "nlink": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "mtimeNs": {
+          "type": "string",
+          "pattern": "^-?[0-9]{1,30}$"
+        },
+        "ctimeNs": {
+          "type": "string",
+          "pattern": "^-?[0-9]{1,30}$"
+        },
+        "blob": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "publicRSourceContentProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "kind",
+        "path",
+        "gitlinkReference",
+        "sourceTree",
+        "manifestBlob",
+        "routeBlob",
+        "fileCount",
+        "totalBytes",
+        "physicalInputs",
+        "physicalAfterMatched",
+        "gitlinkCommitQualified",
+        "productionAuthorized",
+        "packageExecutionAllowed"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "PublicHistoricalRSourceContent"
+        },
+        "path": {
+          "const": "runtime-images/r-scientific/source-cas"
+        },
+        "gitlinkReference": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "sourceTree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "manifestBlob": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "routeBlob": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "fileCount": {
+          "const": 107
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 134217728
+        },
+        "physicalInputs": {
+          "type": "array",
+          "minItems": 107,
+          "maxItems": 4096,
+          "items": {
+            "$ref": "#/$defs/publicRSourcePhysicalInput"
+          }
+        },
+        "physicalAfterMatched": {
+          "const": true
+        },
+        "gitlinkCommitQualified": {
+          "const": false
+        },
+        "productionAuthorized": {
+          "const": false
+        },
+        "packageExecutionAllowed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

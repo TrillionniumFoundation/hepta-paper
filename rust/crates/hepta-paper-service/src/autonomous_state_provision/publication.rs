@@ -369,20 +369,7 @@ fn publish_with_hook(
         // installation. Only the owner that observed publication issues this
         // separately durable terminal receipt.
         hook("before_terminal_receipt")?;
-        let mut terminal = receipt.clone();
-        terminal["preparedReceiptHash"] = receipt["provisioningReceiptHash"].clone();
-        terminal
-            .as_object_mut()
-            .ok_or_else(|| error(INVALID))?
-            .remove("provisioningReceiptHash");
-        terminal["status"] = json!("autonomous_research_state_business_schemas_provisioned");
-        terminal["ready"] = json!(true);
-        terminal["freshRuntimeInstalled"] = json!(true);
-        terminal["publicationState"] = json!("published");
-        terminal["provisioningReceiptHash"] = json!(input_hash(
-            "AutonomousResearchStateBusinessSchemaProvisioningReceipt",
-            &terminal
-        )?);
+        let terminal = terminal_receipt(receipt)?;
         let terminal_bytes = serde_json::to_vec_pretty(&terminal)?;
         if terminal_bytes.len() > 1024 * 1024 {
             return Err(error("autonomous_state_provisioning_receipt_bound"));
@@ -401,6 +388,38 @@ fn publish_with_hook(
     outcome.map_err(|failure|error(format!("{}; publicationState={}; retainedStaging={}; runtimeRoot={}; automaticRetryAllowed=false",
         failure.0,match published {Some(true)=>"published",Some(false)=>"not_published",None=>"indeterminate"},
         stage_path.display(),target.path.display())))
+}
+
+pub(super) fn terminal_receipt(receipt: &Value) -> Result<Value> {
+    let mut terminal = receipt.clone();
+    terminal["preparedReceiptHash"] = receipt["provisioningReceiptHash"].clone();
+    terminal
+        .as_object_mut()
+        .ok_or_else(|| error(INVALID))?
+        .remove("provisioningReceiptHash");
+    terminal["status"] = json!("autonomous_research_state_business_schemas_provisioned");
+    terminal["ready"] = json!(true);
+    terminal["freshRuntimeInstalled"] = json!(true);
+    terminal["publicationState"] = json!("published");
+    terminal["provisioningReceiptHash"] = json!(input_hash(
+        "AutonomousResearchStateBusinessSchemaProvisioningReceipt",
+        &terminal
+    )?);
+    Ok(terminal)
+}
+pub(super) fn write_terminal(dir: &File, root: &Path, terminal: &Value) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(terminal)?;
+    if bytes.len() > 1024 * 1024 {
+        return Err(error("autonomous_state_provisioning_receipt_bound"));
+    }
+    let mut record = write_file(
+        dir,
+        "native-provisioning-publication.json",
+        "native-provisioning-publication.json",
+        &bytes,
+    )?;
+    dir.sync_all()?;
+    record.verify(root)
 }
 
 #[cfg(test)]

@@ -19,6 +19,69 @@ use super::{
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn actual_private_homes_and_credential_metadata_bind_distinct_role_runtime_hashes() {
+    // Source identity qualification only: these directories are controlled
+    // fixtures, not actual independent provider accounts or canary credentials.
+    let (tree, executable, author_home, policy) = fixture();
+    let reviewer_home = tree.0.join("reviewer-home");
+    fs::create_dir(&reviewer_home).unwrap();
+    fs::set_permissions(&reviewer_home, fs::Permissions::from_mode(0o700)).unwrap();
+    create_file(
+        &reviewer_home.join("config.toml"),
+        0o600,
+        b"model = 'qualified'\n",
+    );
+    create_file(
+        &reviewer_home.join("auth.json"),
+        0o600,
+        b"metadata-only fixture\n",
+    );
+    let author = inspect(&executable, &author_home, &policy).unwrap();
+    let reviewer = inspect(&executable, &reviewer_home, &policy).unwrap();
+    assert_ne!(author.home.identity_hash, reviewer.home.identity_hash);
+    assert_ne!(author.identity_hash, reviewer.identity_hash);
+    for identity in [&author, &reviewer] {
+        let composed = super::codex_runtime_identity_hash_v1(
+            &identity.executable.identity_hash,
+            &identity.home.identity_hash,
+            &identity.model_selector,
+            &identity.environment_policy_hash,
+            &identity.transport_profile_hash,
+        )
+        .unwrap();
+        assert_eq!(composed, identity.identity_hash);
+        let changed_transport = super::codex_runtime_identity_hash_v1(
+            &identity.executable.identity_hash,
+            &identity.home.identity_hash,
+            &identity.model_selector,
+            &identity.environment_policy_hash,
+            &digest('3'),
+        )
+        .unwrap();
+        assert_ne!(changed_transport, identity.identity_hash);
+    }
+    let credential = reviewer_home.join("auth.json");
+    let held_file = File::open(&credential).unwrap();
+    let held = held_file.metadata().unwrap();
+    fs::remove_file(&credential).unwrap();
+    create_file(&credential, 0o600, b"replacement metadata-only fixture\n");
+    let after = inspect(&executable, &reviewer_home, &policy).unwrap();
+    assert_ne!(held.ino(), fs::metadata(&credential).unwrap().ino());
+    assert_ne!(
+        reviewer.home.credential_material,
+        after.home.credential_material
+    );
+    assert_ne!(reviewer.home.identity_hash, after.home.identity_hash);
+    assert_ne!(reviewer.identity_hash, after.identity_hash);
+    assert_eq!(
+        author.identity_hash,
+        inspect(&executable, &author_home, &policy)
+            .unwrap()
+            .identity_hash
+    );
+}
+
 struct TempTree(PathBuf);
 
 impl TempTree {

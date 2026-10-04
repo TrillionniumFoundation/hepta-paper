@@ -99,9 +99,27 @@ Build the current checkout, then operate only an explicitly selected disposable
 or admitted local workflow:
 
 ```sh
-cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
+cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service -p hepta-qualification-ingest --bins
 rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN" --workflow-file "$DEFINITION" --action prepare
 rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN" --workflow-file "$DEFINITION" --action launch --through-steps 1
+
+# Bootstrap a profile-bound definition from the canonical, non-authorizing V3 receipt.
+umask 077
+rust/target/debug/hepta-qualification-closure "$RESEARCH_V3" > "$RESEARCH_RECEIPT"
+python3 - "$RESEARCH_RECEIPT" "$UNBOUND_DEFINITION" "$DEFINITION" <<'PROFILE_PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    receipt = json.load(source)
+with open(sys.argv[2], encoding="utf-8") as source:
+    definition = json.load(source)
+definition["researchProfile"] = receipt["researchWorkflowProfile"]
+with open(sys.argv[3], "x", encoding="utf-8") as target:
+    json.dump(definition, target, separators=(",", ":"))
+    target.write("\n")
+PROFILE_PY
+rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN" --workflow-file "$DEFINITION" --action launch --through-steps 1 --research-qualification-request "$RESEARCH_V3"
 rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN" --workflow-root "$STATE" --definition-hash "$HASH" --action status
 ```
 
@@ -109,8 +127,16 @@ rust/target/debug/hepta-paper-rust autonomous-research --campaign-id "$CAMPAIGN"
 come from its actual owner/result, not fabricated examples. With a custom
 `CARGO_TARGET_DIR`, use that build directory instead of `rust/target`.
 Prepare performs no state creation. Launch mutates the selected local state;
-it does not enable a production writer. The current CLI samples the system
-clock, rejects backwards observations and revalidates the lease at dispatch
+it does not enable a production writer. `RESEARCH_V3` is a private consumer-owned
+request that references five separately owned signed package/payload files, a
+separately owned trust store and the consumer-owned replay ledger. The canonical
+verifier compares the resulting opaque authority with the definition's persisted
+profile before ledger mutation. `researchWorkflowProfile` is a canary-only,
+closed, non-authorizing template whose automatic, production, release and
+submission flags are all false; the advancing command still requires the opaque
+qualification. V3 cannot grant release, submission, production or Node-retirement
+authority. The current CLI samples the system clock, rejects backwards
+observations and revalidates the lease at dispatch
 and commit; it does not establish trusted or monotonic host time.
 
 | Observed condition | Operator action | Required postcondition |
@@ -120,6 +146,7 @@ and commit; it does not establish trusted or monotonic host time.
 | Started without durable prepared output | Preserve attempts, CAS and SQLite. Do not relaunch, delete markers or refund uncertain usage. | An owning reconciliation supplies a definite result; cancel alone does not settle it. |
 | Complete prepared output, commit interrupted | Use `hepta-local-maintenance prepared-plan STATE HASH`; inspect its exact plan/hash before `prepared-commit`. | The same verified bytes commit once, without worker re-execution. |
 | Missing/corrupt CAS, foreign definition or stale lease | Stop new admission and preserve the complete private state for its owner. | Correctly bound evidence/recovery, not edited JSON flags or an old backup over new commits. |
+| Missing, expired, revoked, wrong-scope or mismatched V3 request | Do not initialize or advance the profile-bound workflow; preserve any existing committed prefix. | A fresh exact opaque qualification matches the persisted profile before a new dispatch; read-only/lifecycle recovery remains non-authorizing. |
 
 The full maintenance argument contract is in the [actual maintenance
 CLI](../../../rust/crates/hepta-paper-service/src/bin/hepta-local-maintenance.rs).
@@ -150,6 +177,14 @@ The executable source is now in `rust/crates/hepta-paper-service`. See [runtime 
 The static module state is `source_implemented`, matching the Identity section and module registry; activation remains `disabled`. Implemented local/shadow and guarded production API source do not establish accepted production composition. `CTL-001` source implementation and its separate effective qualification must not be conflated. Real runtime identity, independent host/evidence authority, complete Node business coverage and rollout acceptance remain required. No local command generates production qualification or activation.
 
 The [native business handoff](../NATIVE_BUSINESS_HANDOFF.md) defines the seven bounded kernels, actual wire examples, output contracts and executable documentation tests. These kernels must not be counted as full Node business-role parity. The [full replacement acceptance contract](../../migration/FULL_REPLACEMENT_ACCEPTANCE.md) defines the remaining command, capability, branch and operational evidence chain.
+
+The ordinary service and local workflow can import an existing broker result or
+execute the selected broker operation through the [local workflow contract](../LOCAL_WORKFLOW_HANDOFF.md).
+The prepared-only form uses the existing CAS, verifier and SQLite sequencer
+without dispatch. The execute form may use the hepta-core short-lived request-
+capability signer, signed measured cost and post-commit V2 acknowledgement while
+preserving query-only recovery. Provider credentials, product-operation authority,
+live independent role canaries and production activation remain separate.
 
 ## Rollout and rollback
 

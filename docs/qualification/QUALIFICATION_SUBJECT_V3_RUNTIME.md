@@ -67,9 +67,10 @@ snapshotIdentity
 `producerHistoryWatermark` is the maximum bound run-update timestamp.
 `snapshotIdentity` covers the exact source subject and every component above.
 
-Independent review and unresolved-thread state remain a separate merge gate.
-They cannot be manufactured by source qualification, and a legitimate review
-does not silently mutate a source artifact.
+Human approval is not part of the source-qualification subject or merge gate.
+Conversation state may be retained for discussion, but current source validity is
+determined by the exact subject, required machine checks and live revalidation;
+comments or reviews do not upgrade or invalidate source evidence.
 
 ## Live derivation and revalidation
 

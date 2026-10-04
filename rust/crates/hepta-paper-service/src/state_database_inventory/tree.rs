@@ -16,6 +16,7 @@ fn entries(
     let before = files::identity(&directory.held.metadata().map_err(|_| files::changed())?);
     let mut result = Vec::new();
     for entry in std::fs::read_dir(directory.fd_path()).map_err(|_| files::changed())? {
+        control::checkpoint(&directory.control)?;
         *visited += 1;
         ensure(
             *visited <= 10_000,
@@ -117,6 +118,7 @@ pub(super) fn collect(
     manifest: &Value,
     handoff: bool,
 ) -> Result<(Vec<Candidate>, Vec<String>)> {
+    control::checkpoint(&root.control)?;
     let definitions = manifest["databases"]
         .as_array()
         .ok_or_else(files::changed)?;
@@ -236,6 +238,7 @@ pub(super) fn collect(
         let (prefix, suffix) = pattern.split_once("{paperId}").ok_or_else(files::changed)?;
         let mut count = 0;
         for candidate in &autonomous {
+            control::checkpoint(&root.control)?;
             let relative = candidate.to_str().ok_or_else(files::changed)?;
             let paper = relative
                 .strip_prefix(prefix)

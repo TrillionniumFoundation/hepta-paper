@@ -1,7 +1,7 @@
 use crate::{
     ObjectStoreV1, ServiceError,
     native_business::{
-        NativeBusinessJobV1, execute_native_business_for_capability_v1,
+        NativeBusinessJobV1, execute_native_business_with_objects_and_deadline_for_capability_v1,
         native_business_implementation_hash_v1,
     },
 };
@@ -19,14 +19,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsString,
     fs,
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -38,6 +38,14 @@ mod recovery;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkerBindingV1 {
+    /// Issue one independently signed broker request; unresolved retries query only.
+    BrokerExecute {
+        source: crate::broker_prepared::BrokerPreparedSourceV1,
+    },
+    /// Read an already-prepared result from the selected role broker; never dispatch.
+    BrokerPrepared {
+        source: crate::broker_prepared::BrokerPreparedSourceV1,
+    },
     /// Linked Rust artifact inventory / native SQLite inspection implementation.
     Native,
     /// Operator-selected executable. This is process supervision, not a sandbox.
@@ -66,6 +74,14 @@ pub enum WorkerBindingV1 {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeJobV1 {
+    /// Inputs for the explicitly selected signed broker execution backend.
+    BrokerExecute {
+        input: crate::broker_prepared::BrokerPreparedInputV1,
+    },
+    /// Exact original inputs for a read-only broker result query.
+    BrokerPrepared {
+        input: crate::broker_prepared::BrokerPreparedInputV1,
+    },
     /// Verify every input object's bytes and produce a deterministic inventory.
     ArtifactInventory {
         /// Exact content hashes; output preserves declared ordering.
@@ -111,6 +127,10 @@ pub struct ServiceExecutorV1 {
     objects: ObjectStoreV1,
     workers: BTreeMap<String, WorkerBindingV1>,
     cancelled: Arc<AtomicBool>,
+    broker_context: Option<crate::broker_prepared::BrokerConsumerContextV1>,
+    inherited_native_deadline: Option<std::time::Instant>,
+    broker_commit_targets:
+        Arc<Mutex<BTreeMap<Sha256Digest, crate::broker_prepared::BrokerCommitTargetV2>>>,
 }
 
 impl ServiceExecutorV1 {
@@ -126,7 +146,26 @@ impl ServiceExecutorV1 {
             objects,
             workers,
             cancelled: Arc::new(AtomicBool::new(false)),
+            broker_context: None,
+            inherited_native_deadline: None,
+            broker_commit_targets: Arc::new(Mutex::new(BTreeMap::new())),
         })
+    }
+
+    pub(crate) fn with_broker_context(
+        mut self,
+        context: crate::broker_prepared::BrokerConsumerContextV1,
+    ) -> Self {
+        self.broker_context = Some(context);
+        self
+    }
+
+    pub(crate) fn with_inherited_native_deadline(
+        mut self,
+        deadline: Option<std::time::Instant>,
+    ) -> Self {
+        self.inherited_native_deadline = deadline;
+        self
     }
 
     pub(crate) fn with_cancellation(mut self, cancelled: Arc<AtomicBool>) -> Self {
@@ -134,7 +173,128 @@ impl ServiceExecutorV1 {
         self
     }
 
-    fn execute_one(&self, request: &ExecutionRequestV1) -> Result<PreparedResultV1, ServiceError> {
+    pub(crate) fn broker_commit_targets(
+        &self,
+    ) -> Arc<Mutex<BTreeMap<Sha256Digest, crate::broker_prepared::BrokerCommitTargetV2>>> {
+        Arc::clone(&self.broker_commit_targets)
+    }
+
+    fn record_broker_commit_target(
+        &self,
+        target: crate::broker_prepared::BrokerCommitTargetV2,
+    ) -> Result<(), ServiceError> {
+        if target.source.commit_acknowledgement.is_none() {
+            return Ok(());
+        }
+        let result_hash = target
+            .result
+            .result_hash()
+            .map_err(|_| ServiceError::Artifact)?;
+        let mut targets = self
+            .broker_commit_targets
+            .lock()
+            .map_err(|_| ServiceError::Execution)?;
+        if let Some(existing) = targets.get(&result_hash)
+            && (existing.subject != target.subject || existing.result != target.result)
+        {
+            return Err(ServiceError::Artifact);
+        }
+        targets.insert(result_hash, target);
+        Ok(())
+    }
+
+    // Prepared bytes are not durable commit evidence. Only the index restored
+    // and verified by the actual sequencer permits an IPC-free historical replay.
+    // Uncommitted broker output must pass the original current, query-only path;
+    // preserve the original evidence and never reissue a provider operation.
+    fn revalidate_cached_broker_result(
+        &self,
+        request: &ExecutionRequestV1,
+        binding: &WorkerBindingV1,
+        result: &PreparedResultV1,
+        identity: &Sha256Digest,
+        refresh_current_time: &mut dyn FnMut() -> Result<(), ServiceError>,
+    ) -> Result<(), ServiceError> {
+        use crate::broker_prepared::BrokerConsumeModeV1;
+        let (source, mode) = match binding {
+            WorkerBindingV1::BrokerPrepared { source } => {
+                (source, BrokerConsumeModeV1::PreparedOnly)
+            }
+            WorkerBindingV1::BrokerExecute { source } => {
+                (source, BrokerConsumeModeV1::RecoverExecution)
+            }
+            _ => return Ok(()),
+        };
+        let context = self
+            .broker_context
+            .as_ref()
+            .ok_or(ServiceError::Configuration)?;
+        let result_hash = result.result_hash().map_err(|_| ServiceError::Artifact)?;
+        if result.artifact_hashes.len() != 1
+            || result.actual_resources != request.candidate.resources
+        {
+            return Err(ServiceError::Artifact);
+        }
+        let cached: Value = serde_json::from_slice(&self.objects.read(&result.evidence_hash)?)
+            .map_err(|_| ServiceError::Artifact)?;
+        if let Some(target) = crate::broker_prepared::broker_commit_target_from_persisted_result(
+            &self.objects,
+            source,
+            result,
+        )? {
+            self.record_broker_commit_target(target)?;
+        }
+        if context.committed_results.contains_result(&result_hash) {
+            return Ok(());
+        }
+        let sent = cached
+            .get("workerEvidence")
+            .and_then(|value| value.get("executionSentInThisInvocation"))
+            .and_then(Value::as_bool)
+            .ok_or(ServiceError::Artifact)?;
+        if matches!(mode, BrokerConsumeModeV1::PreparedOnly) && sent {
+            return Err(ServiceError::Artifact);
+        }
+        let job: NativeJobV1 =
+            serde_json::from_slice(&self.objects.read(&request.candidate.payload_hash)?)
+                .map_err(|_| ServiceError::Configuration)?;
+        let input = match (binding, job) {
+            (WorkerBindingV1::BrokerPrepared { .. }, NativeJobV1::BrokerPrepared { input })
+            | (WorkerBindingV1::BrokerExecute { .. }, NativeJobV1::BrokerExecute { input }) => {
+                input
+            }
+            _ => return Err(ServiceError::Configuration),
+        };
+        let mut consumed = crate::broker_prepared::consume(
+            source,
+            &input,
+            request,
+            context,
+            self.objects.maximum_object_bytes(),
+            &self.cancelled,
+            mode,
+            || Ok(()),
+            refresh_current_time,
+        )?;
+        // The original invocation may have dispatched once; this one never did.
+        // Retain that historical fact rather than rewriting the evidence hash.
+        consumed.evidence["executionSentInThisInvocation"] = Value::Bool(sent);
+        let expected = json!({"version":1,"requestHash":identity,
+            "verifier":"broker_prepared_consumer", "workerEvidence":consumed.evidence});
+        if result.actual_cost_microusd != consumed.actual_cost_microusd
+            || cached != expected
+            || self.objects.read(&result.artifact_hashes[0])? != consumed.output
+        {
+            return Err(ServiceError::Artifact);
+        }
+        Ok(())
+    }
+
+    fn execute_one(
+        &self,
+        request: &ExecutionRequestV1,
+        refresh_current_time: &mut dyn FnMut() -> Result<(), ServiceError>,
+    ) -> Result<PreparedResultV1, ServiceError> {
         if self.cancelled.load(Ordering::Acquire) {
             return Err(ServiceError::Execution);
         }
@@ -146,18 +306,7 @@ impl ServiceExecutorV1 {
         // the same immutable plan again. They must not create a new execution
         // identity: a retry must reuse the prepared output or stop on an
         // unresolved durable dispatch intent, never repeat provider work.
-        let identity = canonical_hash_v1(&(
-            "hepta-service-attempt-v1",
-            request.version,
-            &request.attempt_id,
-            &request.snapshot_hash,
-            &request.plan_hash,
-            &request.candidate,
-            &request.reservation.tenant_id,
-            request.reservation.reserved,
-            binding,
-        ))
-        .map_err(|_| ServiceError::Configuration)?;
+        let identity = execution_identity(request, binding)?;
         let prepared = self.objects.attempt_path(&identity, "prepared");
         if prepared.exists() {
             let bytes = read_private_record(&prepared)?;
@@ -178,10 +327,22 @@ impl ServiceExecutorV1 {
             {
                 self.objects.read(hash)?;
             }
+            self.revalidate_cached_broker_result(
+                request,
+                binding,
+                &result,
+                &identity,
+                refresh_current_time,
+            )?;
             return Ok(result);
         }
         let started = self.objects.attempt_path(&identity, "started");
-        if started.exists() {
+        let fresh_attempt = !started.exists();
+        let readonly_query = matches!(
+            binding,
+            WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. }
+        );
+        if started.exists() && !readonly_query {
             return Err(ServiceError::Execution);
         }
         let payload = self.objects.read(&request.candidate.payload_hash)?;
@@ -194,9 +355,59 @@ impl ServiceExecutorV1 {
         ) {
             return Err(ServiceError::Configuration);
         }
-        self.objects
-            .record(&started, identity.to_string().as_bytes())?;
-        let (mut artifacts, evidence) = match (binding, job) {
+        if !fresh_attempt && read_private_record(&started)? != identity.to_string().as_bytes() {
+            return Err(ServiceError::Execution);
+        }
+        let record_started = || {
+            if fresh_attempt {
+                self.objects
+                    .record(&started, identity.to_string().as_bytes())
+            } else {
+                Ok(())
+            }
+        };
+        // Broker admission can still reject without sending any request bytes.
+        // Its consumer records the durable intent at the transport boundary,
+        // after capturing the exact request and authenticating the local peer.
+        // Never remove an intent after that boundary: recovery stays query-only.
+        if !readonly_query {
+            record_started()?;
+        }
+        let (mut artifacts, evidence, actual_cost_microusd, broker_commit) = match (binding, job) {
+            (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
+            | (WorkerBindingV1::BrokerExecute { source }, NativeJobV1::BrokerExecute { input }) => {
+                let mode = match binding {
+                    WorkerBindingV1::BrokerExecute { .. } if fresh_attempt => {
+                        crate::broker_prepared::BrokerConsumeModeV1::ExecuteOnce
+                    }
+                    WorkerBindingV1::BrokerExecute { .. } => {
+                        crate::broker_prepared::BrokerConsumeModeV1::RecoverExecution
+                    }
+                    _ => crate::broker_prepared::BrokerConsumeModeV1::PreparedOnly,
+                };
+                let context = self
+                    .broker_context
+                    .as_ref()
+                    .ok_or(ServiceError::Configuration)?;
+                let consumed = crate::broker_prepared::consume(
+                    source,
+                    &input,
+                    request,
+                    context,
+                    self.objects.maximum_object_bytes(),
+                    &self.cancelled,
+                    mode,
+                    record_started,
+                    refresh_current_time,
+                )?;
+                (
+                    vec![self.objects.put(&consumed.output)?],
+                    json!({"version":1,"requestHash":identity,
+                    "verifier":"broker_prepared_consumer", "workerEvidence": consumed.evidence}),
+                    consumed.actual_cost_microusd,
+                    Some((source.clone(), consumed.acknowledgement_subject)),
+                )
+            }
             (WorkerBindingV1::Native, NativeJobV1::ArtifactInventory { artifacts }) => {
                 if artifacts.is_empty() || artifacts.len() > 256 {
                     return Err(ServiceError::Configuration);
@@ -211,6 +422,8 @@ impl ServiceExecutorV1 {
                 (
                     vec![self.objects.put(&bytes)?],
                     json!({"version":1,"verifier":"native_artifact_inventory","requestHash":identity}),
+                    request.candidate.cost_microusd,
+                    None,
                 )
             }
             (
@@ -238,12 +451,17 @@ impl ServiceExecutorV1 {
                     vec![self.objects.put(&bytes)?],
                     json!({"version":1,"verifier":"native_sqlite_inspector","requestHash":identity,
                     "databaseContentHash":expected_database_hash,"replayScope":"historical_pinned_database_input"}),
+                    request.candidate.cost_microusd,
+                    None,
                 )
             }
             (WorkerBindingV1::Native, NativeJobV1::Business { job }) => {
-                let output = execute_native_business_for_capability_v1(
+                let output = execute_native_business_with_objects_and_deadline_for_capability_v1(
                     job,
                     &request.candidate.capability_id,
+                    &self.objects,
+                    &self.cancelled,
+                    self.inherited_native_deadline,
                 )
                 .map_err(|_| ServiceError::Execution)?;
                 let mut hashes = Vec::with_capacity(output.artifacts.len());
@@ -260,6 +478,8 @@ impl ServiceExecutorV1 {
                         "workerEvidence": output.evidence,
                         "scope": "prepared_result_only_no_external_authority"
                     }),
+                    request.candidate.cost_microusd,
+                    None,
                 )
             }
             (WorkerBindingV1::Process { .. }, NativeJobV1::Process { input }) => {
@@ -280,6 +500,8 @@ impl ServiceExecutorV1 {
                     hashes,
                     json!({"version":1,"requestHash":identity,"workerBinding":binding,"workerEvidence":response.evidence,
                     "scope":"content_integrity_not_scientific_or_production_authority"}),
+                    request.candidate.cost_microusd,
+                    None,
                 )
             }
             _ => return Err(ServiceError::Configuration),
@@ -304,12 +526,20 @@ impl ServiceExecutorV1 {
             module_version: request.candidate.module_version.clone(),
             status: PreparedResultStatusV1::Prepared,
             artifact_hashes: artifacts,
-            // Conservatively charge the admitted upper bound; no invented actual resource metering.
+            // Resources remain conservative unless independently measured. Broker
+            // cost may be a separately signed actual settlement under its source policy.
             actual_resources: request.candidate.resources,
-            actual_cost_microusd: request.candidate.cost_microusd,
+            actual_cost_microusd,
             evidence_hash: evidence,
             external_action_may_have_started: false,
         };
+        if let Some((source, subject)) = broker_commit {
+            self.record_broker_commit_target(crate::broker_prepared::BrokerCommitTargetV2 {
+                source,
+                subject,
+                result: result.clone(),
+            })?;
+        }
         self.objects.record(
             &prepared,
             &serde_json::to_vec(&result).map_err(|_| ServiceError::Artifact)?,
@@ -335,8 +565,43 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
         // Exact reservations remain held for the whole dependency wave. Bounded
         // sequential dispatch is conservative; parallel workers require host admission.
-        let guard = recovery::DispatchGuardV1::acquire(&self.objects)
-            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+        // Only the exact incoming read-only query can revisit its start record.
+        // An unresolved provider/process attempt still fences the entire owner.
+        let active_plan = requests.first().map(|request| &request.plan_hash);
+        if requests
+            .iter()
+            .any(|request| Some(&request.plan_hash) != active_plan)
+        {
+            return Err(ControlPlaneError::ExecutionInvalid);
+        }
+        let mut incoming = BTreeSet::new();
+        let mut readonly_retries = BTreeSet::new();
+        for request in requests {
+            let binding = self
+                .workers
+                .get(&request.candidate.module_id)
+                .ok_or(ControlPlaneError::ExecutionInvalid)?;
+            let identity = execution_identity(request, binding)
+                .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+            let identity = identity.as_str().trim_start_matches("sha256:").to_owned();
+            incoming.insert(identity.clone());
+            if matches!(
+                binding,
+                WorkerBindingV1::BrokerPrepared { .. } | WorkerBindingV1::BrokerExecute { .. }
+            ) {
+                readonly_retries.insert(identity);
+            }
+        }
+        let guard = recovery::DispatchGuardV1::acquire(
+            &self.objects,
+            &incoming,
+            &readonly_retries,
+            active_plan,
+            self.broker_context
+                .as_ref()
+                .map(|context| &context.committed_results),
+        )
+        .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
         requests
             .iter()
             .map(|request| {
@@ -347,8 +612,10 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
                 // particular request to the worker. The preceding worker can
                 // advance time, so a wave-wide check cannot replace this one.
                 revalidate_admission()?;
+                let mut refresh_current_time =
+                    || revalidate_admission().map_err(|_| ServiceError::Execution);
                 let result = self
-                    .execute_one(request)
+                    .execute_one(request, &mut refresh_current_time)
                     .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
                 guard
                     .validate()
@@ -357,6 +624,24 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
             })
             .collect()
     }
+}
+
+fn execution_identity(
+    request: &ExecutionRequestV1,
+    binding: &WorkerBindingV1,
+) -> Result<Sha256Digest, ServiceError> {
+    canonical_hash_v1(&(
+        "hepta-service-attempt-v1",
+        request.version,
+        &request.attempt_id,
+        &request.snapshot_hash,
+        &request.plan_hash,
+        &request.candidate,
+        &request.reservation.tenant_id,
+        request.reservation.reserved,
+        binding,
+    ))
+    .map_err(|_| ServiceError::Configuration)
 }
 
 fn run_process(

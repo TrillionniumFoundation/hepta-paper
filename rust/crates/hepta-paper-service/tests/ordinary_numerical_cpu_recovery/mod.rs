@@ -375,7 +375,14 @@ impl Fixture {
         let stages = self.stage_count();
         let actual = self.run();
         assert_eq!(actual.process.exit_code, Some(1));
-        let report: Value = serde_json::from_slice(&actual.stdout).unwrap();
+        let report: Value = serde_json::from_slice(&actual.stdout).unwrap_or_else(|error| {
+            panic!(
+                "normal CLI JSON failure: {error}; exit={:?}; stdout={}; stderr={}",
+                actual.process.exit_code,
+                String::from_utf8_lossy(&actual.stdout),
+                String::from_utf8_lossy(&actual.process.stderr_tail)
+            )
+        });
         assert_eq!(
             report["status"],
             "advanced_numerical_plugin_execution_blocked"
@@ -459,7 +466,14 @@ fn ordinary_cli_retains_written_failed_result_and_fresh_retry_refuses_tampering(
         let f = Fixture::new(mode);
         let actual = f.run();
         assert_eq!(actual.process.exit_code, Some(1));
-        let report: Value = serde_json::from_slice(&actual.stdout).unwrap();
+        let report: Value = serde_json::from_slice(&actual.stdout).unwrap_or_else(|error| {
+            panic!(
+                "normal CLI JSON failure: {error}; exit={:?}; stdout={}; stderr={}",
+                actual.process.exit_code,
+                String::from_utf8_lossy(&actual.stdout),
+                String::from_utf8_lossy(&actual.process.stderr_tail)
+            )
+        });
         assert_eq!(report["workerReceipt"]["ok"], false);
         assert_eq!(report["productionQualified"], false);
         assert_eq!(
@@ -520,8 +534,8 @@ fn ordinary_api_actual_worker_cancel_preserves_unknown_association_and_fresh_ret
         )
         .unwrap_err();
         let started = waiter.join().unwrap();
-        assert!(started);
-        assert!(error.contains("cancelled"));
+        assert!(started, "ordinary worker did not start: {error}");
+        assert!(error.contains("cancelled"), "{error}");
         let facts: Value =
             serde_json::from_str(error.split_once(";cpuExecutionFacts=").unwrap().1).unwrap();
         assert_eq!(facts["process"]["processGroupCleanupVerified"], true);
@@ -583,7 +597,9 @@ fn ordinary_cli_actual_prefinal_sigkill_keeps_unknown_attempt_for_fresh_retry() 
     loop {
         assert!(
             owned.0.try_wait().unwrap().is_none(),
-            "normal CLI exited before the actual worker marker"
+            "normal CLI exited before the actual worker marker: stdout={}; stderr={}",
+            String::from_utf8_lossy(&physical(&stdout).bytes),
+            String::from_utf8_lossy(&physical(&stderr).bytes)
         );
         assert!(Instant::now() < until, "original120s pre-final deadline");
         assert!(

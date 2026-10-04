@@ -144,6 +144,9 @@ struct StatusWireFixture {
 }
 impl StatusWireFixture {
     fn new() -> Self {
+        Self::with_mode("normal", None)
+    }
+    fn with_mode(mode: &str, stop_at: Option<&str>) -> Self {
         use std::{
             fs,
             os::unix::fs::DirBuilderExt,
@@ -159,7 +162,7 @@ impl StatusWireFixture {
         ));
         fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        let input = serde_json::json!({"source":preflight::tests::workspace(),"runtime":root.join("runtime"),"control":root.join("control"),"mode":"normal"});
+        let input = serde_json::json!({"source":preflight::tests::workspace(),"runtime":root.join("runtime"),"control":root.join("control"),"mode":mode,"stopAt":stop_at});
         let (exit, bytes, stderr) = preflight::tests::node(
             vec![
                 "--input-type=module".into(),
@@ -289,5 +292,161 @@ fn actual_normal_status_serializer_keeps_original_cancellation_and_deadline_and_
             inspect_ordinary_one_shot_status_v1(&fixture.arguments(), flag).is_ok(),
             "fresh read has a new independently observed epoch and preserves durable history"
         );
+    }
+}
+
+#[test]
+fn actual_normal_status_typed_recovery_preserves_every_original_phase_wire_and_files() {
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+    // Read-only observations exclude access time, which a real read may update.
+    #[derive(Debug, PartialEq, Eq)]
+    struct FileSnapshot {
+        path: PathBuf,
+        device: u64,
+        inode: u64,
+        mode: u32,
+        links: u64,
+        uid: u32,
+        gid: u32,
+        size: u64,
+        modified: (i64, i64),
+        changed: (i64, i64),
+        bytes: Vec<u8>,
+    }
+    fn snapshot(path: &Path) -> Vec<FileSnapshot> {
+        // Include the selected root itself, not only its descendants.
+        let meta = fs::symlink_metadata(path).unwrap();
+        assert!(!meta.file_type().is_symlink());
+        let bytes = if meta.is_file() {
+            fs::read(path).unwrap()
+        } else {
+            Vec::new()
+        };
+        let mut result = vec![FileSnapshot {
+            path: path.to_owned(),
+            device: meta.dev(),
+            inode: meta.ino(),
+            mode: meta.mode(),
+            links: meta.nlink(),
+            uid: meta.uid(),
+            gid: meta.gid(),
+            size: meta.len(),
+            modified: (meta.mtime(), meta.mtime_nsec()),
+            changed: (meta.ctime(), meta.ctime_nsec()),
+            bytes,
+        }];
+        if meta.is_dir() {
+            let mut paths = fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            paths.sort();
+            for child in paths {
+                result.extend(snapshot(&child));
+            }
+        }
+        result
+    }
+    let phases = [
+        "attempt_reserved",
+        "preconditions_verified",
+        "prepare_verified",
+        "provider_started",
+        "provider_completed",
+        "launch_started",
+    ];
+    let terminals = [
+        ("attempt_reserved", "blocked_pre_provider"),
+        ("preconditions_verified", "blocked_pre_provider"),
+        ("prepare_verified", "blocked_pre_provider"),
+        ("provider_started", "recovered_incomplete"),
+        ("provider_completed", "blocked_post_provider"),
+        ("launch_started", "recovered_incomplete"),
+        ("launch_started", "completed"),
+        ("launch_started", "failed_terminal"),
+    ];
+    let mut cases = phases
+        .iter()
+        .map(|phase| ("head".to_owned(), Some(*phase)))
+        .collect::<Vec<_>>();
+    cases.extend(
+        terminals
+            .iter()
+            .map(|(phase, status)| (format!("terminal/{phase}/{status}"), None)),
+    );
+    for (mode, stop_at) in cases {
+        let fixture = StatusWireFixture::with_mode(&mode, stop_at);
+        let before = snapshot(&fixture.root);
+        let args = fixture.arguments();
+        let mut original_args = vec![
+            preflight::tests::workspace()
+                .join("paper-core/bin/autonomous-research-one-shot-campaign-attempt.mjs")
+                .to_str()
+                .unwrap()
+                .to_owned(),
+        ];
+        original_args.extend(args.clone());
+        let (exit, stdout, stderr) = preflight::tests::node(original_args, None);
+        assert_eq!(exit, 0, "{mode}:{}", String::from_utf8_lossy(&stderr));
+        assert!(
+            stderr.is_empty(),
+            "{mode}:{}",
+            String::from_utf8_lossy(&stderr)
+        );
+        assert_eq!(
+            snapshot(&fixture.root),
+            before,
+            "original status writes: {mode}"
+        );
+        let control = ReconciliationReadControlV1::new(
+            Arc::new(AtomicBool::new(false)),
+            Instant::now() + Duration::from_secs(120),
+        );
+        let owner = inspect_report(
+            &fixture.root.join("runtime"),
+            &fixture.root.join("control"),
+            Some("native-fixed-one-shot-journal"),
+            &control,
+            &mut false,
+        )
+        .unwrap();
+        owner
+            .project_recovery(&control, |facts| {
+                assert!(!facts.is_absent());
+                assert!(is_text_for_test(
+                    facts.report(),
+                    stop_at.unwrap_or("terminal")
+                ));
+                use super::recovery::RecoveryState;
+                let expected = match stop_at {
+                    Some("provider_started") => RecoveryState::ProviderOutcomeUnknown,
+                    Some("provider_completed") => {
+                        RecoveryState::CompletedCanaryWithoutInvocationAuthority
+                    }
+                    Some("launch_started") => RecoveryState::LaunchOutcomeUnknown,
+                    Some(_) => RecoveryState::BeforeProvider,
+                    None => RecoveryState::TerminalReplay,
+                };
+                assert_eq!(facts.state(), &expected);
+                Ok(())
+            })
+            .unwrap();
+        let actual =
+            inspect_ordinary_one_shot_status_v1(&args, Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(actual.exit_code, exit, "{mode}");
+        assert_eq!(actual.stdout, stdout, "{mode}");
+        assert_eq!(actual.stderr, stderr, "{mode}");
+        assert_eq!(
+            snapshot(&fixture.root),
+            before,
+            "native status writes: {mode}"
+        );
+    }
+    fn is_text_for_test(
+        report: &hepta_legacy_compatibility::ProductionJsonValue,
+        phase: &str,
+    ) -> bool {
+        super::json::is_text(super::json::field(report, "headPhase"), phase)
     }
 }

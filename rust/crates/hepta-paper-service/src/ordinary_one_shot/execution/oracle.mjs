@@ -53,7 +53,8 @@ try {
   reports.push(repo.reserveAttempt({reservation}));
   for (const phase of ['preconditions_verified','prepare_verified','provider_started','provider_completed','launch_started']) {
     const current = repo.inspectAttempt({attemptId:reservation.attemptId});
-    if (terminalMode && current.headPhase === terminalPhase) break;
+    if (input.stopAt === current.headPhase
+      || (terminalMode && current.headPhase === terminalPhase)) break;
     const request = {attemptId:reservation.attemptId,phase,evidence:{kind:'local_protocol_fixture',phase},
       expectedSequence:current.events.length+1,expectedPhase:current.headPhase,
       expectedPreviousEventHash:current.headEventHash,recordedAt:now};

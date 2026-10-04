@@ -7,9 +7,11 @@ pub mod dataset;
 pub mod execution;
 pub mod execution_inputs;
 pub mod full_graph;
+mod inputs;
 mod journal;
 mod json;
 mod preflight;
+mod recovery;
 
 use crate::{
     automation_runtime_reconciliation::ordinary::ReconciliationReadControlV1,
@@ -234,13 +236,13 @@ impl ObservedOneShotJournalReportV1<'_> {
         self.retained.assert_current()?;
         control.checkpoint().map_err(|error| error.to_string())
     }
-    fn project<T>(
+    fn project_recovery<T>(
         &self,
         control: &ReconciliationReadControlV1,
-        project: impl FnOnce(&hepta_legacy_compatibility::ProductionJsonValue) -> Result<T, String>,
+        project: impl FnOnce(recovery::ObservedRecoveryV1<'_>) -> Result<T, String>,
     ) -> Result<T, String> {
         self.assert_current(control)?;
-        let result = project(&self.report);
+        let result = recovery::ObservedRecoveryV1::from_audited(&self.report).and_then(project);
         self.assert_current(control)?;
         result
     }
@@ -256,7 +258,7 @@ fn inspect_with_serializer(
     ) -> Result<Vec<u8>, String>,
 ) -> Result<Vec<u8>, String> {
     let report = inspect_report(runtime, control_root, Some(attempt), control, &mut false)?;
-    report.project(control, |value| serialize(value, control))
+    report.project_recovery(control, |value| serialize(value.report(), control))
 }
 
 fn inspect_report<'a>(

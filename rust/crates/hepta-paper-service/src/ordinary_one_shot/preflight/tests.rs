@@ -58,11 +58,14 @@ pub(in crate::ordinary_one_shot) fn node(
         working_directory: workspace(),
         environment: EnvironmentPolicyV1::new(
             "one-shot-normal-preflight-node-oracle",
-            ["PATH"],
+            ["PATH", "NODE_NO_WARNINGS"],
             ["PATH"],
         )
         .unwrap()
-        .build(std::env::vars_os(), &BTreeMap::new())
+        .build(
+            std::env::vars_os(),
+            &BTreeMap::from([("NODE_NO_WARNINGS".into(), "1".into())]),
+        )
         .unwrap(),
         stdin: input,
     };
@@ -150,8 +153,9 @@ fn actual_normal_plan_and_preflight_missing_malformed_mounts_match_original_wire
         let expected = original(&args);
         assert_eq!(expected.0, 2, "{}", String::from_utf8_lossy(&expected.2));
         assert!(
-            expected.2.is_empty()
-                || String::from_utf8_lossy(&expected.2).contains("ExperimentalWarning")
+            expected.2.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&expected.2)
         );
         let actual = super::super::inspect_ordinary_one_shot_status_v1(
             &args,
@@ -418,4 +422,50 @@ fn actual_preflight_serializer_retains_successful_workspace_and_original_provena
         result.is_err(),
         "original held workspace epoch may not be replaced or restored after serialization"
     );
+}
+
+#[test]
+fn retained_collector_checks_original_controls_and_identity_even_when_projection_fails() {
+    use std::sync::atomic::Ordering;
+    for variant in ["projection-error", "cancel", "changed-database"] {
+        let fixture = Fixture::new();
+        create_runtime(&fixture, "valid");
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let control = ReconciliationReadControlV1::new(
+            cancelled.clone(),
+            Instant::now() + Duration::from_secs(120),
+        );
+        let result: Result<(), String> = super::super::inputs::with_retained_preflight_facts(
+            &workspace(),
+            &fixture.path("runtime"),
+            &fixture.path("control"),
+            None,
+            &control,
+            |facts| {
+                assert!(facts.native_inspected);
+                assert!(facts.native_unchanged);
+                assert!(facts.journal_inspected);
+                match variant {
+                    "cancel" => cancelled.store(true, Ordering::Release),
+                    "changed-database" => {
+                        let file = fixture.path("runtime/hepta-paper.sqlite");
+                        let prior = fixture.path("runtime/prior.sqlite");
+                        fs::rename(&file, &prior).unwrap();
+                        fs::copy(&prior, &file).unwrap();
+                    }
+                    _ => {}
+                }
+                Err("projection_failed_for_test".into())
+            },
+        );
+        let error = result.unwrap_err();
+        let expected_error = match variant {
+            "projection-error" => "projection_failed_for_test",
+            "cancel" => "automation_reconciliation_cancelled",
+            "changed-database" => "r_runtime_source_cas_input_changed",
+            _ => unreachable!(),
+        };
+        assert_eq!(error, expected_error, "{variant}");
+        assert!(!fixture.path("control").exists());
+    }
 }

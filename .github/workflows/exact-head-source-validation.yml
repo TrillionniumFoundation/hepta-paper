@@ -127,6 +127,11 @@ jobs:
           node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\n'+'native_route_acceptance='+p.requiresNativeRouteToolchain+'\n')" \
             "$evidence_root/impact-plan.json" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare and verify scientific test host
+        if: steps.impact.outputs.count != '0'
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
+
       - name: Install qualified native route toolchain
         if: steps.impact.outputs.native_route_acceptance == 'true'
         run: |

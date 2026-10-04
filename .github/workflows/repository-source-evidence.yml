@@ -37,6 +37,10 @@ jobs:
         with:
           node-version: '22.23.1'
 
+      - name: Prepare and verify scientific test host
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
+
       - name: Install qualified Rust toolchain
         shell: bash
         run: |
@@ -175,6 +179,10 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.1'
+
+      - name: Prepare and verify scientific test host
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
 
       - name: Install qualified Rust toolchain
         shell: bash

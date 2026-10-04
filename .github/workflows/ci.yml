@@ -5,6 +5,17 @@ on:
     branches: [main, codex/full-rust-replacement-progress-20260916]
   pull_request:
   workflow_dispatch:
+    inputs:
+      native_signed_source_delivery:
+        description: Create only the fixed reviewed Source23 commit object
+        type: boolean
+        required: false
+        default: false
+      expected_transport_head:
+        description: Exact current signed transport commit SHA
+        type: string
+        required: false
+        default: ''
   schedule:
     - cron: '23 2 * * *'
 
@@ -315,7 +326,7 @@ jobs:
         run: npm run legacy:fixture-verify && npm run test:migration-differential
 
   nightly-operational-research-loop:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && !inputs.native_signed_source_delivery
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -495,3 +506,280 @@ jobs:
         run: npm run test:dynamic-formal-kernel-operational
       - name: Recheck topology budget closure and architecture capabilities
         run: node --test --test-concurrency=1 paper-core/tests/autonomous-research-resource-budget-closure.test.mjs paper-core/tests/architecture-conformance.test.mjs
+
+  fixed-native-signed-source-object:
+    if: github.event_name == 'workflow_dispatch' && inputs.native_signed_source_delivery && github.repository == 'TrillionniumFoundation/hepta-paper' && github.ref == 'refs/heads/codex/native-product-recovery-20260924' && github.actor == 'ProfHepta' && github.triggering_actor == 'ProfHepta'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create the pinned GitHub App commit object without updating any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_TRANSPORT_HEAD: ${{ inputs.expected_transport_head }}
+          GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        shell: bash
+        run: |
+          /usr/bin/python3 -I - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+          
+          REPO = "TrillionniumFoundation/hepta-paper"
+          BRANCH = "codex/native-product-recovery-20260924"
+          PARENT = "9713b7c68a2d62fa3c56451544b02346d033463f"
+          TREE = "1246d02081b26a4079bc046e3b985a22cd141267"
+          SOURCE = "55856210c248e8c48333b7d639b1fe0c1bfe706b"
+          MESSAGE_SHA256 = "e255e97c88e9aa9402f7e7b61bab18c951dc0f05a5d366d12bf0ebb94391d3eb"
+          MAXIMUM_RESPONSE_BYTES = 1024 * 1024
+          MAXIMUM_ERROR_BODY_BYTES = 64 * 1024
+          SAFE_HEADERS = ("Date", "Content-Type", "Server", "X-GitHub-Request-Id",
+                          "X-RateLimit-Remaining", "X-RateLimit-Reset")
+          
+          out = Path(os.environ["RUNNER_TEMP"]) / "native-signed-source-object"
+          out.mkdir(mode=0o700, exist_ok=False)
+          receipt = {
+              "kind": "FixedSource23GitHubAppCommitObject",
+              "sourceTree": TREE,
+              "objectOnlyByCode": True,
+              "branchWriteAttempted": False,
+              "objectCreationAttempted": False,
+              "objectCreationOutcome": "not_attempted",
+              "phase": "initialization",
+              "rootExactReviewedTemporaryTreeAndCiBlobReadbackRequiredBeforeDispatch": True,
+              "wholeReviewedTransportBytesIndependentlyVerifiedByJob": False,
+              "exactHeadAccepted": False,
+              "prospectiveMergeAccepted": False,
+              "apiObservations": [],
+          }
+          
+          
+          def save():
+              # Same private runner directory, atomic replacement and fsync of actual facts.
+              temporary = out / "receipt.json.part"
+              fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+              with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                  json.dump(receipt, stream, indent=2)
+                  stream.write("\n")
+                  stream.flush()
+                  os.fsync(stream.fileno())
+              os.replace(temporary, out / "receipt.json")
+              directory = os.open(out, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+              try:
+                  os.fsync(directory)
+              finally:
+                  os.close(directory)
+          
+          
+          def require(condition, reason):
+              # Explicit checks remain active under optimization; Python is also isolated.
+              if not condition:
+                  raise RuntimeError(reason)
+          
+          
+          def safe_exception(error):
+              text = str(error)
+              return {"type": type(error).__name__, "message": text[:4096],
+                      "messageTruncated": len(text) > 4096}
+          
+          
+          def safe_headers(headers):
+              result = {}
+              for name in SAFE_HEADERS:
+                  value = headers.get(name)
+                  if value is not None:
+                      result[name] = {"value": value[:512], "truncated": len(value) > 512}
+              return result
+          
+          
+          def capture_body(stream, maximum, observation, field):
+              try:
+                  raw = stream.read(maximum + 1)
+              except Exception as error:
+                  # HTTP IncompleteRead exposes actual partial bytes. Other read failures
+                  # do not prove that any unavailable prefix was captured.
+                  partial = getattr(error, "partial", None)
+                  captured = partial[:maximum] if isinstance(partial, bytes) else b""
+                  observation[field] = {
+                      "capturedBytes": len(captured), "complete": False,
+                      "truncated": isinstance(partial, bytes) and len(partial) > maximum,
+                      "fullBodyLengthUnknown": True,
+                      "capturedSha256": hashlib.sha256(captured).hexdigest(),
+                      "capturedBodyBase64": base64.b64encode(captured).decode("ascii"),
+                  }
+                  observation[field + "ReadFailure"] = safe_exception(error)
+                  save()
+                  raise
+              captured = raw[:maximum]
+              return captured, {
+                  "capturedBytes": len(captured),
+                  "observedBytesAtLeast": len(raw),
+                  "truncated": len(raw) > maximum,
+                  "complete": len(raw) <= maximum,
+                  "capturedSha256": hashlib.sha256(captured).hexdigest(),
+                  "capturedBodyBase64": base64.b64encode(captured).decode("ascii"),
+              }
+          
+          
+          class RefuseRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, request, response, code, message, headers, new_url):
+                  # Never forward the authenticated request to a redirected origin/path.
+                  raise urllib.error.HTTPError(request.full_url, code, "redirect_refused", headers, response)
+          
+          
+          # Ignore inherited HTTP(S)/ALL_PROXY; TLS verification uses the system defaults.
+          opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), RefuseRedirect())
+          prefix = "/repos/" + REPO
+          
+          
+          def api(path, phase, payload=None):
+              require(path.startswith(prefix + "/"), "api_repository_path_refused")
+              method = "GET" if payload is None else "POST"
+              require(method == "GET" or path == prefix + "/git/commits", "api_mutation_path_refused")
+              raw = None if payload is None else json.dumps(payload).encode("utf-8")
+              receipt["phase"] = phase
+              observation = {"phase": phase, "method": method, "path": path,
+                             "requestBodyBytes": 0 if raw is None else len(raw),
+                             "requestBodySha256": None if raw is None else hashlib.sha256(raw).hexdigest()}
+              receipt["apiObservations"].append(observation)
+              if method == "POST":
+                  require(not receipt["objectCreationAttempted"], "second_creation_attempt_refused")
+                  receipt["objectCreationAttempted"] = True
+                  receipt["objectCreationOutcome"] = "unknown"
+                  receipt["creationRequestBodySha256"] = observation["requestBodySha256"]
+              # Persist intent before the one network mutation; never internally retry.
+              save()
+              request = urllib.request.Request(
+                  "https://api.github.com" + path, data=raw,
+                  headers={"Authorization": "Bearer " + os.environ["GH_TOKEN"],
+                           "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+                           "Content-Type": "application/json"}, method=method)
+              try:
+                  with opener.open(request, timeout=30) as response:
+                      require(response.geturl() == request.full_url, "api_response_url_changed")
+                      observation["httpStatus"] = response.status
+                      observation["safeHeaders"] = safe_headers(response.headers)
+                      save()
+                      captured, body = capture_body(response, MAXIMUM_RESPONSE_BYTES, observation, "responseBody")
+                      observation["responseBody"] = body
+                      # Preserve the actual bounded successful response before decoding/GET.
+                      save()
+                      require(response.status == (200 if method == "GET" else 201), "api_status_refused")
+                      require(not body["truncated"], "api_response_body_limit")
+                      value = json.loads(captured.decode("utf-8"))
+                      if method == "POST":
+                          receipt["createdCommit"] = value
+                          receipt["objectCreationOutcome"] = "response_received"
+                          save()
+                      return value
+              except urllib.error.HTTPError as error:
+                  observation["httpStatus"] = error.code
+                  observation["safeHeaders"] = safe_headers(error.headers or {})
+                  try:
+                      _, body = capture_body(error, MAXIMUM_ERROR_BODY_BYTES, observation, "errorBody")
+                      observation["errorBody"] = body
+                  except Exception as body_error:
+                      observation["errorBodyReadFailure"] = safe_exception(body_error)
+                  observation["failure"] = safe_exception(error)
+                  save()
+                  raise
+              except Exception as error:
+                  observation["failure"] = safe_exception(error)
+                  save()
+                  raise
+          
+          
+          def current(phase):
+              return api(prefix + "/git/ref/heads/" + BRANCH, phase)["object"]["sha"]
+          
+          
+          def run():
+              receipt["phase"] = "environment_gates"
+              save()
+              require(os.environ["GITHUB_REPOSITORY"] == REPO, "repository_refused")
+              require(os.environ["GITHUB_REF"] == "refs/heads/" + BRANCH, "ref_refused")
+              require(os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch", "event_refused")
+              require(os.environ["GITHUB_ACTOR"] == "ProfHepta", "original_actor_refused")
+              require(os.environ["GITHUB_TRIGGERING_ACTOR"] == "ProfHepta", "triggering_actor_refused")
+              expected = os.environ["EXPECTED_TRANSPORT_HEAD"]
+              require(re.fullmatch(r"[0-9a-f]{40}", expected) is not None, "expected_transport_sha_refused")
+              require(os.environ["GITHUB_SHA"] == expected, "dispatch_sha_refused")
+              receipt["expectedTransportHead"] = expected
+              save()
+              require(current("current_before_transport") == expected, "transport_ref_changed")
+              transport = api(prefix + "/git/commits/" + expected, "actual_transport_object")
+              require(transport["sha"] == expected, "transport_object_sha_changed")
+              require([p["sha"] for p in transport["parents"]] == [PARENT], "transport_parent_changed")
+              require(transport["verification"]["verified"] is True, "transport_signature_unverified")
+              require(transport["verification"]["reason"] == "valid", "transport_signature_reason")
+              require(transport["message"] == "Temporarily bridge verified Source23 delivery through the GitHub App",
+                      "transport_message_changed")
+              comparison = api(prefix + "/compare/" + PARENT + "..." + expected, "actual_transport_comparison")
+              require(comparison["status"] == "ahead", "transport_comparison_status")
+              require(comparison["ahead_by"] == comparison["total_commits"] == 1, "transport_comparison_count")
+              require(comparison["behind_by"] == 0, "transport_comparison_behind")
+              require(len(comparison["files"]) == 1, "transport_comparison_files")
+              require(comparison["files"][0]["filename"] == ".github/workflows/ci.yml", "transport_comparison_path")
+              source = api(prefix + "/git/commits/" + SOURCE, "fixed_source_message_object")
+              require(source["sha"] == SOURCE, "source_object_sha_changed")
+              require(source["tree"]["sha"] == TREE, "source_tree_changed")
+              require([p["sha"] for p in source["parents"]] == [PARENT], "source_parent_changed")
+              message = source["message"]
+              require(hashlib.sha256(message.encode("utf-8")).hexdigest() == MESSAGE_SHA256, "source_message_changed")
+              require(current("current_before_creation") == expected, "precreation_ref_changed")
+              # Root has independently read back this exact reviewed temporary body/tree/CI
+              # blob before dispatch and supplies only that observed SHA. This is an external
+              # mandatory precondition; a whole-file literal hash here would self-reference.
+              created = api(prefix + "/git/commits", "create_immutable_object",
+                            {"message": message, "tree": TREE, "parents": [expected]})
+              sha = created["sha"]
+              require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None, "created_sha_refused")
+              receipt["createdShaFromActualResponse"] = sha
+              save()
+              observed = api(prefix + "/git/commits/" + sha, "fresh_created_object")
+              receipt["observedCommit"] = observed
+              save()
+              require(observed["sha"] == sha, "observed_created_sha_changed")
+              require(observed["tree"]["sha"] == TREE, "created_tree_changed")
+              require([p["sha"] for p in observed["parents"]] == [expected], "created_parent_changed")
+              require(observed["message"] == message, "created_message_changed")
+              require(observed["verification"]["verified"] is True, "created_signature_unverified")
+              require(observed["verification"]["reason"] == "valid", "created_signature_reason")
+              require(current("current_after_created_verification") == expected, "postcreation_ref_changed")
+              receipt.update(verifiedGitHubAppObject=True, createdSha=sha,
+                             objectCreationOutcome="observed_verified_object", candidateRefAfter=expected,
+                             candidateRefUnchangedAtFinalObservation=True, phase="complete")
+              save()
+              print(json.dumps({"createdSha": sha, "verifiedGitHubAppObject": True,
+                                "candidateRefUnchangedAtFinalObservation": True, "tree": TREE}))
+          
+          
+          save()
+          try:
+              run()
+          except Exception as error:
+              receipt["failure"] = safe_exception(error)
+              receipt["failedPhase"] = receipt["phase"]
+              receipt["internalRetryAttempted"] = False
+              # A creation-attempt failure with no successful body remains unknown. A
+              # previously retained body/object is never erased by later verification loss.
+              if receipt["objectCreationAttempted"] and "createdShaFromActualResponse" not in receipt:
+                  receipt["objectCreationOutcome"] = "unknown"
+              save()
+              raise
+          PY
+      - name: Retain actual signed-object evidence including refusal
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-signed-source-object-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-signed-source-object
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

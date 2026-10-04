@@ -73,7 +73,7 @@ if [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_OS:-}" == Linux ]]; then
       exit 1
     }
     /usr/bin/sudo -n -- /usr/bin/env -i PATH=/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 \
-      /usr/bin/python3 -I - "${BASH_SOURCE[0]%/*}/../apparmor/bwrap-userns-restrict" "${EUID}" "$$" <<'SCIENTIFIC_APPARMOR_PY'
+      /usr/bin/python3 -I - "${BASH_SOURCE[0]%/*}/../apparmor/bwrap-userns-restrict-abi4-v1" "${EUID}" "$$" <<'SCIENTIFIC_APPARMOR_PY'
 import errno
 import hashlib
 import json
@@ -87,7 +87,20 @@ import subprocess
 import sys
 import time
 
-EXPECTED = "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9"
+EXPECTED = "407f98d83892642cd025337bafcab0ff0520b905f3afcab2886511ce4998399b"
+UPSTREAM_EXPECTED = "11d39094f044f0cda0febb3ad517b830301da6b2ce929664af09ee9e4dd264f9"
+
+
+def verify_derivative(upstream, derived):
+    require(hashlib.sha256(upstream).hexdigest() == UPSTREAM_EXPECTED,
+            "upstream_policy_hash_mismatch")
+    removed = b"  allow io_uring,\n"
+    require(upstream.count(removed) == 2, "upstream_io_uring_rule_inventory_changed")
+    header, separator, body = derived.partition(b"\n\n")
+    require(separator and all(line.startswith(b"#") for line in header.splitlines())
+            and body == upstream.replace(removed, b""), "unreviewed_derived_policy_delta")
+
+
 POLICY = Path("/etc/apparmor.d/hepta-scientific-bwrap")
 PARSER = Path("/usr/sbin/apparmor_parser")
 KEYS = ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_nlink",
@@ -206,24 +219,61 @@ abi = directory / "abi/4.0"
 abi_metadata = abi.lstat()
 require(stat.S_ISREG(abi_metadata.st_mode) and abi_metadata.st_uid == 0
         and not abi_metadata.st_mode & 0o022, "unsafe_or_missing_abi4")
+descriptor = os.open(abi, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(descriptor, "rb") as held:
+    require(pin(os.fstat(held.fileno())) == pin(abi_metadata), "policy_abi_changed")
+    abi_raw = held.read(64 * 1024 + 1)
+    require(pin(os.fstat(held.fileno())) == pin(abi_metadata)
+            and pin(abi.lstat()) == pin(abi_metadata), "policy_abi_changed")
+require(len(abi_raw) <= 64 * 1024, "policy_abi_observation_limit")
+# Keep policy-ABI declarations separate from the actual kernel feature leaves.
+# These are observations, not substituted features or a mediation success claim.
 emit("scientific_test_host_apparmor_abi", path=str(abi), identity=pin(abi_metadata),
-     sha256=hashlib.sha256(abi.read_bytes()).hexdigest())
+     sha256=hashlib.sha256(abi_raw).hexdigest(), content=abi_raw.decode("utf-8"))
+feature_root = Path("/sys/kernel/security/apparmor/features")
+require(feature_root.is_dir(), "kernel_features_unavailable")
+feature_observations = {}
+for feature in ("io_uring/mask", "namespaces/mask", "domain/stack", "caps/mask"):
+    try:
+        value = kernel_text(str(feature_root / feature))
+    except FileNotFoundError:
+        feature_observations[feature] = {"present": False}
+    else:
+        feature_observations[feature] = {"present": True, "value": value}
+emit("scientific_test_host_apparmor_kernel_features", root=str(feature_root),
+     ioUringDirectoryPresent=(feature_root / "io_uring").is_dir(),
+     observations=feature_observations, runtimeQualified=False)
 source = Path(sys.argv[1])
 descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
 with os.fdopen(descriptor, "rb") as held:
     before = held.fileno()
     metadata = os.fstat(before)
     require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1
-            and metadata.st_size == 1936, "unsafe_vendored_policy")
+            and metadata.st_size == 2523, "unsafe_vendored_policy")
     identity = pin(metadata)
-    raw = held.read(1937)
+    raw = held.read(2524)
     require(pin(os.fstat(before)) == identity and pin(source.lstat()) == identity,
             "vendored_policy_changed")
 require(hashlib.sha256(raw).hexdigest() == EXPECTED, "vendored_policy_hash_mismatch")
-emit("scientific_test_host_vendored_policy", sha256=EXPECTED, identity=identity)
+upstream_source = source.with_name("bwrap-userns-restrict")
+descriptor = os.open(upstream_source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(descriptor, "rb") as held:
+    upstream_metadata = os.fstat(held.fileno())
+    require(stat.S_ISREG(upstream_metadata.st_mode) and upstream_metadata.st_nlink == 1
+            and upstream_metadata.st_size == 1936, "unsafe_upstream_policy")
+    upstream_identity = pin(upstream_metadata)
+    upstream_raw = held.read(1937)
+    require(pin(os.fstat(held.fileno())) == upstream_identity
+            and pin(upstream_source.lstat()) == upstream_identity, "upstream_policy_changed")
+verify_derivative(upstream_raw, raw)
+emit("scientific_test_host_vendored_policy", sha256=EXPECTED, identity=identity,
+     variant="abi4-v1", upstreamSha256=UPSTREAM_EXPECTED,
+     removedUnrestrictedIoUringGrants=2, ioUringRestrictionClaimed=False)
 arguments = [str(PARSER), "--config-file", "/dev/null", "--skip-cache", "--jobs=0",
              "--base", str(directory), "--warn=rule-not-enforced", "--Werror=rule-not-enforced"]
-# Compile the pinned bytes against this actual kernel before any host write.
+# Compile the pinned ABI4-v1 derivative against this actual kernel before any
+# host write. The upstream policy remains a separate immutable provenance input.
+# Unsupported rules still fail; no kernel features or warning flags are overridden.
 subprocess.run([*arguments, "--skip-kernel-load", "--add"], input=raw, check=True, timeout=5)
 descriptor = os.open(POLICY, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
 with os.fdopen(descriptor, "wb") as installed:

@@ -130,7 +130,12 @@ Run:
 node docs/tools/validate-module-documentation.mjs
 ```
 
-The validator requires exact registry/spec/manifest set equality, complete template sections, registry-field parity, existing implementation roots, no placeholders or orphan files, and authority-specific safety language. A green documentation report proves documentation structure only; it does not establish target-host behavior or external authority.
+The validator enforces registry/spec/manifest parity, canonical implementation roots,
+unique machine-referenced sections, and typed authority/effect contracts. See the
+[structural coverage policy](README.md#structural-coverage-and-implementation-scope) for hard failures versus editorial advisories.
+Recommended explanatory headings and equivalent safety prose are not hard gates.
+A green report proves structural documentation coverage only; it does not
+establish implementation correctness, target-host behavior or external authority.
 
 ## 9. Current registry limitations
 

@@ -25,7 +25,7 @@ node --test --test-concurrency=1 paper-core/tests/module-documentation-integrity
 
 The validator rejects registry/spec/manifest drift, missing implementation roots,
 duplicate or orphan files, inconsistent authority/ownership/capability/work
-mappings, and missing authority-specific safety contracts. Explanatory headings,
+mappings, and inconsistent typed authority/effect contracts. Explanatory headings,
 empty explanatory sections and placeholder-only prose produce advisory output,
 not a successful-implementation claim and not a build failure.
 

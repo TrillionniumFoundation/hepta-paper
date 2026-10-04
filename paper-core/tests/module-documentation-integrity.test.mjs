@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { validateModuleDocumentation } from '../../docs/tools/validate-module-documentation.mjs';
@@ -320,3 +321,36 @@ for (const heading of ['Identity', 'Open blockers', 'Operational runbook']) {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 }
+
+// Exercise the authoritative matrix writer in a disposable source-only fixture.
+// Empty promotion inputs do not claim qualification or consume real evidence.
+test('source promotion generator reproduces the committed module matrix', () => {
+  const root = createFixture();
+  try {
+    const evidenceDirectory = path.join(root, 'docs/system/evidence');
+    fs.mkdirSync(evidenceDirectory, { recursive: true });
+    for (const name of ['repository-source-implementation-v1', 'rust-functional-source-closure-v1']) {
+      fs.writeFileSync(path.join(evidenceDirectory, `${name}.json`), JSON.stringify({
+        kind: 'RepositorySourceImplementationEvidenceV1', records: {},
+      }));
+    }
+    const truthPaths = ['docs/system/truth/modules.v1.json', 'docs/system/truth/work-items.v2.json'];
+    const before = truthPaths.map((relative) => JSON.parse(fs.readFileSync(path.join(root, relative), 'utf8')));
+    const result = spawnSync(process.execPath, [path.join(ROOT, 'docs/tools/apply-source-promotions.mjs'), '--write'], {
+      cwd: root, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.promotionCount, 0);
+    assert.deepEqual(report.promotedModules, []);
+    assert.deepEqual(report.changedSpecs, []);
+    assert.ok(Object.values(report.authorityClaims).every((value) => value === false));
+    for (const [index, relative] of truthPaths.entries()) {
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, relative), 'utf8')), before[index]);
+    }
+    const matrix = 'docs/modules/MODULE_DOCUMENTATION_MATRIX.md';
+    assert.equal(fs.readFileSync(path.join(root, matrix), 'utf8'), fs.readFileSync(path.join(ROOT, matrix), 'utf8'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

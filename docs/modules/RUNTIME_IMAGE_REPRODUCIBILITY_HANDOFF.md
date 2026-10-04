@@ -235,16 +235,13 @@ and three 16 MiB tools. Final 4 MiB wire resources reserve the newline before
 encoding. Retained identities/raw contents are rechecked after serialization
 and after the signature time/revocation recheck. No observation is a lease.
 
-Private qualified Node 22.23.1 whole-output cases cover actual unqualified CPU
-status and missing/revoked/tampered inputs. Synthetic keys are development
-materials; they grant no installed scientific, release, submission or
-activation acceptance. V2 qualification, GPU and run remain unfinished.
 The V1 data domain additionally refuses aliases, unsupported/nonUnicode probe
 environments, unsupported trust/descriptor types and unpaired UTF16 typed data.
-Run is refused before I/O. Earlier probes using a 22.23.3 Node child remain
-observations, not Node 22.23.1 qualification. Earlier unexplained input_changed
-failures remain unexplained; the owned sibling test proves the scope mechanism
-without attributing those older failures.
+Synthetic keys are development materials, not installed scientific, release,
+submission or activation acceptance. This section describes the V1 status
+slice; current V2/GPU status contracts follow below. Consult the
+[canonical route ledger](../migration/NODE_RUST_GAP_CLOSURE.md) for ordinary run
+implementation and remaining compatibility/qualification boundaries.
 
 
 ## Ordinary advanced numerical V2 CPU qualification status
@@ -269,21 +266,9 @@ Canonical UTC timestamps, representable typed JSON, fixed statement/receipt
 schemas and the existing bounded string/depth/value domain are the V2 limit.
 Unsupported data is refused; this is not arbitrary Date.parse compatibility.
 
-Private check7 has eight actual zero-exit stages: two new qualification Rust
-owners (21 complete original Node values/errors), six V1 Rust owners, one
-portal signature owner, four journal qualification owners, and four ordinary
-Node owners. The normal owners compare 20 complete raw stdout/exit pairs,
-including V2 ready status, require-runner-ready, ignored status flags, pin
-failure, organization independence, revocation and receipt corruption. All
-4148 private source records and nine qualified tools have identical full raw
-metadata before/after; strict all-target and production clippy also pass.
-The packet is based on the current Root preimages, not a new H/M qualification.
-
 Synthetic signatures prove local document integrity only. They do not establish
 installed scientific, external publication/submission, activation, live account
-or hardware acceptance. GPU descriptor/configuration and actual run execution
-remain unfinished in this packet; prior refused cases and prior failed checks
-remain preserved. The canonical route remains partial.
+or hardware acceptance. The canonical route remains partial.
 
 
 ## Ordinary advanced numerical GPU status descriptor and qualification
@@ -297,20 +282,11 @@ isolation and non-enforced VRAM scope are preserved in full. This is local
 configuration/document inspection: it does not execute Docker, allocate a GPU,
 prove device capacity, or establish scientific or publication authority.
 
-GPU check2 has eight actual zero-exit stages, 19 non-ignored test bodies, 21
-complete original CPU and 21 complete original GPU qualification values/errors,
-and 29 complete raw normal stdout/exit pairs. Original descriptor JSON field
-order is parsed from actual Node bytes before hash verification. Both service
-all-target and seven-flag production clippy pass. The private source 4148 records
-and nine qualified tools have identical full raw metadata before/after.
-
-The same AtomicBool, absolute 120-second deadline, held file identities, bounded
-record/parser/serializer limits and post-wire currentness remain. The packet is
-a six-path minimal delta on the separately frozen CPU V2 stage2 prerequisite;
-current Root observations are recorded separately and are not those prerequisite
-preimages. It provides source-only evidence, not current-head, merge, installed
-host, actual GPU/run, live account, or whole-route acceptance. Prior descriptor
-fixture failure and actual Node run/BOM refusal remain retained.
+Original descriptor JSON field order is parsed from actual Node bytes before
+hash verification. The same AtomicBool, absolute 120-second deadline, held file
+identities, bounded record/parser/serializer limits and post-wire currentness
+remain. Local status validation is not current-head, merge, installed-host, actual
+GPU/run, live-account or whole-route acceptance.
 
 
 ## Actual CPU runtime closure input correction
@@ -324,17 +300,18 @@ signed package-closure declaration separately. It observes zero system packages
 and does not claim a complete system package closure, bitwise rebuild, scientific
 qualification, activation, publication or submission authority.
 
-A real ordinary Node CPU run through the existing bwrap/prlimit sandbox generated
-a verified result; a fresh same-request retry refused the pre-existing result and
-retained its full bytes/inode/mode/timestamps. The two new test bodies and all
-eleven original runner bodies passed, with all four changed Node files passing
-qualified ESLint. The original BOM rejection, two real namespace EAGAIN attempts
-and Rust request-contract coercion failure are retained separately. The positive
-local signed fixture uses maximumProcesses=8192 under the existing descriptor
-schema; it is not evidence for every process-limit value or real account/hardware
-qualification. Native CPU execution is still a separate unfinished composition.
+The native ordinary V1 CPU run source/process/publication path and its remaining
+limits are tracked in the [canonical route ledger](../migration/NODE_RUST_GAP_CLOSURE.md).
+The CPU runner correction above does not establish current-head, prospective-merge,
+installed-host, real-account or complete operator-route acceptance.
 
-The frozen packet has three new Node files and one minimal engine patch. It
-retains actual complete output and guards all source inputs and qualified tools.
-The independent private source observations do not qualify current canonical
-head, prospective merge, installed host or the complete operator route.
+## Historical validation observations
+
+One-time V1/V2 CPU and GPU check packets, private source/tool metadata counts,
+frozen preimages, successful local fixture runs and earlier refused/failed cases
+are preserved unchanged in the
+[pre-cleanup handoff at b4b74397](https://github.com/TrillionniumFoundation/hepta-paper/blob/b4b74397f60c36def524ff0b92b31f51000b4e85/docs/modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md#ordinary-advanced-numerical-v1-cpu-status).
+Those observations retain their original subjects and limitations; they do not
+qualify a later source tree. Following the [documentation retention policy](../README.md),
+Git history retains the experiment log while this handoff keeps reusable inputs,
+contracts, validation entrypoints and recovery boundaries.

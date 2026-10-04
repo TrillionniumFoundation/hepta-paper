@@ -261,9 +261,11 @@ semantic replay, absent original-path no-overwrite restoration and native-only
 mark/quarantine GC. These paths reuse the existing service/writer and require
 explicit quiescence, source identity and reconciliation. Quarantine does not purge
 data or reclaim disk. Historical recovery reports do not qualify a runtime, renew
-a lease or grant production/Node-retirement authority. Three former unmapped
-maintenance modes now have partial local source mappings; `cancel-node` remains
-unmapped. None is an accepted full Node parity decision.
+a lease or grant production/Node-retirement authority. Consult the
+[canonical command map](../../../docs/migration/node-rust-command-map.v2.json)
+and its [gap ledger](../../../docs/migration/NODE_RUST_GAP_CLOSURE.md) for current
+maintenance and `cancel-node` mappings, regression cases and remaining boundaries.
+A local source mapping is not an accepted full Node parity decision.
 
 ## Native incumbent-function ports
 

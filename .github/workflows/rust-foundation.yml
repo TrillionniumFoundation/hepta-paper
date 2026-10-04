@@ -36,14 +36,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Verify scientific host source contracts
+        shell: bash
+        run: python3 -B .github/scripts/test_scientific_host_source.py
+
       - name: Install qualified production Node oracle runtime
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.23.1'
-
-      - name: Prepare and verify scientific test host
-        shell: bash
-        run: bash .github/scripts/prepare-scientific-test-host.sh
 
       - name: Verify production Node oracle runtime
         shell: bash
@@ -183,17 +183,9 @@ jobs:
             2>&1 | tee "/tmp/hepta-rust-validation/native-authority-fixture-build.log"
           test -x rust/target/debug/examples/native-authority-fixture-client
 
-      - name: Run tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test \
-            --manifest-path rust/Cargo.toml \
-            --workspace \
-            --all-features \
-            --locked \
-            2>&1 | tee /tmp/hepta-rust-validation/test.log
-
+      # Source-only feedback does not need a privileged scientific host. Keep
+      # the complete workspace test command behind the unchanged host gate;
+      # compilation and documentation are never reported as behavior evidence.
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
@@ -207,6 +199,21 @@ jobs:
             --locked \
             --no-deps \
             2>&1 | tee /tmp/hepta-rust-validation/rustdoc.log
+
+      - name: Prepare and verify scientific test host
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            2>&1 | tee /tmp/hepta-rust-validation/test.log
 
       - name: Upload Rust validation logs
         if: always()

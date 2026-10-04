@@ -121,5 +121,5 @@ fn cli_rejects_raw_requests_over_the_bound_before_json_parse() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("32KiB"));
 }
 
-#[path = "ordinary_numerical_cpu_recovery/mod.rs"]
+#[path = "advanced_numerical_plugin/ordinary_numerical_cpu_recovery.rs"]
 mod ordinary_numerical_cpu_recovery;

@@ -180,13 +180,34 @@ function defaultStoreAbsence(root, budget) {
   const file = path.join(path.dirname(root), 'hepta-paper-runtime/native-runtime/hepta-paper.sqlite');
   return { file, ...observeCandidatePath(file, budget) };
 }
-function dependencyInputs(budget) {
+function dependencyInputs(budget, absenceBudget) {
   const lock = pinFile(path.join(MODULE_ROOT, 'package-lock.json'), 1024 * 1024, true);
   const { bytes: lockBytes, ...lockPin } = lock;
   const packages = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(lockBytes)).packages;
-  const requestedRoot = path.join(MODULE_ROOT, 'node_modules');
+  const candidateRoot = path.join(MODULE_ROOT, 'node_modules');
+  let requestedRoot = candidateRoot, candidateRootAbsence = null, parentPackageInputs = null;
+  try { fs.lstatSync(candidateRoot, { bigint: true }); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    // The ordinary source verifier deliberately installs the exact npm lock in
+    // an exclusive parent. Admit only that one ancestor, with the same raw
+    // manifest and lock; all actually loaded packages still bind below it.
+    candidateRootAbsence = observeCandidatePath(candidateRoot, absenceBudget);
+    const parent = path.dirname(MODULE_ROOT);
+    if (fs.realpathSync(parent) !== parent) fail();
+    requestedRoot = path.join(parent, 'node_modules');
+    const manifest = pinFile(path.join(MODULE_ROOT, 'package.json'), 1024 * 1024, true);
+    const parentManifest = pinFile(path.join(parent, 'package.json'), 1024 * 1024, true);
+    const parentLock = pinFile(path.join(parent, 'package-lock.json'), 1024 * 1024, true);
+    if (!manifest.bytes.equals(parentManifest.bytes) || !lockBytes.equals(parentLock.bytes)
+      || JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(manifest.bytes)).packageManager !== 'npm@10.9.8'
+      || JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(lockBytes)).lockfileVersion !== 3) fail();
+    const withoutBytes = ({ bytes: _bytes, ...value }) => value;
+    parentPackageInputs = { manifest: withoutBytes(manifest), parentManifest: withoutBytes(parentManifest), parentLock: withoutBytes(parentLock) };
+  }
   const namedBefore = fs.lstatSync(requestedRoot, { bigint: true }), actualRoot = fs.realpathSync(requestedRoot);
   if (!namedBefore.isDirectory() && !namedBefore.isSymbolicLink()) fail();
+  if (parentPackageInputs && (namedBefore.isSymbolicLink() || actualRoot !== requestedRoot)) fail();
   const directoryBefore = fs.lstatSync(actualRoot, { bigint: true });
   if (!directoryBefore.isDirectory()) fail();
   const closure = [];
@@ -211,7 +232,7 @@ function dependencyInputs(budget) {
   const topNames = fs.readdirSync(actualRoot).sort();
   if (topNames.length > 4096 || JSON.stringify(identity(namedBefore)) !== JSON.stringify(identity(fs.lstatSync(requestedRoot, { bigint: true })))
     || JSON.stringify(identity(directoryBefore)) !== JSON.stringify(identity(fs.lstatSync(actualRoot, { bigint: true })))) fail();
-  return { moduleRoot: MODULE_ROOT, lock: lockPin, requestedRoot, actualRoot, topNames,
+  return { moduleRoot: MODULE_ROOT, lock: lockPin, requestedRoot, actualRoot, topNames, candidateRootAbsence, parentPackageInputs,
     requestedRootIdentity: identity(namedBefore), actualRootIdentity: identity(directoryBefore),
     requestedRootLink: namedBefore.isSymbolicLink() ? fs.readlinkSync(requestedRoot) : null, closure };
 }
@@ -292,23 +313,31 @@ function gitPhysicalInputs(root, directory, budget) {
     worktreeEntry: named.isFile() ? pinFile(path.join(root, '.git'), 65536) : coreIdentity(named),
     head: pinFile(path.join(directory, 'HEAD'), 65536),
     configuration: [optionalGitFile(path.join(common, 'config'), budget), optionalGitFile(path.join(directory, 'config.worktree'), budget)],
+    exclude: optionalGitFile(path.join(common, 'info/exclude'), budget),
     reference: reference && reference !== 'HEAD' ? optionalGitFile(path.join(common, reference), budget, 65536) : null,
     packedRefs: optionalGitFile(path.join(common, 'packed-refs'), budget, 16 * 1024 * 1024) };
 }
-export function captureOwnRouteReplayGuardV1(root, environment, runtime, buildContext) {
+export function captureOwnRouteReplayGuardV1(root, environment, runtime, buildContext, additionalGraphSubjects = []) {
   if (path.resolve(root) !== root || fs.realpathSync(root) !== root) fail();
   const gitDirectory = git(root, ['rev-parse', '--absolute-git-dir']);
   const index = path.resolve(root, git(root, ['rev-parse', '--git-path', 'index']));
   const selectedHead = git(root, ['rev-parse', 'HEAD']);
-  git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling', selectedHead]);
+  if (!Array.isArray(additionalGraphSubjects) || additionalGraphSubjects.length > 4
+    || additionalGraphSubjects.some(value => typeof value !== 'string' || !/^[0-9a-f]{40}$/u.test(value))) fail();
+  // Each invocation still executes strict Git graph verification. Additional
+  // subjects come from the current source locator owner, never a saved verdict.
+  git(root, ['fsck', '--strict', '--no-reflogs', '--no-dangling',
+    ...new Set([selectedHead, ...additionalGraphSubjects])]);
   const rootMetadata = fs.lstatSync(root, { bigint: true });
   if (!rootMetadata.isDirectory()) fail();
   const budget = { entries: 0, bytes: 0 }, absenceBudget = { paths: 0, names: 0, bytes: 0 };
   const context = { root, physicalRootIdentity: coreIdentity(rootMetadata),
     subject: git(root, ['rev-parse', 'HEAD', 'HEAD^{tree}']),
+    graphSubjects: [...new Set([selectedHead, ...additionalGraphSubjects])],
+    gitStatus: git(root, ['status', '--porcelain=v1', '--untracked-files=all']),
     index: pinFile(index, 16 * 1024 * 1024), gitPhysical: gitPhysicalInputs(root, gitDirectory, absenceBudget),
     indexStage: digest(git(root, ['ls-files', '--stage', '-z'])),
-    namespace: sourceNamespace(root, budget, true), dependencies: dependencyInputs(budget), configurations: configurationCandidates(root, environment, absenceBudget),
+    namespace: sourceNamespace(root, budget, true), dependencies: dependencyInputs(budget, absenceBudget), configurations: configurationCandidates(root, environment, absenceBudget),
     defaultStoreAbsence: defaultStoreAbsence(root, absenceBudget),
     selectedEnvironment: { ...environment },
     // The existing Git owner uses non-GIT ambient keys. Hash them without
@@ -320,8 +349,8 @@ export function captureOwnRouteReplayGuardV1(root, environment, runtime, buildCo
   if (JSON.stringify(coreIdentity(rootMetadata)) !== JSON.stringify(coreIdentity(fs.lstatSync(root, { bigint: true })))) fail();
   return context;
 }
-export function assertOwnRouteReplayGuardV1(expected, root, environment, runtime, buildContext) {
-  const current = captureOwnRouteReplayGuardV1(root, environment, runtime, buildContext);
+export function assertOwnRouteReplayGuardV1(expected, root, environment, runtime, buildContext, additionalGraphSubjects = []) {
+  const current = captureOwnRouteReplayGuardV1(root, environment, runtime, buildContext, additionalGraphSubjects);
   if (JSON.stringify(current) !== JSON.stringify(expected)) fail();
   return current;
 }

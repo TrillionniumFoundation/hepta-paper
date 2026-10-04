@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { COMMAND_REGISTRY_ROUTES } from '../../paper-core/src/command-registry-routes.mjs';
-import { captureCommittedSourceSubject } from '../../paper-core/src/source-evidence-git-inputs.mjs';
+import { captureCommittedSourceSubject, fail as failSourceInput, git as sourceGit, readPinnedSource } from '../../paper-core/src/source-evidence-git-inputs.mjs';
+import { readPublicRSourceGraphTargetV1 } from '../../paper-core/src/source-evidence-public-r-inputs.mjs';
 import { captureOwnRouteReplayGuardV1, assertOwnRouteReplayGuardV1 } from './node-rust-route-replay-guard.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { ASSET_DOMAIN_PROFILES_V1, assetHandoffDiagnosticV1 } from './node-rust-asset-route-acceptance.mjs';
@@ -141,28 +142,37 @@ function assertOwnCargoPreparationTransitionV1(before, after, ready, proof) {
     // Preserve bounded physical field diagnostics without accepting any drift.
     // Captured contexts contain physical inputs and hashed ambient environment,
     // and this diagnostic never becomes a replay context or verdict.
-    const differences = []; let inspected = 0;
-    const visit = (left, right, field) => {
-      if (++inspected > 131072 || differences.length >= 32 || left === right) return;
-      if (left && right && typeof left === 'object' && typeof right === 'object') {
-        for (const key of [...new Set([...Object.keys(left), ...Object.keys(right)])]) {
-          visit(left[key], right[key], `${field}.${key}`);
-          if (inspected > 131072 || differences.length >= 32) break;
-        }
-      } else {
-        const bounded = value => {
-          const bytes = JSON.stringify(value);
-          return bytes === undefined ? null : bytes.length <= 1024 ? value : { sha256: hash(bytes), bytes: Buffer.byteLength(bytes) };
-        };
-        differences.push({ field, beforePresent: left !== undefined, afterPresent: right !== undefined,
-          before: bounded(left), after: bounded(right) });
-      }
-    };
-    visit(before, adjusted, '$');
-    const changed = new Error('route_acceptance_own_replay_current_inputs_changed');
-    changed.physicalContextDifferences = differences;
-    throw changed;
+    throw ownReplayInputsChangedV1(before, adjusted);
   }
+}
+function ownReplayInputsChangedV1(before, after, generationRevoked = false) {
+  const differences = []; let inspected = 0;
+  const visit = (left, right, field) => {
+    if (++inspected > 131072 || differences.length >= 32 || left === right) return;
+    if (left && right && typeof left === 'object' && typeof right === 'object') {
+      for (const key of [...new Set([...Object.keys(left), ...Object.keys(right)])]) {
+        visit(left[key], right[key], `${field}.${key}`);
+        if (inspected > 131072 || differences.length >= 32) break;
+      }
+    } else {
+      const bounded = value => {
+        const bytes = JSON.stringify(value);
+        return bytes === undefined ? null : bytes.length <= 1024 ? value : { sha256: hash(bytes), bytes: Buffer.byteLength(bytes) };
+      };
+      differences.push({ field, beforePresent: left !== undefined, afterPresent: right !== undefined,
+        before: bounded(left), after: bounded(right) });
+    }
+  };
+  visit(before, after, '$');
+  const changed = new Error('route_acceptance_own_replay_current_inputs_changed');
+  changed.physicalContextDifferences = differences;
+  changed.generationRevoked = generationRevoked;
+  return changed;
+}
+function currentPublicRGraphTargetsV1(subject) {
+  return readPublicRSourceGraphTargetV1(ROOT, subject.publicRSourceContentProfile, {
+    fail: failSourceInput, git: sourceGit, readPinnedSource,
+  });
 }
 async function prepareOwnConsumerRuntimeV1(pending) {
   if (pending.preparedReplay) {
@@ -171,16 +181,16 @@ async function prepareOwnConsumerRuntimeV1(pending) {
   }
   const watcher = await beginOwnCargoPreparationWatchV1();
   try {
-    const before = captureOwnRouteReplayGuardV1(ROOT, safeEnvironment());
+    const before = captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), undefined, undefined, currentPublicRGraphTargetsV1(pending.ownedSubjectContext.subject));
     if (invalidatedContexts.has(pending.generation)
       || JSON.stringify(before) !== JSON.stringify(pending.startingGuard)) {
       throw new Error('route_acceptance_own_replay_current_inputs_changed');
     }
     const runtime = buildNativeOwners(), buildContext = runtimeContexts.get(runtime);
-    const guard = captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), runtime, buildContext);
+    const guard = captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), runtime, buildContext, currentPublicRGraphTargetsV1(pending.ownedSubjectContext.subject));
     const proof = await watcher.complete();
     assertOwnCargoPreparationTransitionV1(before, guard, watcher.ready, proof);
-    assertOwnRouteReplayGuardV1(guard, ROOT, safeEnvironment(), runtime, buildContext);
+    assertOwnRouteReplayGuardV1(guard, ROOT, safeEnvironment(), runtime, buildContext, currentPublicRGraphTargetsV1(pending.ownedSubjectContext.subject));
     return { runtime, buildContext, guard, generation: pending.generation };
   } catch (error) { await watcher.abort(); invalidateOwnPhysicalGeneration(pending.generation); throw error; }
 }
@@ -558,10 +568,10 @@ async function observeRouteAcceptanceInternalV1({ routeIds = contracts.map(row =
   const runtime = ownConsumerReplay ? preparedReplay?.runtime : buildNativeOwners();
   if (!runtime) throw new Error('route_acceptance_own_replay_context_missing');
   const buildContext = runtimeContexts.get(runtime);
-  const replayGuard = ownConsumerReplay ? captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), runtime, buildContext) : null;
+  const replayGuard = ownConsumerReplay ? captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), runtime, buildContext, currentPublicRGraphTargetsV1(before)) : null;
   if (ownConsumerReplay && (invalidatedContexts.has(preparedReplay.generation)
     || JSON.stringify(preparedReplay.guard) !== JSON.stringify(replayGuard))) {
-    throw new Error('route_acceptance_own_replay_current_inputs_changed');
+    throw ownReplayInputsChangedV1(preparedReplay.guard, replayGuard, invalidatedContexts.has(preparedReplay.generation));
   }
   const rows = [];
   for (const contract of allContracts.filter(row => routeIds.includes(row.routeId))) {
@@ -661,9 +671,9 @@ async function observeRouteAcceptanceInternalV1({ routeIds = contracts.map(row =
     runtime: { node: runtime.node, cargoVersion: runtime.cargoVersion, buildArgs: runtime.buildArgs,
       nativeOwners: Object.fromEntries(Object.entries(runtime.owners).map(([name, row]) => [name, { sha256: row.sha256 }])) },
     authority, rows };
-  if (ownConsumerReplay) assertOwnRouteReplayGuardV1(replayGuard, ROOT, safeEnvironment(), runtime, buildContext);
+  if (ownConsumerReplay) assertOwnRouteReplayGuardV1(replayGuard, ROOT, safeEnvironment(), runtime, buildContext, currentPublicRGraphTargetsV1(after));
   const record = freeze({ ...payload, recordSha256: digest(payload) });
-  if (ownConsumerReplay) observationContexts.set(record, { guard: replayGuard, runtime, buildContext });
+  if (ownConsumerReplay) observationContexts.set(record, { guard: replayGuard, runtime, buildContext, subject: before });
   return record;
 }
 
@@ -705,7 +715,7 @@ function assertRecordSchema(record) {
   } finally { for (const descriptor of descriptors) fs.closeSync(descriptor); fs.rmSync(directory, { recursive: true, force: true }); }
 }
 
-function recordPayload(record) {
+function recordPayload(record, ownedSubjectContext = null, currentSubjectSink = null) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('route_acceptance_record_invalid');
   const { recordSha256, ...payload } = record;
   if (recordSha256 !== digest(payload)) throw new Error('route_acceptance_record_digest_mismatch');
@@ -741,12 +751,21 @@ function recordPayload(record) {
     seen.add(row.routeId);
   }
   assertRecordSchema(record);
-  assertCurrentRecordSubject(record);
+  const current = assertCurrentRecordSubject(record, ownedSubjectContext);
+  // This private sink receives the actual source owner's validated subject.
+  // A caller record never becomes an owner, runtime, or acceptance context.
+  if (currentSubjectSink) currentSubjectSink.subject = current;
   return payload;
 }
-function assertCurrentRecordSubject(record) {
-  const current = sourceSubject();
+function assertCurrentRecordSubject(record, ownedSubjectContext = null) {
+  // These contexts are module-private: an actual completed observer, completed
+  // replay, or pending replay bound to its fresh starting guard. They contain
+  // deeply frozen actual source subjects; incoming DTOs never create one.
+  // The consumer still checks the complete current guard before replay/reuse,
+  // after every await, and on refusal, with the same sticky revocation.
+  const current = ownedSubjectContext ? ownedSubjectContext.subject : sourceSubject();
   if (!current.committedClean || JSON.stringify(record.subject) !== JSON.stringify(current)) throw new Error('route_acceptance_subject_not_current_clean_commit');
+  return freeze(current);
 }
 
 export function stableReplayPayload(payload) {
@@ -783,17 +802,27 @@ function invalidateOwnPhysicalGeneration(generation) {
 function assertOwnConsumerCurrent(context) {
   try {
     if (invalidatedContexts.has(context.generation)) throw new Error('route_acceptance_own_replay_current_inputs_changed');
-    return assertOwnRouteReplayGuardV1(context.guard, ROOT, safeEnvironment(), context.runtime, context.buildContext);
+    // The content-only R owner also retains its historical Git locator. It
+    // need not be reachable from HEAD, so re-observe it through that same
+    // owner using only the private replay's fully validated subject. The final
+    // guard below still reads every actual R byte and complete raw identity.
+    const graphTargets = readPublicRSourceGraphTargetV1(ROOT, context.subject.publicRSourceContentProfile, {
+      fail: failSourceInput, git: sourceGit, readPinnedSource,
+    });
+    return assertOwnRouteReplayGuardV1(context.guard, ROOT, safeEnvironment(), context.runtime, context.buildContext, graphTargets);
   } catch (error) { invalidateOwnPhysicalGeneration(context.generation); throw error; }
 }
 function assertOwnReplayStartingCurrent(context) {
   try {
     if (invalidatedContexts.has(context.generation)) throw new Error('route_acceptance_own_replay_current_inputs_changed');
-    assertOwnRouteReplayGuardV1(context.startingGuard, ROOT, safeEnvironment());
+    const graphTargets = readPublicRSourceGraphTargetV1(ROOT, context.ownedSubjectContext.subject.publicRSourceContentProfile, {
+      fail: failSourceInput, git: sourceGit, readPinnedSource,
+    });
+    assertOwnRouteReplayGuardV1(context.startingGuard, ROOT, safeEnvironment(), undefined, undefined, graphTargets);
   } catch (error) { invalidateOwnPhysicalGeneration(context.generation); throw error; }
 }
 const sameRoutes = (left, right) => JSON.stringify(left) === JSON.stringify(right);
-async function ownConsumerReplayFor(routeIds) {
+async function ownConsumerReplayFor(routeIds, currentSubject) {
   let preparedReplay = null, startingGuard = null;
   if (ownIndependentReplay) {
     const current = assertOwnConsumerCurrent(ownIndependentReplay);
@@ -816,10 +845,19 @@ async function ownConsumerReplayFor(routeIds) {
     if (sameRoutes(routeIds, pending.routeIds)) return completed;
     // A different route selection gets its own full matrix. It never borrows
     // the preceding selection's payload or incoming acceptance verdict.
-    return ownConsumerReplayFor(routeIds);
+    return ownConsumerReplayFor(routeIds, currentSubject);
   }
+  const freshStartingGuard = startingGuard || captureOwnRouteReplayGuardV1(ROOT, safeEnvironment(), undefined, undefined, currentPublicRGraphTargetsV1(currentSubject));
+  if (!currentSubject?.committedClean || freshStartingGuard.gitStatus !== ''
+    || freshStartingGuard.subject !== [currentSubject.commit, currentSubject.tree].join('\n')) {
+    invalidateOwnPhysicalGeneration(physicalGeneration);
+    throw new Error('route_acceptance_subject_not_current_clean_commit');
+  }
+  // This subject came from actual source qualification, before this fresh full
+  // guard. It contains no runtime or verdict and cannot stand in for preparation.
   const pending = { routeIds: Object.freeze([...routeIds]), generation: physicalGeneration,
-    startingGuard: startingGuard || captureOwnRouteReplayGuardV1(ROOT, safeEnvironment()), preparedReplay,
+    startingGuard: freshStartingGuard, preparedReplay,
+    ownedSubjectContext: Object.freeze({ subject: currentSubject }),
     preparing: false, preparationPromise: null, promise: null };
   // Start after same-turn callers have validated their own incoming records;
   // synchronous validation cannot delay an already spawned death-test timer.
@@ -832,9 +870,10 @@ async function ownConsumerReplayFor(routeIds) {
     // The matrix compares a fresh full capture and the same revocation token
     // before executing its first case.
     const replayed = await observeRouteAcceptanceInternalV1({ routeIds: pending.routeIds }, true, prepared);
-    const payload = freeze(recordPayload(replayed)), observed = observationContexts.get(replayed);
+    const observed = observationContexts.get(replayed);
     if (!observed) throw new Error('route_acceptance_own_replay_context_missing');
-    const completed = { ...observed, generation: pending.generation, record: replayed, payload };
+    const payload = freeze(recordPayload(replayed, observed));
+    const completed = { ...observed, generation: pending.generation, subject: replayed.subject, record: replayed, payload };
     // The observer checked the matrix end; this local cache has no authority.
     // Reuse and every incoming verdict still require a fresh full guard.
     ownIndependentReplay = completed;
@@ -849,7 +888,9 @@ export async function consumeRouteAcceptanceRecordV1(record) {
   // Each caller retains complete schema/contract/authority/current-subject
   // validation. A producer record never supplies a reusable runtime or verdict.
   let incomingPayload;
-  try { incomingPayload = recordPayload(record); }
+  const currentSubjectSink = { subject: null };
+  try { incomingPayload = recordPayload(record,
+    ownIndependentReplay || ownReplayInFlight?.ownedSubjectContext || null, currentSubjectSink); }
   catch (error) {
     if (ownIndependentReplay) assertOwnConsumerCurrent(ownIndependentReplay);
     if (ownReplayInFlight) {
@@ -858,13 +899,20 @@ export async function consumeRouteAcceptanceRecordV1(record) {
     }
     throw error;
   }
-  const completed = await ownConsumerReplayFor(record.rows.map(row => row.routeId));
+  const completed = await ownConsumerReplayFor(record.rows.map(row => row.routeId), currentSubjectSink.subject);
   const { record: replayed, payload: replayPayload, ...context } = completed;
   // This caller's deeply frozen clone already passed the complete schema,
   // digest, contracts, WAL claims and authority checks before the await.
   // Re-observe the complete committed subject after that async boundary.
   try {
-    assertCurrentRecordSubject(record);
+    // The private completed replay already bound this complete subject to its
+    // full physical guard. Compare this caller's frozen subject with that owned
+    // subject; the finally below freshly checks HEAD/tree, the exact index and
+    // every physical input before either a verdict or a comparison refusal.
+    // No incoming DTO, saved hash or prior verdict supplies that guard.
+    if (JSON.stringify(record.subject) !== JSON.stringify(context.subject)) {
+      throw new Error('route_acceptance_subject_not_current_clean_commit');
+    }
     if (JSON.stringify(canonical(stableReplayPayload(replayPayload))) !== JSON.stringify(canonical(stableReplayPayload(incomingPayload)))) {
       throw new Error('route_acceptance_actual_replay_differs');
     }
@@ -926,7 +974,10 @@ export function assertVerifiedRouteAcceptanceV1(value) {
   if (!verified.has(value)) throw new Error('route_acceptance_not_independently_replayed_for_current_subject');
   const context = verifiedContexts.get(value);
   try {
-    if (JSON.stringify(value.subject) !== JSON.stringify(sourceSubject())) throw new Error('route_acceptance_source_changed');
+    if (JSON.stringify(value.subject) !== JSON.stringify(context.subject)) throw new Error('route_acceptance_source_changed');
+    // This opaque summary's privately owned subject was completely validated
+    // after its own matrix. Every use still freshly observes the entire guard,
+    // including all source bytes, raw identities, Git integrity and index.
     assertOwnConsumerCurrent(context);
   } catch {
     verified.delete(value); invalidateOwnPhysicalGeneration(context.generation);

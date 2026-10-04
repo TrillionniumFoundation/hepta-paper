@@ -5,7 +5,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
-import { captureCommittedSourceSubject, git, readPinnedSource } from '../src/source-evidence-git-inputs.mjs';
+import { captureCommittedSourceSubject, fail, git, readPinnedSource } from '../src/source-evidence-git-inputs.mjs';
+import { assertPublicRSourceReferenceCurrent } from '../src/source-evidence-public-r-inputs.mjs';
 
 const moduleFile = fileURLToPath(new URL('../src/source-evidence-git-inputs.mjs', import.meta.url));
 const originalEnvironment = Object.fromEntries(['PATH', 'HOME', 'LANG', 'LC_ALL', 'USER', 'TMPDIR',
@@ -228,5 +229,45 @@ assert.equal(fs.readdirSync('/proc/self/fd').length,before);console.log('emfile_
     assert.equal(output.status, 0, output.stderr || output.error?.message);
     assert.equal(output.stdout.trim(), 'emfile_partial_fd_cleanup_verified');
     assert.equal(captureCommittedSourceSubject(input.root).committedClean, true);
+  } finally { restored(); fs.rmSync(input.directory, { recursive: true, force: true }); }
+});
+
+test('canonical_git_batches_owned_R_locator_rejects_deleted_unreachable_history_without_touching_alternate_objects', () => {
+  const input = publicRFixture();
+  try {
+    const pathToTree = tree => {
+      const output = spawnSync('/usr/bin/git', ['-C', input.root, 'mktree'], {
+        input: `040000 tree ${tree}\tsource-cas\n`, env: originalEnvironment,
+        encoding: 'utf8', shell: false, timeout: 30000, maxBuffer: 1024 * 1024,
+      });
+      assert.equal(output.status, 0, output.stderr || output.error?.message); return output.stdout.trim();
+    };
+    const scientific = pathToTree(input.route.publicHistoricalRoute.subtree);
+    const nest = (tree, name) => {
+      const output = spawnSync('/usr/bin/git', ['-C', input.root, 'mktree'], {
+        input: `040000 tree ${tree}\t${name}\n`, env: originalEnvironment,
+        encoding: 'utf8', shell: false, timeout: 30000, maxBuffer: 1024 * 1024,
+      });
+      assert.equal(output.status, 0, output.stderr || output.error?.message); return output.stdout.trim();
+    };
+    const outer = nest(nest(scientific, 'r-scientific'), 'runtime-images');
+    const historical = command(input.root, ['-c', 'user.name=Private Locator Fixture',
+      '-c', 'user.email=locator@example.invalid', '-c', 'commit.gpgsign=false', 'commit-tree', outer,
+      '-m', 'Exclusive unreachable original locator fixture']);
+    const routePath = path.join(input.root, 'docs/rust/qualification/r-source-route.v1.json');
+    input.route.publicHistoricalRoute.commit = historical;
+    fs.writeFileSync(routePath, JSON.stringify(input.route));
+    command(input.root, ['add', 'docs/rust/qualification/r-source-route.v1.json']);
+    command(input.root, ['-c', 'user.name=Private Locator Fixture', '-c', 'user.email=locator@example.invalid',
+      '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '--quiet', '-m', 'Bound exclusive historical locator']);
+    const subject = captureCommittedSourceSubject(input.root), owner = { fail, git, readPinnedSource };
+    assertPublicRSourceReferenceCurrent(input.root, subject.publicRSourceContentProfile, owner);
+    const object = path.join(input.root, '.git/objects', historical.slice(0, 2), historical.slice(2));
+    assert.ok(fs.lstatSync(object).isFile());
+    // The sole removed object was just created in this disposable repository.
+    // Its alternate and every original public R object remain read-only.
+    fs.unlinkSync(object);
+    assert.equal(git(input.root, ['status', '--porcelain=v1', '--untracked-files=all']), '');
+    assert.throws(() => assertPublicRSourceReferenceCurrent(input.root, subject.publicRSourceContentProfile, owner), /git_command_failed/u);
   } finally { restored(); fs.rmSync(input.directory, { recursive: true, force: true }); }
 });

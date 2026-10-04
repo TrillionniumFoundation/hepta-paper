@@ -116,15 +116,21 @@ test('schema_valid_json_status_claims_never_become_verified_acceptance_without_c
 test('own_consumer_pending_replay_rejects_actual_environment_drift_even_after_restoration', async () => {
   if (!observed.subject.committedClean) return;
   const original = process.env.TZ;
+  const differentSubject = structuredClone(observed);
+  differentSubject.subject.commit = '0'.repeat(40); rehash(differentSubject);
   // The private replay Promise has been installed, but its complete matrix has
-  // not started. Two incoming callers still validate their own entire records.
+  // not started. Every incoming caller still validates its complete record.
   const first = consumeRouteAcceptanceRecordV1(observed);
   const settledFirst = first.then(value => ({ value }), error => ({ error }));
-  let second;
+  let wrongSubject, second;
   try {
     process.env.TZ = original === 'Etc/GMT+3' ? 'Etc/GMT+4' : 'Etc/GMT+3';
+    // A self-hashed wrong subject cannot hide actual drift through the private
+    // pending subject. Refusal freshly guards and irrevocably revokes it.
+    wrongSubject = consumeRouteAcceptanceRecordV1(differentSubject);
     second = consumeRouteAcceptanceRecordV1(observed);
   } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
+  await assert.rejects(wrongSubject, /own_replay_current_inputs_changed/u);
   await assert.rejects(second, /own_replay_current_inputs_changed/u);
   const initial = await settledFirst;
   assert.match(initial.error?.message || '', /own_replay_current_inputs_changed/u);
@@ -352,12 +358,19 @@ test('different_route_selection_runs_its_own_matrix_without_revoking_the_current
     ['operator/store', 'operator/workspace', 'verify/repository-assets']);
 });
 
-test('verified_own_summary_is_revoked_by_current_input_drift_and_restoration_does_not_revive_it', () => {
+test('verified_own_summary_is_revoked_by_current_input_drift_and_restoration_does_not_revive_it', async () => {
   if (!observed.subject.committedClean) return;
   assert.ok(verifiedOwnSummary);
   const original = process.env.TZ;
   try {
     process.env.TZ = original === 'Etc/GMT+3' ? 'Etc/GMT+4' : 'Etc/GMT+3';
+    // A caller with a different, self-hashed subject cannot mask actual
+    // environment drift through the completed private subject. Its refusal
+    // still performs the same complete current guard and revokes that owner.
+    const differentSubject = structuredClone(observed);
+    differentSubject.subject.commit = '0'.repeat(40); rehash(differentSubject);
+    await assert.rejects(() => consumeRouteAcceptanceRecordV1(differentSubject),
+      /own_replay_current_inputs_changed/u);
     assert.throws(() => assertVerifiedRouteAcceptanceV1(verifiedOwnSummary), /not_independently_replayed/u);
   } finally { if (original === undefined) delete process.env.TZ; else process.env.TZ = original; }
   assert.throws(() => assertVerifiedRouteAcceptanceV1(verifiedOwnSummary), /not_independently_replayed/u);

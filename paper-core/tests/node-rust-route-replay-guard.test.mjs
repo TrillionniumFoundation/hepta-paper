@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { SOURCE_EVIDENCE_PRODUCER_PATHS } from '../../paper-core/src/source-evidence-producer.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +11,15 @@ import { test } from 'node:test';
 import { captureOwnRouteReplayGuardV1, assertOwnRouteReplayGuardV1 } from '../../docs/tools/node-rust-route-replay-guard.mjs';
 import { buildNativeOwners, safeEnvironment } from '../../docs/tools/node-rust-route-acceptance.mjs';
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const require = createRequire(import.meta.url);
+function actualParserPackageRoot(name) {
+  let selected = path.dirname(fs.realpathSync(require.resolve(name)));
+  while (true) {
+    const manifest = path.join(selected, 'package.json');
+    if (fs.existsSync(manifest) && JSON.parse(fs.readFileSync(manifest, 'utf8')).name === name) return selected;
+    const parent = path.dirname(selected); assert.notEqual(parent, selected); selected = parent;
+  }
+}
 const refused = /current_inputs_changed|git_command_failed|path_invalid|ENOENT|file_invalid/u;
 function git(root, ...args) {
   const output = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', shell: false, timeout: 30000, maxBuffer: 1024 * 1024 });
@@ -91,8 +102,7 @@ test('actual_guard_rejects_an_elf_compiled_for_a_different_source_root', () => {
 test('actual_guard_rejects_actual_resolved_package_lock_bytes_and_dependency_alias_or_namespace_changes', async () => {
   const { directory, root } = fixture(), environment = safeEnvironment();
   try {
-    const files = ['docs/tools/node-rust-route-replay-guard.mjs',
-      ...['cargo-observations', 'git-inputs', 'strict-json', 'producer'].map(name => `paper-core/src/source-evidence-${name}.mjs`), 'package-lock.json'];
+    const files = ['docs/tools/node-rust-route-replay-guard.mjs', ...SOURCE_EVIDENCE_PRODUCER_PATHS, 'package.json', 'package-lock.json'];
     for (const file of files) {
       const destination = path.join(root, file); fs.mkdirSync(path.dirname(destination), { recursive: true });
       fs.copyFileSync(path.join(source, file), destination);
@@ -100,7 +110,7 @@ test('actual_guard_rejects_actual_resolved_package_lock_bytes_and_dependency_ali
     fs.writeFileSync(path.join(root, '.gitignore'), '/node_modules/\n', { flag: 'wx', mode: 0o600 });
     fs.mkdirSync(path.join(root, 'node_modules'));
     for (const name of ['espree', 'eslint-scope', 'acorn', 'acorn-jsx', 'eslint-visitor-keys', 'esrecurse', 'estraverse']) {
-      fs.cpSync(path.join(source, 'node_modules', name), path.join(root, 'node_modules', name), { recursive: true, dereference: false });
+      fs.cpSync(actualParserPackageRoot(name), path.join(root, 'node_modules', name), { recursive: true, dereference: false });
     }
     git(root, 'add', '.');
     git(root, '-c', 'user.name=Private Guard Fixture', '-c', 'user.email=guard@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '--quiet', '-m', 'Actual module and locked package guard inputs');
@@ -262,4 +272,90 @@ test('actual_guard_binds_selected_tool_ancestor_alias_epoch_and_refuses_identica
     assert.throws(() => assertOwnRouteReplayGuardV1(guard, root, environment), refused);
     assertOwnRouteReplayGuardV1(captureOwnRouteReplayGuardV1(root, environment), root, environment);
   } finally { process.env.PATH = original; fs.rmSync(directory, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); }
+});
+
+test('actual_guard_admits_the_exact_locked_parent_and_refuses_lock_alias_and_shadow_root_changes', async () => {
+  const { directory, root } = fixture(), environment = safeEnvironment();
+  try {
+    const files = ['docs/tools/node-rust-route-replay-guard.mjs', ...SOURCE_EVIDENCE_PRODUCER_PATHS, 'package.json', 'package-lock.json'];
+    for (const file of files) {
+      const destination = path.join(root, file); fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(path.join(source, file), destination);
+    }
+    for (const file of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(root, file), path.join(directory, file));
+    const dependencies = path.join(directory, 'node_modules'); fs.mkdirSync(dependencies);
+    for (const name of ['espree', 'eslint-scope', 'acorn', 'acorn-jsx', 'eslint-visitor-keys', 'esrecurse', 'estraverse']) {
+      fs.cpSync(actualParserPackageRoot(name), path.join(dependencies, name), { recursive: true, dereference: false });
+    }
+    git(root, 'add', '.');
+    git(root, '-c', 'user.name=Private Guard Fixture', '-c', 'user.email=guard@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '--quiet', '-m', 'Actual lock-bound parent dependency fixture');
+    const own = await import(pathToFileURL(path.join(root, files[0])).href);
+    let guard = own.captureOwnRouteReplayGuardV1(root, environment);
+    assert.equal(guard.dependencies.requestedRoot, dependencies);
+    assert.equal(guard.dependencies.actualRoot, dependencies);
+    assert.equal(guard.dependencies.candidateRootAbsence.path, path.join(root, 'node_modules'));
+    assert.equal(guard.dependencies.closure.length, 7);
+    own.assertOwnRouteReplayGuardV1(guard, root, environment);
+    const shadow = path.join(root, 'node_modules'); fs.mkdirSync(shadow);
+    assert.throws(() => own.assertOwnRouteReplayGuardV1(guard, root, environment), refused); fs.rmdirSync(shadow);
+    assert.throws(() => own.assertOwnRouteReplayGuardV1(guard, root, environment), refused);
+    guard = own.captureOwnRouteReplayGuardV1(root, environment);
+    const lock = path.join(directory, 'package-lock.json'), lockBytes = fs.readFileSync(lock);
+    fs.appendFileSync(lock, '\n');
+    assert.throws(() => own.captureOwnRouteReplayGuardV1(root, environment), refused); fs.writeFileSync(lock, lockBytes);
+    assert.throws(() => own.assertOwnRouteReplayGuardV1(guard, root, environment), refused);
+    guard = own.captureOwnRouteReplayGuardV1(root, environment);
+    own.assertOwnRouteReplayGuardV1(guard, root, environment);
+    const displaced = path.join(directory, 'displaced-dependencies');
+    fs.renameSync(dependencies, displaced); fs.symlinkSync(displaced, dependencies);
+    assert.throws(() => own.captureOwnRouteReplayGuardV1(root, environment), refused);
+    fs.unlinkSync(dependencies); fs.renameSync(displaced, dependencies);
+    assert.throws(() => own.assertOwnRouteReplayGuardV1(guard, root, environment), refused);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('actual_guard_binds_git_ignore_rules_clean_status_and_refuses_identical_rule_restoration', () => {
+  const { directory, root } = fixture(), environment = safeEnvironment();
+  try {
+    const exclude = path.join(root, '.git/info/exclude'), original = fs.readFileSync(exclude);
+    const rules = Buffer.concat([original, Buffer.from('\nignored-existing-input\n')]);
+    fs.writeFileSync(exclude, rules);
+    fs.writeFileSync(path.join(root, 'ignored-existing-input'), 'already observed ignored source bytes');
+    assert.equal(git(root, 'status', '--porcelain=v1', '--untracked-files=all'), '');
+    const guard = captureOwnRouteReplayGuardV1(root, environment);
+    assertOwnRouteReplayGuardV1(guard, root, environment);
+    // Only Git metadata changes; the observed source tree, HEAD and index stay
+    // exact. The previously ignored file now makes the real subject dirty.
+    fs.writeFileSync(exclude, original);
+    assert.match(git(root, 'status', '--porcelain=v1', '--untracked-files=all'), /ignored-existing-input/u);
+    assert.throws(() => assertOwnRouteReplayGuardV1(guard, root, environment), refused);
+    fs.writeFileSync(exclude, rules);
+    assert.equal(git(root, 'status', '--porcelain=v1', '--untracked-files=all'), '');
+    assert.throws(() => assertOwnRouteReplayGuardV1(guard, root, environment), refused);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('actual_guard_checks_head_and_missing_unreachable_historical_graph_in_the_same_strict_invocation', () => {
+  const { directory, root } = fixture(), environment = safeEnvironment();
+  try {
+    const blob = git(root, 'hash-object', '-w', 'source.txt');
+    const created = spawnSync('git', ['-C', root, 'mktree'], {
+      input: ['100644 blob ' + blob + '\tother-history.txt', ''].join('\n'),
+      encoding: 'utf8', shell: false, timeout: 30000, maxBuffer: 1024 * 1024,
+    });
+    assert.equal(created.status, 0, created.stderr || created.error?.message);
+    const historical = created.stdout.trim(); assert.match(historical, /^[0-9a-f]{40}$/u);
+    const guard = captureOwnRouteReplayGuardV1(root, environment, undefined, undefined, [historical]);
+    assertOwnRouteReplayGuardV1(guard, root, environment, undefined, undefined, [historical]);
+    assert.throws(() => assertOwnRouteReplayGuardV1(guard, root, environment), refused);
+    // HEAD itself remains complete, but this separately required historical
+    // root has genuinely disappeared. Neither a valid HEAD nor its old verdict
+    // can stand in for verification of the current additional graph.
+    fs.unlinkSync(path.join(root, '.git/objects', historical.slice(0, 2), historical.slice(2)));
+    git(root, 'fsck', '--strict', '--no-reflogs', '--no-dangling', 'HEAD');
+    assert.throws(() => assertOwnRouteReplayGuardV1(guard, root, environment,
+      undefined, undefined, [historical]), refused);
+    assert.throws(() => captureOwnRouteReplayGuardV1(root, environment,
+      undefined, undefined, ['not-an-object-id']), refused);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

@@ -64,7 +64,25 @@ fn probe(
     if !actual.process.process_group_cleanup_verified
         || actual.process.termination_reason != ProcessTerminationReason::Exited
     {
-        return Err("advanced_numerical_plugin_bom_probe_unknown".into());
+        return Err(format!(
+            "advanced_numerical_plugin_bom_probe_unknown;bomProbeFacts={}",
+            serde_json::json!({
+                "version": 1,
+                "kind": "FixedNumericalBomProbeFailureV1",
+                "executable": tool,
+                "arguments": args,
+                "timeoutMs": remaining.min(5000),
+                "terminationReason": format!("{:?}", actual.process.termination_reason),
+                "exitCode": actual.process.exit_code,
+                "signal": actual.process.signal,
+                "elapsedMs": actual.process.elapsed_ms,
+                "stdoutBytes": actual.process.stdout_bytes,
+                "stderrBytes": actual.process.stderr_bytes,
+                "stderrTail": String::from_utf8_lossy(&actual.process.stderr_tail),
+                "processGroupCleanupVerified": actual.process.process_group_cleanup_verified,
+                "terminationEscalated": actual.process.termination_escalated,
+            })
+        ));
     }
     if actual.process.exit_code != Some(0) {
         return Ok(String::new());

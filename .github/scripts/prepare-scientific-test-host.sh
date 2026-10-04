@@ -143,7 +143,7 @@ require(current_label == "unconfined", "confined_setup_context_requires_review")
 kernel_profiles = Path("/sys/kernel/security/apparmor/policy/profiles")
 require(kernel_profiles.is_dir(), "kernel_attachment_inventory_unavailable")
 attachments = []
-pending_unconfined = []
+pending_attachments = []
 for attached in kernel_profiles.rglob("attach"):
     require(len(attachments) < 512, "kernel_attachment_inventory_limit")
     name = kernel_text(str(attached.parent / "name"))
@@ -154,8 +154,11 @@ for attached in kernel_profiles.rglob("attach"):
     emit("scientific_test_host_apparmor_attachment", **row)
     require(expression, "kernel_attachment_missing:" + name)
     if expression == "<unknown>":
-        require(mode == "unconfined", "kernel_attachment_unknown:" + name)
-        pending_unconfined.append(row)
+        # A recognized mode is not attachment exclusion. Keep this unknown
+        # until the exact enforced child and same-process denial prove it.
+        require(mode in ("unconfined", "enforce", "complain"),
+                "kernel_attachment_unknown_mode:" + name)
+        pending_attachments.append(row)
         continue  # Pending only: complete effective child and real denial are mandatory.
     metacharacters = "*?[]{}\\@^"
     special = [index for index, char in enumerate(expression) if char in metacharacters]
@@ -172,7 +175,7 @@ require(len(attachments) == len(profiles), "kernel_attachment_inventory_incomple
 require(kernel_text("/sys/kernel/security/apparmor/profiles").splitlines() == profiles,
         "kernel_profile_inventory_changed")
 emit("scientific_test_host_apparmor_attachment_inventory", observedCount=len(attachments),
-     pendingUnconfined=pending_unconfined)
+     pendingAttachments=pending_attachments)
 directory = POLICY.parent
 metadata = directory.lstat()
 require(stat.S_ISDIR(metadata.st_mode) and metadata.st_uid == 0

@@ -245,10 +245,10 @@ mod tests {
         use nix::unistd::Pid;
         for signal in [Signal::SIGTERM, Signal::SIGKILL] {
             let root = fixture();
-            let copied = root.join("owned-control-test-elf");
-            fs::copy(std::env::current_exe().unwrap(), &copied).unwrap();
-            fs::set_permissions(&copied, fs::Permissions::from_mode(0o555)).unwrap();
-            let mut child = Command::new(&copied)
+            // This owner tests key publication interruption, not executable
+            // copying. Reuse the running test binary so a concurrent fork cannot
+            // inherit a copied executable's writer and make exec return ETXTBSY.
+            let mut child = Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "release_integrity_key::control::tests::interrupted_key_control_worker",

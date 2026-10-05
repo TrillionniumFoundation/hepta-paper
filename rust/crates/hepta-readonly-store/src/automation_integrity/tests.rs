@@ -5,7 +5,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{MutexGuard, atomic::AtomicBool},
+    sync::atomic::AtomicBool,
     time::{Duration, Instant},
 };
 
@@ -19,21 +19,16 @@ CREATE TABLE automation_resource_waiters(waiter_id TEXT,expires_at TEXT);";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,
-    _guard: MutexGuard<'static, ()>,
 }
 impl Fixture {
     fn new() -> Self {
-        let guard = crate::READ_ONLY_FIXTURE_DIRECTORY_LIFECYCLE.lock().unwrap();
         let root = std::env::temp_dir().join(format!(
             "hepta-automation-integrity-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
-        Self {
-            root,
-            _guard: guard,
-        }
+        Self { root }
     }
     fn path(&self) -> PathBuf {
         self.root.join("store.sqlite")

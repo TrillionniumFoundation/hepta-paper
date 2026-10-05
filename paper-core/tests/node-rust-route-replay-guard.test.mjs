@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
+import { withPrivateReplayTargetFixture } from './support/private-replay-target-fixture.mjs';
 import { captureOwnRouteReplayGuardV1, assertOwnRouteReplayGuardV1 } from '../../docs/tools/node-rust-route-replay-guard.mjs';
 import { buildNativeOwners, safeEnvironment } from '../../docs/tools/node-rust-route-acceptance.mjs';
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -134,13 +135,14 @@ test('actual_guard_rejects_actual_resolved_package_lock_bytes_and_dependency_ali
     assert.throws(() => own.assertOwnRouteReplayGuardV1(guard, root, environment), refused);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
-test('actual_guard_rejects_same_mtime_native_elf_bytes_and_identical_byte_inode_replacement', () => {
+test('actual_guard_rejects_same_mtime_native_elf_bytes_and_identical_byte_inode_replacement', () => withPrivateReplayTargetFixture((privateTarget) => {
   const environment = safeEnvironment(), runtime = buildNativeOwners();
   const executable = runtime.owners['hepta-paper-rust'].path, original = fs.readFileSync(executable);
   const target = path.dirname(path.dirname(executable));
   // This is the task's independently built private target, outside the source;
   // no other target or deployed executable is modified by the negative.
-  assert.equal(target, process.env.CARGO_TARGET_DIR);
+  assert.equal(target, privateTarget);
+  assert.equal(process.env.CARGO_TARGET_DIR, privateTarget);
   const buildContext = { root: source, target, artifacts: { 'hepta-paper-rust': {
     manifestPath: path.join(source, 'rust/crates/hepta-paper-service/Cargo.toml'),
     sourcePath: path.join(source, 'rust/crates/hepta-paper-service/src/bin/hepta-paper-rust.rs'), targetKind: ['bin'], profile: { test: false },
@@ -161,7 +163,7 @@ test('actual_guard_rejects_same_mtime_native_elf_bytes_and_identical_byte_inode_
     fs.renameSync(replacement, executable);
     assert.throws(() => assertOwnRouteReplayGuardV1(guard, source, environment, owner, buildContext), refused);
   } finally { fs.writeFileSync(executable, original); fs.chmodSync(executable, before.mode & 0o777); fs.utimesSync(executable, before.atime, before.mtime); }
-});
+}));
 test('actual_guard_binds_the_external_default_store_missing_ancestor_and_leaf_and_refuses_creation_or_alias', () => {
   const { directory, root } = fixture(), environment = safeEnvironment();
   const runtime = path.join(directory, 'hepta-paper-runtime'), leaf = path.join(runtime, 'native-runtime/hepta-paper.sqlite');

@@ -1,3 +1,4 @@
+import { assertNativeSignalTargetOwned, recordRequestedParentTermination } from './support/native-process-signal-fixture.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -227,9 +228,10 @@ function nativeProcessPin(pid) {
     return {pid,state:fields[0],parent:Number(fields[1]),group:Number(fields[2]),session:Number(fields[3]),start:fields[19],uid:Number(/^Uid:\s+(\d+)/mu.exec(status)[1])};
   }catch(error){if(['ENOENT','ESRCH'].includes(error.code))return null;throw error;}
 }
-function signalCurrentNativePin(pin, signal) {
+function signalCurrentNativePin(pin, signal, parentTermination = null) {
   const now=nativeProcessPin(pin.pid);if(!now||['Z','X'].includes(now.state))return false;
-  for(const name of ['parent','group','session','start','uid'])assert.equal(now[name],pin[name]);assert.equal(now.uid,process.getuid());
+  const parentNow=parentTermination?nativeProcessPin(parentTermination.pin.pid):undefined;
+  assertNativeSignalTargetOwned(pin,now,process.getuid(),parentTermination,parentNow);
   process.kill(pin.pid,signal);return true;
 }
 async function pollNativeMarker(marker,deadline) {
@@ -246,18 +248,19 @@ test('normal_r_source_cas_active_transport_term_kill_preserve_unknown_stage_and_
     const payloads={'demo_1.0.tar.gz':path.join(payload,'demo_1.0.tar.gz')};const control=transportFixture(prefix,payloads,{wait:true});
     const argsBefore=fixture.snapshot(root), lockBefore=fixture.pin(path.join(context,'renv.lock'));
     const inFlight=fixture.run('native',args(['--action=acquire','--root',root]),{PATH:`${control.tools}:/usr/bin:/bin`},fixture.binary,null,null,signal,signal==='SIGTERM');
-    let observed,transportPin,parentPin,result,failure;
+    let observed,transportPin,parentPin,parentTermination,result,failure;
     try {
       observed=await pollNativeMarker(path.join(control.state,'transport-marker.json'),Date.now()+15000);
       transportPin=nativeProcessPin(observed.pid);parentPin=nativeProcessPin(observed.parent);
       assert.ok(transportPin&&parentPin);assert.equal(transportPin.uid,process.getuid());assert.equal(transportPin.parent,parentPin.pid);
       assert.equal(parentPin.group,parentPin.pid);assert.equal(parentPin.session,parentPin.pid);assert.equal(fs.readlinkSync(`/proc/${parentPin.pid}/exe`),fixture.binary);
-      assert.equal(signalCurrentNativePin(parentPin,signal),true);
-      if(signal==='SIGKILL')signalCurrentNativePin(transportPin,'SIGKILL');
+      const requested=signalCurrentNativePin(parentPin,signal);assert.equal(requested,true);
+      parentTermination=recordRequestedParentTermination(parentPin,signal,requested);
+      if(signal==='SIGKILL')signalCurrentNativePin(transportPin,'SIGKILL',parentTermination);
       result=await inFlight;
       const live=nativeProcessPin(transportPin.pid);assert.ok(!live||['Z','X'].includes(live.state),'actual existing cancellation owner stops transport');
     }catch(error){failure=error;}finally{
-      if(transportPin)signalCurrentNativePin(transportPin,'SIGKILL');if(parentPin)signalCurrentNativePin(parentPin,'SIGKILL');
+      if(transportPin)signalCurrentNativePin(transportPin,'SIGKILL',parentTermination);if(parentPin)signalCurrentNativePin(parentPin,'SIGKILL');
       try {result=await inFlight;}catch(error){failure??=error;}
     }
     if(failure)throw failure;

@@ -1,3 +1,4 @@
+import { hostBatchFixtureBudget } from './support/host-batch-budget-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -1308,6 +1309,7 @@ test('host sandbox executes exactly three arm batches or reports the unavailable
     sourceRoot: root,
     outputDirectory: output,
     env: { HEPTA_EXPERIMENT_ATTEMPT_ID: 'real-host-batch-attempt' },
+    ...hostBatchFixtureBudget(Date.now()),
     sourceLineageHash: hashBytes(fs.readFileSync(path.join(root, 'main.tex'))),
     benchmarkSelector: selector,
     }),

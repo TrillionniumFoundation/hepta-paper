@@ -25,7 +25,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        subject: [exact-head, prospective-merge]
+        # Push has no merge subject: base and head are the same commit.
+        # Pull requests still compile both independently in fresh target roots.
+        subject: ${{ fromJSON(github.event_name == 'pull_request' && '["exact-head", "prospective-merge"]' || '["exact-head"]') }}
     env:
       EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       EXPECTED_BASE: ${{ github.event.pull_request.base.sha || github.sha }}

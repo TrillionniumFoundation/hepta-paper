@@ -76,7 +76,11 @@ class ServiceIntegrationShards(unittest.TestCase):
                 "-p hepta-paper-service --example native-authority-fixture-client",
                 command,
             )
-            self.assertIn("test -x rust/target/debug/examples/native-authority-fixture-client", command)
+            example = ("$CARGO_TARGET_DIR" if name == "rust-foundation" else "rust/target")
+            executable = f"{example}/debug/examples/native-authority-fixture-client"
+            if name == "rust-foundation":
+                executable = f'"{executable}"'
+            self.assertIn(f"test -x {executable}", command)
             self.assertNotIn("continue-on-error", body)
             self.assertNotIn("|| true", body)
             if name == "rust-migration-acceptance":
@@ -84,6 +88,83 @@ class ServiceIntegrationShards(unittest.TestCase):
                 self.assertLess(index, names.index("Verify complete service integration partition"))
             else:
                 self.assertNotIn("        if:", body)
+
+    def assert_foundation_target_isolation(self, source):
+        # Inspect configuration only. No Cargo, executable, installer or oracle
+        # is run, and these checks are not a behavioral qualification receipt.
+        before_steps = source.split("    steps:\n", 1)[0]
+        # runner context is unavailable in job-level env. Persist the prepared
+        # runner path with GITHUB_ENV before every Cargo-producing step instead.
+        self.assertNotIn("${{ runner.", before_steps)
+        self.assertNotIn("CARGO_TARGET_DIR:", source)
+        self.assertEqual(source.count("CARGO_TARGET_DIR="), 1)
+        self.assertNotRegex(source, r"(?m)^\s*(?:export\s+)?CARGO_TARGET_DIR=")
+        self.assertNotIn("--target-dir", source)
+        self.assertIn("    timeout-minutes: 90\n", before_steps)
+        steps = re.split(r"(?m)^      - name: ", source)[1:]
+        names = [step.splitlines()[0] for step in steps]
+        prepare = "Prepare isolated Cargo target directory"
+        self.assertEqual(names.count(prepare), 1)
+        index = names.index(prepare)
+        body = steps[index]
+        for text in (
+            "set -euo pipefail",
+            'target="$(realpath "$RUNNER_TEMP")/hepta-rust-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"',
+            'workspace="$(realpath "$GITHUB_WORKSPACE")"',
+            'case "$target/" in',
+            '"$workspace/"*)',
+            "exit 1",
+            'mkdir -- "$target"',
+            "printf 'CARGO_TARGET_DIR=%s\\n' \"$target\" >> \"$GITHUB_ENV\"",
+        ):
+            self.assertIn(text, body)
+        for text in ("        if:", "continue-on-error", "|| true", "mkdir -p", "rm -"):
+            self.assertNotIn(text, body)
+        self.assertLess(body.index('mkdir -- "$target"'), body.index("printf 'CARGO_TARGET_DIR="))
+        for name in ("Validate locked dependency metadata", "Check formatting", "Run Clippy",
+                     "Build native authority test executable", "Build documentation", "Run tests"):
+            self.assertLess(index, names.index(name))
+        commands = {name: " ".join(step.replace("\\\n", " ").split())
+                    for name, step in zip(names, steps)}
+        self.assertIn('test -x "$CARGO_TARGET_DIR/debug/examples/native-authority-fixture-client"',
+                      commands["Build native authority test executable"])
+        self.assertIn("cargo doc --manifest-path rust/Cargo.toml --workspace --all-features "
+                      "--locked --no-deps 2>&1 | tee /tmp/hepta-rust-validation/rustdoc.log",
+                      commands["Build documentation"])
+        self.assertIn("cargo test --manifest-path rust/Cargo.toml --workspace --all-features "
+                      "--locked 2>&1 | tee /tmp/hepta-rust-validation/test.log",
+                      commands["Run tests"])
+        host = "Prepare and verify scientific test host"
+        self.assertIn("run: bash .github/scripts/prepare-scientific-test-host.sh", commands[host])
+        self.assertLess(names.index("Build documentation"), names.index(host))
+        self.assertLess(names.index(host), names.index("Run tests"))
+
+    def test_foundation_uses_one_exclusive_external_target_for_all_cargo_steps(self):
+        source = (ROOT / ".github/workflows/rust-foundation.yml").read_text()
+        self.assert_foundation_target_isolation(source)
+
+    def test_foundation_target_configuration_rejects_incomplete_migrations(self):
+        source = (ROOT / ".github/workflows/rust-foundation.yml").read_text()
+        mutations = {
+            "workspace_target": ('$(realpath "$RUNNER_TEMP")/hepta-rust-foundation-', "rust/target-"),
+            "shared_attempts": ("-$GITHUB_RUN_ATTEMPT", ""),
+            "invalid_job_context": ("    steps:\n", "    env:\n      CARGO_TARGET_DIR: ${{ runner.temp }}/target\n    steps:\n"),
+            "step_only_environment": ("printf 'CARGO_TARGET_DIR=%s\\n' \"$target\" >> \"$GITHUB_ENV\"", 'export CARGO_TARGET_DIR="$target"'),
+            "reused_directory": ('mkdir -- "$target"', 'mkdir -p -- "$target"'),
+            "missing_workspace_guard": ('"$workspace/"*)', '"/unrelated-workspace/"*)'),
+            "stale_example_consumer": ('test -x "$CARGO_TARGET_DIR/debug/examples/native-authority-fixture-client"',
+                                       "test -x rust/target/debug/examples/native-authority-fixture-client"),
+            "unguarded_creation": ('mkdir -- "$target"', 'mkdir -- "$target" || true'),
+            "changed_full_test_command": ("          cargo test \\\n", "          cargo test --lib \\\n"),
+            "changed_doc_command": ("          cargo doc \\\n", "          cargo doc --lib \\\n"),
+            "missing_host_gate": ("run: bash .github/scripts/prepare-scientific-test-host.sh", "run: true"),
+        }
+        for name, (old, new) in mutations.items():
+            with self.subTest(name=name):
+                self.assertIn(old, source)
+                changed = source.replace(old, new, 1)
+                with self.assertRaises(AssertionError):
+                    self.assert_foundation_target_isolation(changed)
 
     def test_observation_windows_outlive_producers_without_relaxing_acceptance(self):
         required = json.loads((ROOT / "docs/rust/qualification/source-required-checks.v1.json").read_text())

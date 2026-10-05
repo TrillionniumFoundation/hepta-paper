@@ -50,6 +50,8 @@ python3 docs/rust/tools/test_qualification_collection_completeness.py \
 python3 docs/rust/tools/test_qualification_evidence_projection.py \
   2>&1 | tee "$EVIDENCE_ROOT/evidence-projection-tests.log"
 
+# Projection validation includes completeness validation and preserves its counts.
+# Keep the original/current collections independent; avoid parsing each twice.
 python3 docs/rust/tools/collect-required-checks.py \
   --repository "$GITHUB_REPOSITORY" \
   --commit "$EXPECTED_HEAD_SHA" \
@@ -61,11 +63,6 @@ python3 docs/rust/tools/collect-required-checks.py \
   --api-url "$GITHUB_API_URL" \
   --raw-output-dir "$EVIDENCE_ROOT/raw/required" \
   --output "$EVIDENCE_ROOT/check-evidence.v2.json"
-python3 docs/rust/tools/validate_qualification_collection_completeness.py \
-  --mode required \
-  --raw-root "$EVIDENCE_ROOT/raw/required" \
-  --artifact "$EVIDENCE_ROOT/check-evidence.v2.json" \
-  | tee "$EVIDENCE_ROOT/required-collection-validation.json"
 python3 docs/rust/tools/validate_qualification_evidence_projection.py \
   --mode required \
   --raw-root "$EVIDENCE_ROOT/raw/required" \
@@ -100,11 +97,6 @@ python3 docs/rust/tools/qualification_subject_v3.py \
   --raw-output-dir "$EVIDENCE_ROOT/raw/subject" \
   --output "$EVIDENCE_ROOT/qualification-subject.v3.json" \
   | tee "$EVIDENCE_ROOT/subject-collection.json"
-python3 docs/rust/tools/validate_qualification_collection_completeness.py \
-  --mode subject \
-  --raw-root "$EVIDENCE_ROOT/raw/subject" \
-  --artifact "$EVIDENCE_ROOT/qualification-subject.v3.json" \
-  | tee "$EVIDENCE_ROOT/subject-collection-validation.json"
 python3 docs/rust/tools/validate_qualification_evidence_projection.py \
   --mode subject \
   --raw-root "$EVIDENCE_ROOT/raw/subject" \
@@ -136,11 +128,6 @@ python3 docs/rust/tools/collect-required-checks.py \
   --api-url "$GITHUB_API_URL" \
   --raw-output-dir "$EVIDENCE_ROOT/raw/current-required" \
   --output "$EVIDENCE_ROOT/current-check-evidence.v2.json"
-python3 docs/rust/tools/validate_qualification_collection_completeness.py \
-  --mode required \
-  --raw-root "$EVIDENCE_ROOT/raw/current-required" \
-  --artifact "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
-  | tee "$EVIDENCE_ROOT/current-required-collection-validation.json"
 python3 docs/rust/tools/validate_qualification_evidence_projection.py \
   --mode required \
   --raw-root "$EVIDENCE_ROOT/raw/current-required" \
@@ -158,11 +145,6 @@ python3 docs/rust/tools/qualification_subject_v3.py \
   --check-evidence "$EVIDENCE_ROOT/current-check-evidence.v2.json" \
   --raw-output-dir "$EVIDENCE_ROOT/raw/current-subject" \
   --output "$EVIDENCE_ROOT/current-qualification-subject.v3.json"
-python3 docs/rust/tools/validate_qualification_collection_completeness.py \
-  --mode subject \
-  --raw-root "$EVIDENCE_ROOT/raw/current-subject" \
-  --artifact "$EVIDENCE_ROOT/current-qualification-subject.v3.json" \
-  | tee "$EVIDENCE_ROOT/current-subject-collection-validation.json"
 python3 docs/rust/tools/validate_qualification_evidence_projection.py \
   --mode subject \
   --raw-root "$EVIDENCE_ROOT/raw/current-subject" \

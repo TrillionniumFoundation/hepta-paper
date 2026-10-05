@@ -156,3 +156,13 @@ test('all six dual-subject checks are required and producer-bound, never advisor
   assert.ok(required.forbiddenConclusions.includes('skipped'));
   assert.equal(required.authority.productionAuthorized, false);
 });
+
+test('product compilation keeps both PR subjects and avoids the identical push subject', () => {
+  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/rust-product-targets.yml'), 'utf8');
+  const match = workflow.match(/subject: \$\{\{ fromJSON\(github\.event_name == 'pull_request' && '([^']+)' \|\| '([^']+)'\) \}\}/u);
+  assert.ok(match, 'matrix must select subjects by the actual event');
+  assert.deepEqual(JSON.parse(match[1]), ['exact-head', 'prospective-merge']);
+  assert.deepEqual(JSON.parse(match[2]), ['exact-head']);
+  assert.match(workflow, /--workspace --all-targets --all-features --locked/u);
+  assert.match(workflow, /CARGO_TARGET_DIR="\$RUNNER_TEMP\/product-target-build"/u);
+});

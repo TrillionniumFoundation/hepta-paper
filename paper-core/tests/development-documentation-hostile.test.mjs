@@ -8,14 +8,14 @@ import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-function run(root) {
+function run(root, env = process.env) {
   return spawnSync(process.execPath, [
-    path.join(root, 'docs/tools/validate-development-docs.mjs'),
+    path.join(repositoryRoot, 'docs/tools/validate-development-docs.mjs'),
     '--root', root,
   ], {
     cwd: root,
     encoding: 'utf8',
-    env: { ...process.env },
+    env: { ...env },
   });
 }
 
@@ -54,6 +54,57 @@ test('development documentation validator fails closed under hostile graph, link
   try {
     const baseline = run(worktree);
     assert.equal(baseline.status, 0, `${baseline.stdout}\n${baseline.stderr}`);
+
+    // Every schema still runs through the strict validator after process batching.
+    for (const name of [
+      'program-v2', 'capabilities-v1', 'modules-v1', 'work-items-v2',
+      'milestones-v1', 'risks-v2', 'canonical-workloads-v1',
+      'document-manifest-v1', 'evidence-bindings-v1',
+    ]) {
+      const schema = path.join(worktree, `docs/system/schemas/${name}.schema.json`);
+      const original = fs.readFileSync(schema);
+      try {
+        fs.writeFileSync(schema, '{"type":"object","unsupportedAssertion":true}');
+        expectFailure(worktree, /unsupported.*keyword|unsupportedAssertion/u);
+      } finally { fs.writeFileSync(schema, original); }
+    }
+    const program = path.join(worktree, 'docs/system/truth/program.v2.json');
+    const originalProgram = fs.readFileSync(program);
+    try {
+      fs.writeFileSync(program, '{"kind":"one","kind":"two"}');
+      expectFailure(worktree, /duplicate JSON property/u);
+      fs.writeFileSync(program, '{"number":1e999}');
+      expectFailure(worktree, /non-finite JSON number/u);
+      fs.writeFileSync(program, Buffer.from([0xff]));
+      expectFailure(worktree, /encoded data.*not valid/u);
+    } finally { fs.writeFileSync(program, originalProgram); }
+
+    for (const relative of [
+      'docs/system/truth/program.v2.json',
+      'docs/system/schemas/program-v2.schema.json',
+    ]) {
+      const file = path.join(worktree, relative);
+      const original = fs.readFileSync(file);
+      try {
+        fs.writeFileSync(file, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), original]));
+        expectFailure(worktree, /Unexpected token|BOM|schema:/u);
+        fs.writeFileSync(file, Buffer.concat([Buffer.from('{"description":"'), Buffer.from([0xff]), Buffer.from('"}') ]));
+        expectFailure(worktree, /encoded data.*not valid/u);
+      } finally { fs.writeFileSync(file, original); }
+    }
+
+    const shimRoot = path.join(temporaryRoot, 'python-shim');
+    fs.mkdirSync(shimRoot);
+    const shim = path.join(shimRoot, 'python3');
+    for (const [output, status] of [
+      ['not-json', 0], ['{}', 0], ['{"ok":true,"failures":[]}', 9],
+      ['{"ok":false,"failures":[]}', 0],
+    ]) {
+      fs.writeFileSync(shim, `#!/bin/sh\nprintf '%s\\n' '${output}'\nexit ${status}\n`, { mode: 0o755 });
+      const result = run(worktree, { ...process.env, PATH: `${shimRoot}:${process.env.PATH}` });
+      assert.notEqual(result.status, 0, result.stdout);
+      assert.match(result.stderr, /schema validation unavailable or invalid/u);
+    }
 
     const brokenLink = path.join(worktree, 'docs/system/HOSTILE_LINK.md');
     fs.writeFileSync(brokenLink, '# Hostile link\n\n[missing](./DOES_NOT_EXIST.md)\n');

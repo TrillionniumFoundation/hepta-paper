@@ -231,6 +231,85 @@ class RequiredBindingTests(unittest.TestCase):
         }))
         return evidence
 
+    def prepare_many_jobs(self, root: Path, count=201):
+        evidence = self.prepare(root)
+        identifiers = list(range(100, 100 + count))
+
+        def pages(key, rows):
+            return [page(key, rows[start:start + 100], len(rows))
+                    for start in range(0, len(rows), 100)]
+
+        (root / 'check-runs.json').write_text(json.dumps(
+            pages('check_runs', [{'id': identifier} for identifier in identifiers])))
+        (root / 'jobs.json').write_text(json.dumps({
+            '10-1': {'runId': 10, 'runAttempt': 1,
+                     'pages': pages('jobs', [raw_job(identifier) for identifier in identifiers])},
+        }))
+        value = json.loads(evidence.read_text())
+        template = value['observedChecks'][0]
+        value['observedChecks'] = [{**template, 'jobId': identifier}
+                                   for identifier in reversed(identifiers)]
+        evidence.write_text(json.dumps(value))
+        return evidence
+
+    def test_required_job_lookup_preserves_order_independent_page_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = self.prepare_many_jobs(root)
+            self.assertEqual(validate_required(root, evidence),
+                             {'workflowRuns': 1, 'checkRuns': 201, 'jobAttempts': 1})
+
+    def test_required_duplicate_raw_job_across_pages_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = self.prepare_many_jobs(root)
+            jobs = json.loads((root / 'jobs.json').read_text())
+            jobs['10-1']['pages'][-1]['jobs'][0]['id'] = 100
+            (root / 'jobs.json').write_text(json.dumps(jobs))
+            with self.assertRaisesRegex(ValueError, '^raw_collection_duplicate_id:required:jobs:10-1:100$'):
+                validate_required(root, evidence)
+
+    def test_required_job_lookup_cannot_borrow_from_another_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = self.prepare(root)
+            (root / 'workflow-runs.json').write_text(json.dumps(
+                [page('workflow_runs', [raw_run(), raw_run(identifier=11)], 2)]))
+            (root / 'check-runs.json').write_text(json.dumps(
+                [page('check_runs', [{'id': 100}, {'id': 101}], 2)]))
+            jobs = json.loads((root / 'jobs.json').read_text())
+            jobs['11-1'] = {'runId': 11, 'runAttempt': 1,
+                            'pages': [page('jobs', [raw_job(101, run_id=11)], 1)]}
+            (root / 'jobs.json').write_text(json.dumps(jobs))
+            value = json.loads(evidence.read_text())
+            value['observedChecks'][0]['jobId'] = 101
+            evidence.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ValueError, '^required_observed_job_missing:101$'):
+                validate_required(root, evidence)
+
+    def test_required_unobserved_jobs_are_still_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = self.prepare_many_jobs(root)
+            value = json.loads(evidence.read_text())
+            value['observedChecks'] = value['observedChecks'][-1:]
+            evidence.write_text(json.dumps(value))
+            jobs = json.loads((root / 'jobs.json').read_text())
+            jobs['10-1']['pages'][-1]['jobs'][0]['run_attempt'] = 2
+            (root / 'jobs.json').write_text(json.dumps(jobs))
+            with self.assertRaisesRegex(ValueError, '^raw_job_attempt_mismatch:required:jobs:10-1:300$'):
+                validate_required(root, evidence)
+
+    def test_required_duplicate_observed_job_is_still_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = self.prepare_many_jobs(root)
+            value = json.loads(evidence.read_text())
+            value['observedChecks'].append(value['observedChecks'][0])
+            evidence.write_text(json.dumps(value))
+            with self.assertRaisesRegex(ValueError, r'^required_observed_duplicate:\(10, 1, 300\)$'):
+                validate_required(root, evidence)
+
     def test_required_raw_identity_binds_observed_job(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

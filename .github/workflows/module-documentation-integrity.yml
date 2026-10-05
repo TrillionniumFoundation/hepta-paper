@@ -57,4 +57,4 @@ jobs:
         run: node --test --test-concurrency=1 paper-core/tests/module-documentation-integrity.test.mjs paper-core/tests/module-development-handoff.test.mjs paper-core/tests/module-documentation-semantics.test.mjs paper-core/tests/module-work-state-projection.test.mjs paper-core/tests/change-impact-summary.test.mjs
       - name: Generate pull-request impact summary
         if: github.event_name == 'pull_request'
-        run: node docs/tools/generate-change-impact.mjs --base '${{ github.event.pull_request.base.sha }}' --head '${{ github.event.pull_request.head.sha }}' --output change-impact-summary.v1.json
+        run: node docs/tools/generate-change-impact.mjs --base '${{ github.event.pull_request.base.sha }}' --head '${{ github.event.pull_request.head.sha }}'

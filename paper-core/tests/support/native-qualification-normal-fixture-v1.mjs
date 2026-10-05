@@ -1,3 +1,4 @@
+import { resolveReadonlyParserDependencies } from './locked-parser-dependency-fixture.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,6 +16,7 @@ export function createNormalQualificationFixtureV1(routeNames) {
 let fixture, root, caller, binary, unknown, graph, shippedPin, unknownPin, markerPin;
 let keepFixture = false;
 const dependencies = new Map();
+const dependencyContextPins = new Map();
 const immutableCopyPins = new Map();
 let copiedBytes = 0, copiedEntries = 0;
 const identity = s => [s.dev, s.ino, s.mode, s.uid, s.gid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String);
@@ -272,8 +274,10 @@ function prepare() {
   const lockFile = path.join(source, 'package-lock.json'), lockPin = pin(lockFile);
   const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8')); assert.deepEqual(pin(lockFile), lockPin);
   graph.set('package-lock.json', copy(lockFile, path.join(root, 'package-lock.json')));
-  for (const name of ['espree', 'eslint-scope', 'acorn', 'acorn-jsx', 'eslint-visitor-keys', 'esrecurse', 'estraverse']) {
-    const selected = path.join(source, 'node_modules', name), manifest = path.join(selected, 'package.json');
+  const parserInputs = resolveReadonlyParserDependencies({ source, pin, context: fileURLToPath(import.meta.url) });
+  for (const [file, expected] of parserInputs.contextPins) dependencyContextPins.set(file, expected);
+  for (const [name, selected] of Object.entries(parserInputs.roots)) {
+    const manifest = path.join(selected, 'package.json');
     const metadata = pin(manifest), value = JSON.parse(fs.readFileSync(manifest, 'utf8'));
     assert.deepEqual(pin(manifest), metadata); assert.equal(value.name, name);
     assert.equal(value.version, lock.packages[`node_modules/${name}`].version);
@@ -299,6 +303,7 @@ function prepare() {
 function close() {
   if (!fixture) return;
   try {
+    for (const [file, expected] of dependencyContextPins) assert.deepEqual(pin(file), expected);
     assert.deepEqual(pin(binary), shippedPin); assert.deepEqual(pin(unknown), unknownPin);
     assert.deepEqual(pin(path.join(root, 'package.json')), markerPin);
     for (const [relative, expected] of dependencies) {

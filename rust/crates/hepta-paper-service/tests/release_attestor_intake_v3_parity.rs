@@ -5,14 +5,43 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
-    io::{Read, Write},
+    io::{self, Read, Write},
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    process::{Child, Command, Output, Stdio},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
+// Keep executable writers and parent-process creation mutually exclusive.
+// Both helpers release the guard before caller I/O, waits, or native work.
+static EXECUTABLE_COPY_OR_SPAWN: Mutex<()> = Mutex::new(());
+
+fn copy_executable(from: &Path, to: &Path) -> io::Result<u64> {
+    let _guard = EXECUTABLE_COPY_OR_SPAWN.lock().unwrap();
+    fs::copy(from, to)
+}
+
+fn spawn(command: &mut Command) -> io::Result<Child> {
+    let _guard = EXECUTABLE_COPY_OR_SPAWN.lock().unwrap();
+    command.spawn()
+}
+
+// Only for audited output call sites whose stdio was initially unset and whose
+// later reuse does not depend on it remaining unset. This is not a general
+// replacement for Command::output with arbitrary explicit stdio settings.
+fn output_default_stdio(command: &mut Command) -> io::Result<Output> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = spawn(command)?;
+    child.wait_with_output()
+}
+
 struct Fixture {
     root: PathBuf,
     workspace: PathBuf,
@@ -42,7 +71,7 @@ impl Fixture {
         )
         .unwrap();
         let frontend = workspace.join("bin/hepta-paper-rust");
-        fs::copy(env!("CARGO_BIN_EXE_hepta-paper-rust"), &frontend).unwrap();
+        copy_executable(Path::new(env!("CARGO_BIN_EXE_hepta-paper-rust")), &frontend).unwrap();
         fs::set_permissions(&frontend, fs::Permissions::from_mode(0o555)).unwrap();
         Self {
             root,
@@ -68,14 +97,15 @@ impl Drop for Fixture {
 fn oracle(v: &Value) -> Value {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let node = std::env::var_os("HEPTA_TEST_NODE").unwrap_or_else(|| "node".into());
-    let mut p = Command::new(node)
-        .arg(root.join("rust/oracle/release-attestor-intake-v3.mjs"))
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut p = spawn(
+        Command::new(node)
+            .arg(root.join("rust/oracle/release-attestor-intake-v3.mjs"))
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     p.stdin
         .take()
         .unwrap()
@@ -231,28 +261,25 @@ fn passive_v3_configuration_signatures_windows_independence_and_namespace_match_
 #[test]
 fn ordinary_v3_joint_readiness_uses_deployment_paths_original_environment_and_no_process() {
     let f = Fixture::new();
-    let out = f.ordinary().output().unwrap();
+    let out = output_default_stdio(&mut f.ordinary()).unwrap();
     assert!(out.status.success());
     let empty: Value = serde_json::from_slice(&out.stdout).unwrap();
     let prepared =
         oracle(&json!({"root":f.root,"modes":["joint-ready"],"now":empty["observedAt"]}));
     let case = &prepared["results"][0];
     let before = snapshot(&f.root);
-    let out = f
-        .ordinary()
-        .args([
-            "--require-ready",
-            "--author-config",
-            case["authorPath"].as_str().unwrap(),
-            "--author-config-hash",
-            case["authorHash"].as_str().unwrap(),
-            "--release-attestor-config",
-            case["releasePath"].as_str().unwrap(),
-            "--release-attestor-config-hash",
-            case["releaseHash"].as_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
+    let out = output_default_stdio(f.ordinary().args([
+        "--require-ready",
+        "--author-config",
+        case["authorPath"].as_str().unwrap(),
+        "--author-config-hash",
+        case["authorHash"].as_str().unwrap(),
+        "--release-attestor-config",
+        case["releasePath"].as_str().unwrap(),
+        "--release-attestor-config-hash",
+        case["releaseHash"].as_str().unwrap(),
+    ]))
+    .unwrap();
     assert!(
         out.status.success(),
         "{}",

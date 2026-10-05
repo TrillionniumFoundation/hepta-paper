@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fail, readPinnedSource, trackedBlob } from './source-evidence-git-inputs.mjs';
+import { fail, readPinnedSource, trackedBlob, assertPinnedSourcesCurrent } from './source-evidence-git-inputs.mjs';
 import { parseStrictJson } from './source-evidence-strict-json.mjs';
 import { hashBytes, SOURCE_EVIDENCE_ENTRYPOINT } from './source-evidence-producer.mjs';
 
@@ -253,9 +253,10 @@ export function cargoTargetObservation(root, binding, stdout, label) {
 // Every owner checks the complete physical identity, including ctime; this
 // shares stable binary inputs without rehashing every package binary per test.
 export function assertCargoBinaryArtifactsCurrent(root, binaries, rehash = false) {
+  assertPinnedSourcesCurrent(root, binaries.flatMap(pin => [
+    [pin.sourcePath, pin.sourcePin], [pin.manifestPath, pin.manifestPin],
+  ]));
   for (const pin of binaries) {
-    readPinnedSource(root, pin.sourcePath, pin.sourcePin);
-    readPinnedSource(root, pin.manifestPath, pin.manifestPin);
     const named = fs.lstatSync(pin.path, { bigint: true });
     if (!named.isFile() || named.isSymbolicLink()
         || JSON.stringify(artifactIdentity(named)) !== JSON.stringify(pin.identity)) {

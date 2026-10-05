@@ -619,12 +619,6 @@ def main() -> int:
             if run.get("head_sha") != args.commit or run.get("event") != "pull_request":
                 continue
             run_id, attempt = run_key(run)
-            jobs, access = fetch_jobs_for_attempt(
-                api=api,
-                repository=args.repository,
-                run=run,
-                token=args.token,
-            )
             try:
                 jobs, access = fetch_jobs_for_attempt(
                     api=api,

@@ -100,6 +100,18 @@ class RequiredProjectionTests(unittest.TestCase):
             root = Path(directory); evidence = self.fixture(root)
             self.assertEqual(validate_required_projection(root, evidence)['checkRunProjection'], 'exact')
 
+    def test_projection_still_rejects_incomplete_pages_and_missing_jobs(self):
+        for file, value in [
+            ('workflow-runs.json', [page('workflow_runs', [run()], total=2)]),
+            ('check-runs.json', [page('check_runs', [check()], total=2)]),
+            ('jobs.json', {}),
+        ]:
+            with self.subTest(file=file), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); evidence = self.fixture(root)
+                (root / file).write_text(json.dumps(value))
+                with self.assertRaises(ValueError):
+                    validate_required_projection(root, evidence)
+
     def test_same_id_metadata_splice_is_rejected(self):
         for field, value in [('name', 'other'), ('head_sha', SHA_A), ('status', 'queued'),
                              ('conclusion', None), ('started_at', None),
@@ -153,6 +165,17 @@ class SubjectProjectionTests(unittest.TestCase):
             root = Path(directory); subject = self.fixture(root, 2)
             self.assertEqual(validate_subject_projection(root, subject)['artifactAttribution'],
                              RUN_ARTIFACT_ATTRIBUTION)
+
+    def test_projection_still_rejects_missing_runs_attempts_and_artifacts(self):
+        for file, value in [
+            ('workflow-runs.json', [page('workflow_runs', [], total=1)]),
+            ('attempts.json', {}), ('jobs.json', {}), ('artifacts.json', {}),
+        ]:
+            with self.subTest(file=file), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); subject = self.fixture(root, 2)
+                (root / file).write_text(json.dumps(value))
+                with self.assertRaises(ValueError):
+                    validate_subject_projection(root, subject)
 
     def test_distinct_attempt_artifact_credit_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -213,6 +236,25 @@ class SubjectProjectionTests(unittest.TestCase):
                 subject.write_text(json.dumps(subject_value))
                 with self.assertRaisesRegex(ValueError, pattern):
                     validate_subject_projection(root, subject)
+
+
+class RunnerProjectionWiringTests(unittest.TestCase):
+    def test_runner_retains_all_four_complete_projection_boundaries(self):
+        import re
+        runner = (Path(__file__).parent / 'run-qualification-subject-v3.sh').read_text()
+        calls = re.findall(
+            r'python3 docs/rust/tools/validate_qualification_evidence_projection\.py \\\n'
+            r'  --mode (required|subject) \\\n'
+            r'  --raw-root "\$EVIDENCE_ROOT/raw/([^"]+)" \\\n'
+            r'  --artifact "\$EVIDENCE_ROOT/([^"]+)" \\\n', runner)
+        self.assertEqual(calls, [
+            ('required', 'required', 'check-evidence.v2.json'),
+            ('subject', 'subject', 'qualification-subject.v3.json'),
+            ('required', 'current-required', 'current-check-evidence.v2.json'),
+            ('subject', 'current-subject', 'current-qualification-subject.v3.json'),
+        ])
+        self.assertNotIn('python3 docs/rust/tools/validate_qualification_collection_completeness.py', runner)
+        self.assertIn('python3 docs/rust/tools/test_qualification_collection_completeness.py', runner)
 
 
 if __name__ == '__main__':

@@ -280,8 +280,11 @@ function readPinnedSourceBatch(root, selected) {
     // identity and directory namespace for a complete final source recheck.
     return [...parents.values(), ...files].map(({ named, metadata, names, expected }) => ({ named, metadata, names, file: Boolean(expected) }));
   } finally {
-    for (const entry of files.reverse()) fs.closeSync(entry.descriptor);
-    for (const entry of [...parents.values()].reverse()) fs.closeSync(entry.descriptor);
+    const closeErrors = [];
+    for (const entry of [...files.reverse(), ...[...parents.values()].reverse()]) {
+      try { fs.closeSync(entry.descriptor); } catch (error) { closeErrors.push(error); }
+    }
+    if (closeErrors.length) throw closeErrors[0];
   }
 }
 
@@ -296,6 +299,55 @@ function assertSourceBatchInputsCurrent(batches) {
       fail('source_subject_changed', entry.named);
     }
   }
+}
+
+// Reobserve a bounded set of discovery-pinned sources for one owner boundary.
+// Each call reads the current index and actual held file bytes again. Shared
+// manifests are deduplicated only within this call; caller pins never stand in
+// for current index observations or initialize the FD batch directly.
+export function assertPinnedSourcesCurrent(root, selected) {
+  if (!Array.isArray(selected)) fail('source_batch_count_limit');
+  const expected = new Map();
+  for (const entry of selected) {
+    if (!Array.isArray(entry) || entry.length !== 2) fail('source_batch_pin_invalid');
+    const [relative, pin] = entry;
+    if (typeof relative !== 'string' || !relative || relative.includes('\\')
+        || relative.includes('\0') || /[\r\n]/u.test(relative) || path.isAbsolute(relative)
+        || relative.split('/').some(part => !part || part === '.' || part === '..')) fail('path_escape', relative);
+    if (!pin || !['100644', '100755'].includes(pin.mode) || !/^[0-9a-f]{40}$/u.test(pin.blob ?? '')) {
+      fail('source_batch_pin_invalid', relative);
+    }
+    const prior = expected.get(relative);
+    if (prior && (prior.mode !== pin.mode || prior.blob !== pin.blob)) fail('git_blob_mismatch', relative);
+    if (!prior) expected.set(relative, { mode: pin.mode, blob: pin.blob });
+  }
+  if (!expected.size) return;
+  const selectedPaths = [...expected.keys()];
+  const observeIndex = () => {
+    const indexed = new Map();
+    for (let offset = 0; offset < selectedPaths.length; offset += 128) {
+      const paths = selectedPaths.slice(offset, offset + 128);
+      const output = git(root, ['ls-files', '-s', '-z', '--', ...paths]);
+      if (!output.endsWith('\0')) fail('tracked_blob_required', paths[0]);
+      const rows = output.slice(0, -1).split('\0');
+      if (rows.length !== paths.length) fail('tracked_blob_required', paths[0]);
+      for (const row of rows) {
+        const match = /^(\d{6}) ([0-9a-f]{40}) 0\t([^\r\n]+)$/u.exec(row);
+        if (!match || !paths.includes(match[3]) || indexed.has(match[3])) fail('tracked_blob_required', paths[0]);
+        const pin = { mode: match[1], blob: match[2] }, wanted = expected.get(match[3]);
+        if (pin.mode !== wanted.mode || pin.blob !== wanted.blob) fail('git_blob_mismatch', match[3]);
+        indexed.set(match[3], pin);
+      }
+    }
+    return selectedPaths.map(relative => [relative, indexed.get(relative)]);
+  };
+  const indexed = observeIndex(), observations = [];
+  for (let offset = 0; offset < indexed.length; offset += 128) {
+    observations.push(readPinnedSourceBatch(root, indexed.slice(offset, offset + 128)));
+  }
+  assertSourceBatchInputsCurrent(observations);
+  observeIndex();
+  assertSourceBatchInputsCurrent(observations);
 }
 
 export function trackedBlob(root, relative) {

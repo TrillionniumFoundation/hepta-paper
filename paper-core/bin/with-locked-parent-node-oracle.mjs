@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
+import { buildProductionStrictNpmAuditInvocation } from '../../paper-composition/bootstrap/strict-npm-audit-composition.mjs';
 
 const FIELDS = ['dev', 'ino', 'mode', 'uid', 'gid', 'nlink', 'size', 'mtimeNs', 'ctimeNs'];
 const MAX_FILE = 16 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024, MAX_ENTRIES = 16384;
@@ -58,11 +59,27 @@ function create(file, raw) {
   return regular(file);
 }
 
-export function withLockedParentNodeOracle({ root, receipt, command }) {
+// Explicit CI split-installation binding. PATH never selects an npm implementation.
+export function lockedParentOracleRuntimePaths({ execPath, nodeVersion, architecture, npmExecPath = null }) {
+  if (npmExecPath === null) return { node: execPath,
+    npm: path.join(path.dirname(execPath), '../lib/node_modules/npm/bin/npm-cli.js'), copiedSystemNode: false };
+  const installation = path.join('/opt/hostedtoolcache/node', nodeVersion, architecture);
+  const npm = path.join(installation, 'lib/node_modules/npm/bin/npm-cli.js');
+  if (execPath !== '/usr/bin/node' || nodeVersion !== '22.23.1'
+      || !['x64', 'arm64'].includes(architecture) || npmExecPath !== npm) fail('explicit_ci_runtime_not_approved');
+  return { node: path.join(installation, 'bin/node'), npm, copiedSystemNode: true };
+}
+export function assertLockedParentOracleNodeCopy(system, installation) {
+  if (system.path !== '/usr/bin/node' || system.identity[3] !== '0' || system.identity[4] !== '0'
+      || (BigInt(system.identity[2]) & 0o022n) !== 0n || system.sha256 !== installation.sha256) fail('system_node_copy_not_bound');
+}
+
+export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath = null, budgetProfile = 'default' }) {
   if (process.version !== 'v22.23.1' || !Array.isArray(command) || !command.length) fail('runtime_or_command');
-  // This is the existing source-evidence CI job's 30-minute ceiling. It is
-  // shared by installation and verification, not a provider/oracle timeout.
-  const deadline = performance.now() + 30 * 60 * 1000;
+  if (budgetProfile !== 'default' && budgetProfile !== 'functional-ci') fail('budget_profile');
+  // Preserve the 30-minute default; only functional CI opts into 55 minutes.
+  // Installation and verification share this ceiling, not a provider/oracle timeout.
+  const deadline = performance.now() + (budgetProfile === 'functional-ci' ? 55 : 30) * 60 * 1000;
   const remaining = () => {
     const timeout = Math.floor(deadline - performance.now());
     if (timeout <= 0) fail('job_timeout');
@@ -81,16 +98,31 @@ export function withLockedParentNodeOracle({ root, receipt, command }) {
   }
   const copied = [create(path.join(parent, 'package.json'), source[0].raw), create(path.join(parent, 'package-lock.json'), source[1].raw),
     create(path.join(parent, '.hepta-npm-user'), Buffer.alloc(0)), create(path.join(parent, '.hepta-npm-global'), Buffer.alloc(0))];
-  const npm = fs.realpathSync(path.join(path.dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js'));
-  const tools = [regular(fs.realpathSync(process.execPath), 512 * 1024 * 1024), regular(npm)];
+  const runtime = lockedParentOracleRuntimePaths({ execPath: process.execPath,
+    nodeVersion: process.versions.node, architecture: process.arch, npmExecPath });
+  const currentNode = regular(fs.realpathSync(process.execPath), 512 * 1024 * 1024);
+  // Reuse the original CI-pair file identity, realpath and toolcache-root checks.
+  const inspectRuntimeBinding = () => runtime.copiedSystemNode
+    ? buildProductionStrictNpmAuditInvocation({ workspaceRoot: root, nodeExecPath: runtime.node,
+      npmExecPath: runtime.npm, environment: process.env }) : null;
+  const runtimeBinding = inspectRuntimeBinding();
+  const assertRuntimeBinding = () => {
+    if (JSON.stringify(inspectRuntimeBinding()) !== JSON.stringify(runtimeBinding)) fail('runtime_installation_changed');
+  };
+  const oracleNodePath = fs.realpathSync(runtime.node);
+  const oracleNode = oracleNodePath === currentNode.path ? currentNode : regular(oracleNodePath, 512 * 1024 * 1024);
+  if (runtime.copiedSystemNode) assertLockedParentOracleNodeCopy(currentNode, oracleNode);
+  const npm = fs.realpathSync(runtime.npm);
+  const tools = [...new Set([currentNode, oracleNode]), regular(npm)];
   const npmRoot = fs.realpathSync(path.join(path.dirname(npm), '..'));
   const npmBefore = closure(npmRoot);
-  const version = spawnSync(process.execPath, [npm, '--version'], { encoding: 'utf8', shell: false, timeout: remaining(), maxBuffer: 1024 * 1024 });
+  const version = spawnSync(oracleNode.path, [npm, '--version'], { encoding: 'utf8', shell: false, timeout: remaining(), maxBuffer: 1024 * 1024 });
   if (version.status !== 0 || version.stdout.trim() !== '10.9.8') fail('actual_npm_version');
-  const install = spawnSync(process.execPath, [npm, 'ci', '--prefix', parent, '--ignore-scripts', '--no-audit', '--no-fund',
+  const install = spawnSync(oracleNode.path, [npm, 'ci', '--prefix', parent, '--ignore-scripts', '--no-audit', '--no-fund',
     `--userconfig=${copied[2].path}`, `--globalconfig=${copied[3].path}`],
   { cwd: parent, shell: false, stdio: 'inherit', timeout: remaining() });
   for (const input of [...source, ...copied, ...tools]) sameFile(input);
+  assertRuntimeBinding();
   if (install.status !== 0 || install.error) fail('install_failed');
   const before = closure(dependencies);
   let result;
@@ -99,6 +131,7 @@ export function withLockedParentNodeOracle({ root, receipt, command }) {
   } finally {
     const after = closure(dependencies);
     for (const input of [...source, ...copied, ...tools]) sameFile(input);
+    assertRuntimeBinding();
     if (JSON.stringify(before) !== JSON.stringify(after)) fail('dependency_drift');
     const npmAfter = closure(npmRoot);
     if (JSON.stringify(npmBefore) !== JSON.stringify(npmAfter)) fail('npm_tool_drift');
@@ -117,6 +150,10 @@ export function withLockedParentNodeOracle({ root, receipt, command }) {
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args[0] !== '--receipt' || !args[1] || args[2] !== '--' || args.length < 4) fail('arguments');
-  process.exitCode = withLockedParentNodeOracle({ root: process.cwd(), receipt: args[1], command: args.slice(3) });
+  const selectedProfile = args[2] === '--budget-profile';
+  const commandOffset = selectedProfile ? 5 : 3;
+  if (args[0] !== '--receipt' || !args[1] || args[commandOffset - 1] !== '--' || args.length <= commandOffset
+      || (selectedProfile && args[3] !== 'functional-ci')) fail('arguments');
+  process.exitCode = withLockedParentNodeOracle({ root: process.cwd(), receipt: args[1], command: args.slice(commandOffset),
+    budgetProfile: selectedProfile ? args[3] : 'default' });
 }

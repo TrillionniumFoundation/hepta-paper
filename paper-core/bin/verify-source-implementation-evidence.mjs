@@ -525,7 +525,44 @@ function assertTestExecution(command, bundle, stdout, label) {
   }
 }
 
-export function executeCommands(root, bundles, source) {
+// Opt-in diagnostics only: no command output, arguments, environment or receipt
+// authority is emitted. A failed diagnostic channel cannot change verification.
+export function createCommandProgress({ bundleId, index, ordinal, command,
+  now = () => process.hrtime.bigint(), write = line => fs.writeSync(2, line) }) {
+  const phases = new Set(['command_start', 'runtime_qualification_start', 'runtime_qualification_exit',
+    'cargo_discovery_start', 'cargo_discovery_exit', 'test_inventory_start', 'test_inventory_exit',
+    'child_start', 'child_exit', 'command_validated', 'final_validation_start',
+    'final_validation_complete', 'command_failed']);
+  let active = true, started, identity;
+  try {
+    started = now();
+    if (typeof started !== 'bigint') throw new Error('diagnostic clock');
+    identity = {
+      kind: 'SourceEvidenceCommandProgressV1',
+      bundleSha256: hashBytes(Buffer.from(String(bundleId))),
+      commandSha256: hashBytes(Buffer.from(JSON.stringify({ program: command.program,
+        args: command.args, workdir: command.workdir, expectedTargets: command.expectedTargets,
+        timeoutSeconds: command.timeoutSeconds, expectedExitCode: command.expectedExitCode }))),
+      index: Number.isSafeInteger(index) && index >= 0 ? index : null,
+      ordinal: Number.isSafeInteger(ordinal) && ordinal >= 0 ? ordinal : null,
+      program: ['node', 'cargo'].includes(command.program) ? command.program : 'unknown',
+    };
+  } catch { active = false; }
+  return (phase, status = null) => {
+    if (!active || !phases.has(phase)) return;
+    try {
+      const elapsed = now() - started;
+      if (elapsed < 0n) throw new Error('diagnostic clock');
+      const elapsedMs = Math.min(Number.MAX_SAFE_INTEGER, Number(elapsed / 1000000n));
+      const line = `${JSON.stringify({ ...identity, phase, elapsedMs,
+        status: Number.isSafeInteger(status) ? status : null })}\n`;
+      if (Buffer.byteLength(line) > 1024) throw new Error('diagnostic size');
+      write(line);
+    } catch { active = false; }
+  };
+}
+
+export function executeCommands(root, bundles, source, progressEnabled = false) {
   const observations = [];
   const targets = [];
   const inventories = new Map();
@@ -537,6 +574,7 @@ export function executeCommands(root, bundles, source) {
   let runtime;
   let producer;
   let finalRemaining;
+  let activeProgress = null, lastExitStatus = null, ordinal = 0;
   try {
   for (const [bundleId, bundle] of bundles.entries()) {
     for (const [index, command] of bundle.commands.entries()) {
@@ -548,6 +586,9 @@ export function executeCommands(root, bundles, source) {
         return milliseconds;
       };
       finalRemaining = remaining;
+      const progress = progressEnabled === true ? createCommandProgress({ bundleId, index, ordinal, command }) : null;
+      ordinal += 1; activeProgress = progress; lastExitStatus = null;
+      progress?.('command_start');
       const cwd = command.workdir === '.' ? root : path.resolve(root, command.workdir);
       const cwdReal = fs.realpathSync(cwd);
       if (cwdReal !== rootReal && !cwdReal.startsWith(`${rootReal}${path.sep}`)) fail('command_workdir_escape', label);
@@ -566,8 +607,10 @@ export function executeCommands(root, bundles, source) {
               const value = fs.statSync(candidate);
               if (!value.isFile() || (value.mode & 0o111) === 0) continue;
               const pin = artifactPin(fs.realpathSync(candidate), rootReal);
+              progress?.('runtime_qualification_start');
               const qualificationTimeoutMs = remaining();
               const version = run(pin.path, ['--version', '--verbose'], { cwd: cwdReal, env, timeout: qualificationTimeoutMs });
+              progress?.('runtime_qualification_exit', version.status);
               const host = /^host: ([A-Za-z0-9_-]+)$/mu.exec(version.stdout ?? '')?.[1];
               if (version.status !== 0 || !/^cargo 1\.98\.0\b/u.test(version.stdout ?? '') || !host) {
                 fail('verification_cargo_runtime_unqualified', label);
@@ -592,8 +635,10 @@ export function executeCommands(root, bundles, source) {
           for (const pin of [runtime.cargo, runtime.node]) {
             if (JSON.stringify(artifactPin(pin.path, rootReal)) !== JSON.stringify({ path: pin.path, sha256: pin.sha256, identity: pin.identity })) fail('verification_runtime_changed');
           }
+          progress?.('cargo_discovery_start');
           const discoveryTimeoutMs = remaining();
           const captured = run(runtime.cargo.path, discoveryArgs, { cwd: cwdReal, env, timeout: discoveryTimeoutMs });
+          progress?.('cargo_discovery_exit', captured.status);
           if (captured.status !== 0) fail('verification_discovery_failed', JSON.stringify({
             label, phase: 'cargo_discovery', program: runtime.cargo.path, args: discoveryArgs,
             status: captured.status, signal: captured.signal ?? null,
@@ -611,8 +656,10 @@ export function executeCommands(root, bundles, source) {
           for (const pin of [runtime.cargo, runtime.node]) {
             if (JSON.stringify(artifactPin(pin.path, rootReal)) !== JSON.stringify({ path: pin.path, sha256: pin.sha256, identity: pin.identity })) fail('verification_runtime_changed');
           }
+          progress?.('test_inventory_start');
           const listTimeoutMs = remaining();
           const listed = run(actual.artifact.path, ['--list'], { cwd: capture.cwd, env: capture.environment, timeout: listTimeoutMs });
+          progress?.('test_inventory_exit', listed.status);
           artifactOwner.assertCurrent();
           if (listed.status !== 0) fail('verification_discovery_failed', JSON.stringify({
             label, phase: 'test_inventory', program: actual.artifact.path, args: ['--list'],
@@ -645,8 +692,11 @@ export function executeCommands(root, bundles, source) {
         executionCwd = inventory.target.capture.cwd;
         executionEnv = inventory.environment;
       }
+      progress?.('child_start');
       const timeoutMs = remaining();
       const result = run(executable, args, { cwd: executionCwd, env: executionEnv, timeout: timeoutMs });
+      lastExitStatus = result.status;
+      progress?.('child_exit', result.status);
       if (result.status !== command.expectedExitCode) {
         fail('verification_command_failed', JSON.stringify({ args: command.args, bundleId, index,
           expectedExitCode: command.expectedExitCode, program: command.program, signal: result.signal ?? null, status: result.status,
@@ -670,9 +720,11 @@ export function executeCommands(root, bundles, source) {
             processId: result.pid, timeoutMs, status: result.status },
           sourcePins: bundle.files.filter((file) => command.expectedTargets.includes(file.path)).map((file) => ({ path: file.path, mode: file.mode, gitBlob: file.gitBlob })) } : {}),
         elapsedMs: Number((process.hrtime.bigint() - started) / 1000000n) });
+      progress?.('command_validated', result.status);
     }
   }
   if (runtime) {
+    activeProgress?.('final_validation_start');
     for (const owner of artifactOwners.values()) owner.finish();
     assertCargoBinaryArtifactsCurrent(rootReal, [...binaryImages.values()], true);
     assertCargoBuildScriptsCurrent(rootReal, [...buildImages.values()], true);
@@ -682,8 +734,12 @@ export function executeCommands(root, bundles, source) {
     if (JSON.stringify(producerPin(rootReal)) !== JSON.stringify(producer)) fail('verification_capture_producer_changed');
     const lastBudgetRemaining = finalRemaining();
     observations.at(-1).elapsedMs = bundles.get(observations.at(-1).bundleId).commands[observations.at(-1).index].timeoutSeconds * 1000 - lastBudgetRemaining;
+    activeProgress?.('final_validation_complete', lastExitStatus);
   }
   return { observations, targets };
+  } catch (error) {
+    activeProgress?.('command_failed', lastExitStatus);
+    throw error;
   } finally {
     for (const owner of artifactOwners.values()) owner.close();
   }
@@ -717,6 +773,7 @@ function parseArguments(argv) {
   const result = {
     evidence: 'docs/system/evidence/repository-source-implementation-v1.json',
     execute: false,
+    progress: false,
     expectedHead: null,
     expectedTree: null,
     receipt: null,
@@ -726,6 +783,8 @@ function parseArguments(argv) {
     const value = argv[index];
     if (value === '--execute') {
       result.execute = true;
+    } else if (value === '--progress') {
+      result.progress = true;
     } else if (['--evidence', '--expected-head', '--expected-tree', '--receipt', '--root'].includes(value)) {
       const next = argv[index + 1];
       if (!next) fail('cli_value_required', value);
@@ -782,7 +841,7 @@ export function verifyRepositorySourceEvidence(options = {}) {
   // commands only against the captured subject and with the same bound inputs.
   if (options.execute) assertSourceSubject(root, { head, tree }, inputs);
   const execution = options.execute
-    ? executeCommands(root, validation.bundles, { head, tree })
+    ? executeCommands(root, validation.bundles, { head, tree }, options.progress === true)
     : { observations: [], targets: [] };
   // No successful receipt is constructed or published after observed drift.
   // Do not re-run tests or mint an updated subject from concurrent bytes.

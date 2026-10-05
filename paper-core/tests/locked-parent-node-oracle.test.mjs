@@ -40,6 +40,7 @@ test('locked_parent_oracle_installs_actual_exact_lock_outside_candidate_and_obse
       "import assert from 'node:assert/strict'; import * as espree from 'espree'; assert.equal(espree.parse('const x=1;', {ecmaVersion:2022}).type,'Program');\n",
       { flag: 'wx' });
     const status = withLockedParentNodeOracle({ ...input,
+      ...(process.execPath === '/usr/bin/node' && process.env.GITHUB_ACTIONS === 'true' ? { npmExecPath: process.env.npm_execpath } : {}),
       command: [process.execPath, path.join(input.root, 'oracle.mjs')] });
     assert.equal(status, 0);
     assert.equal(fs.existsSync(path.join(input.root, 'node_modules')), false);

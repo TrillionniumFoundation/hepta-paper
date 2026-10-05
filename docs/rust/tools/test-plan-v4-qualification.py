@@ -558,5 +558,77 @@ class StrictSchemaBoundaryTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), {"ok": True, "failures": []})
 
 
+class CollectorMainTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.fixture = Fixture()
+        temporary = tempfile.TemporaryDirectory(prefix="hepta-collector-main-")
+        self.addCleanup(temporary.cleanup)
+        self.output = Path(temporary.name) / "evidence.json"
+
+    def invoke_main(self, first_error=None, *, expired=False):
+        args = type("Arguments", (), dict(
+            repository="TrillionniumFoundation/hepta-paper", commit=COMMIT, tree=TREE,
+            pull_request=PR, base_ref=BASE_REF, head_branch=HEAD_BRANCH,
+            token="fixture-only", api_url="https://api.github.test",
+            required_checks=REQUIRED, producer_manifest=PRODUCERS,
+            evidence_schema=ROOT / "docs/rust/qualification/required-check-evidence-v2.schema.json",
+            output=self.output, raw_output_dir=self.output.parent / "raw",
+        ))()
+        calls = 0
+
+        def fetch_jobs(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1 and first_error is not None:
+                raise first_error
+            key = COLLECT.run_key(kwargs["run"])
+            return self.fixture.jobs_by_attempt[key], {"fixture": True}
+
+        def fetch_pages(_url, key, _token):
+            rows = self.fixture.workflow_runs if key == "workflow_runs" else self.fixture.check_runs
+            return rows, [{key: rows, "total_count": len(rows)}]
+
+        with (
+            mock.patch.object(COLLECT, "parse_args", return_value=args),
+            mock.patch.object(COLLECT, "fetch_pages", side_effect=fetch_pages),
+            mock.patch.object(COLLECT, "fetch_jobs_for_attempt", side_effect=fetch_jobs) as fetch,
+            mock.patch.object(COLLECT.time, "monotonic", side_effect=[0, 100000] if expired else None,
+                              return_value=0),
+            mock.patch.object(COLLECT.time, "sleep") as sleep,
+            mock.patch("builtins.print"),
+        ):
+            # Keep the real policy loader, snapshot selector and schema verifier.
+            self.fetch, self.sleep = fetch, sleep
+            return COLLECT.main()
+
+    def test_each_stable_run_jobs_page_is_fetched_once(self):
+        self.assertEqual(self.invoke_main(), 0)
+        self.assertEqual(self.fetch.call_count, len(self.fixture.workflow_runs))
+        self.sleep.assert_not_called()
+        self.assertEqual(json.loads(self.output.read_text()), self.fixture.snapshot())
+
+    def test_first_jobs_live_skew_retries_collection(self):
+        skew = ValueError("workflow_run_mutated_during_jobs_fallback:run=123:fields=status")
+        self.assertEqual(self.invoke_main(skew), 0)
+        self.assertEqual(self.fetch.call_count, 1 + len(self.fixture.workflow_runs))
+        self.sleep.assert_called_once()
+        self.assertEqual(json.loads(self.output.read_text()), self.fixture.snapshot())
+
+    def test_nonretryable_jobs_failure_is_not_hidden(self):
+        with self.assertRaisesRegex(ValueError, "permission_denied"):
+            self.invoke_main(ValueError("github_api_permission_denied:actions_jobs_read"))
+        self.assertEqual(self.fetch.call_count, 1)
+        self.sleep.assert_not_called()
+        self.assertFalse(self.output.exists())
+
+    def test_live_skew_after_deadline_still_fails_closed(self):
+        skew = ValueError("workflow_run_mutated_during_jobs_fallback:run=123:fields=status")
+        with self.assertRaisesRegex(ValueError, "required_check_collection_unstable_timeout"):
+            self.invoke_main(skew, expired=True)
+        self.assertEqual(self.fetch.call_count, 1)
+        self.sleep.assert_not_called()
+        self.assertFalse(self.output.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

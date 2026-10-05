@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { buildStrictNpmAuditInvocation } from '../../paper-adapters/runtime/strict-npm-audit-launcher.mjs';
+import { buildProductionStrictNpmAuditInvocation } from '../../paper-composition/bootstrap/strict-npm-audit-composition.mjs';
 
 const FIELDS = ['dev', 'ino', 'mode', 'uid', 'gid', 'nlink', 'size', 'mtimeNs', 'ctimeNs'];
 const MAX_FILE = 16 * 1024 * 1024, MAX_TOTAL = 256 * 1024 * 1024, MAX_ENTRIES = 16384;
@@ -102,7 +102,7 @@ export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath
   const currentNode = regular(fs.realpathSync(process.execPath), 512 * 1024 * 1024);
   // Reuse the original CI-pair file identity, realpath and toolcache-root checks.
   const inspectRuntimeBinding = () => runtime.copiedSystemNode
-    ? buildStrictNpmAuditInvocation({ workspaceRoot: root, nodeExecPath: runtime.node,
+    ? buildProductionStrictNpmAuditInvocation({ workspaceRoot: root, nodeExecPath: runtime.node,
       npmExecPath: runtime.npm, environment: process.env }) : null;
   const runtimeBinding = inspectRuntimeBinding();
   const assertRuntimeBinding = () => {

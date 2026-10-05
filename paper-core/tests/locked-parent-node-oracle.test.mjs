@@ -30,7 +30,9 @@ test('locked_parent_oracle_refuses_existing_candidate_or_parent_inputs_without_r
   }
 });
 
-test('locked_parent_oracle_installs_actual_exact_lock_outside_candidate_and_observes_whole_dependencies', () => {
+for (const jobTimeoutMinutes of [undefined, 90]) test(
+  'locked_parent_oracle_installs_actual_exact_lock_outside_candidate_and_observes_whole_dependencies'
+    + (jobTimeoutMinutes === undefined ? '' : '_explicit_ninety_minute_job_budget'), () => {
   const input = fixture(), previous = process.env.npm_config_offline;
   // The normal source CI installer uses the exact locked registry/integrity
   // graph. An explicitly requested offline run remains fail-closed on misses.
@@ -39,7 +41,7 @@ test('locked_parent_oracle_installs_actual_exact_lock_outside_candidate_and_obse
     fs.writeFileSync(path.join(input.root, 'oracle.mjs'),
       "import assert from 'node:assert/strict'; import * as espree from 'espree'; assert.equal(espree.parse('const x=1;', {ecmaVersion:2022}).type,'Program');\n",
       { flag: 'wx' });
-    const status = withLockedParentNodeOracle({ ...input,
+    const status = withLockedParentNodeOracle({ ...input, jobTimeoutMinutes,
       ...(process.execPath === '/usr/bin/node' && process.env.GITHUB_ACTIONS === 'true' ? { npmExecPath: process.env.npm_execpath } : {}),
       command: [process.execPath, path.join(input.root, 'oracle.mjs')] });
     assert.equal(status, 0);
@@ -54,7 +56,7 @@ test('locked_parent_oracle_installs_actual_exact_lock_outside_candidate_and_obse
     assert.deepEqual(receipt.npmBefore, receipt.npmAfter);
     assert.ok(receipt.dependencyBefore.rows.some(row => row.path === 'espree/package.json'));
     const retained = process.env.HEPTA_LOCKED_NODE_ORACLE_OBSERVATION_PATH;
-    if (retained) {
+    if (retained && jobTimeoutMinutes === undefined) {
       assert.equal(path.resolve(retained), retained);
       const fd = fs.openSync(retained, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
       try { fs.writeFileSync(fd, fs.readFileSync(input.receipt)); fs.fsyncSync(fd); }

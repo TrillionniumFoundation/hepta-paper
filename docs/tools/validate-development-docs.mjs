@@ -84,15 +84,6 @@ function walkFiles(root, start, failures) {
   return output.sort();
 }
 
-function readJson(root, relativePath, failures) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(root, relativePath), 'utf8'));
-  } catch (error) {
-    failures.push(`${relativePath}: ${error.message}`);
-    return {};
-  }
-}
-
 function compilePatterns(values, label, failures) {
   const patterns = [];
   for (const value of values || []) {
@@ -105,16 +96,30 @@ function compilePatterns(values, label, failures) {
   return patterns;
 }
 
-function validateSchema(root, schemaPath, instancePath, failures) {
-  const validator = path.join(root, 'docs/rust/tools/strict_json_schema.py');
+function validateSchemas(documents, failures) {
+  if (!documents.length) return;
+  // Preserve original JSON text: parsing/stringifying would hide duplicate keys.
+  // Use this executable's verifier rather than code supplied by --root.
   const result = spawnSync('python3', [
-    validator,
-    '--schema', path.join(root, schemaPath),
-    '--instance', path.join(root, instancePath),
-  ], { encoding: 'utf8' });
-  if (result.status !== 0) {
-    const diagnostic = (result.stderr || result.stdout || '').trim();
-    failures.push(`${instancePath} schema: ${diagnostic || `exit ${result.status}`}`);
+    path.join(DEFAULT_ROOT, 'docs/rust/tools/strict_json_schema.py'), '--batch-stdin',
+  ], {
+    input: JSON.stringify(documents),
+    encoding: 'utf8',
+    timeout: 10000,
+    maxBuffer: 1024 * 1024,
+  });
+  try {
+    const report = JSON.parse(result.stdout || '');
+    if (!Array.isArray(report.failures)) throw new Error('malformed schema report');
+    for (const row of report.failures) {
+      failures.push(`${row.name} schema: ${row.error}`);
+    }
+    if (result.error || result.status !== 0 || report.ok !== true) {
+      if (!report.failures.length) throw new Error('schema validator failed without diagnostics');
+    }
+  } catch {
+    const diagnostic = (result.stderr || result.error?.message || '').trim();
+    failures.push(`development schema validation unavailable or invalid: ${diagnostic || result.status}`);
   }
 }
 
@@ -306,10 +311,23 @@ export function validateDevelopmentDocumentation(options = {}) {
   };
 
   const truth = {};
+  const schemaDocuments = [];
+  const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   for (const key of Object.keys(files)) {
-    truth[key] = readJson(root, files[key], failures);
-    validateSchema(root, schemas[key], files[key], failures);
+    try {
+      const instance = decoder.decode(fs.readFileSync(path.join(root, files[key])));
+      schemaDocuments.push({
+        name: files[key],
+        schema: decoder.decode(fs.readFileSync(path.join(root, schemas[key]))),
+        instance,
+      });
+      truth[key] = JSON.parse(instance);
+    } catch (error) {
+      failures.push(`${files[key]}: ${error.message}`);
+      truth[key] = {};
+    }
   }
+  validateSchemas(schemaDocuments, failures);
 
   const capabilityRecords = truth.capabilities.capabilities || {};
   const moduleRecords = truth.modules.modules || {};

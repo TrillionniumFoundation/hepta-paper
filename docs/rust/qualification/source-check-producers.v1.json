@@ -179,15 +179,15 @@
       "context": "product-targets (exact-head)",
       "workflowId": 366480389,
       "workflowPath": ".github/workflows/rust-product-targets.yml",
-      "workflowGitBlobSha": "96e004d691767196bcfbb7c0d8336cd822b0b844",
-      "workflowSha256": "sha256:e850c6c728fe7a808d66f9ff5f62bdb29395c90cfda3b4ca26366e5999a1f560"
+      "workflowGitBlobSha": "1dd3bbbe26e0051c674a771ba323194e74cd10d3",
+      "workflowSha256": "sha256:fddffefe0b6edf05a26ff8f5033ee136b4087eb0ce9cafeee7f877c0cb9f65c4"
     },
     {
       "context": "product-targets (prospective-merge)",
       "workflowId": 366480389,
       "workflowPath": ".github/workflows/rust-product-targets.yml",
-      "workflowGitBlobSha": "96e004d691767196bcfbb7c0d8336cd822b0b844",
-      "workflowSha256": "sha256:e850c6c728fe7a808d66f9ff5f62bdb29395c90cfda3b4ca26366e5999a1f560"
+      "workflowGitBlobSha": "1dd3bbbe26e0051c674a771ba323194e74cd10d3",
+      "workflowSha256": "sha256:fddffefe0b6edf05a26ff8f5033ee136b4087eb0ce9cafeee7f877c0cb9f65c4"
     }
   ],
   "authority": {

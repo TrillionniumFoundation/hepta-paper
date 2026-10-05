@@ -198,7 +198,7 @@ def validate_required(root: Path, evidence_path: Path) -> dict[str, Any]:
         if key in run_by_key:
             fail(f'raw_run_identity_duplicate:{key}')
         run_by_key[key] = row
-    jobs_by_key: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    jobs_by_key: dict[tuple[int, int], dict[int, dict[str, Any]]] = {}
     for text, access in jobs_raw.items():
         key = parse_run_key(text, 'raw_jobs_key_invalid')
         if not isinstance(access, dict):
@@ -211,7 +211,8 @@ def validate_required(root: Path, evidence_path: Path) -> dict[str, Any]:
         validate_job_rows(rows, *key, f'required:jobs:{text}')
         if key in jobs_by_key:
             fail(f'raw_jobs_duplicate_key:{text}')
-        jobs_by_key[key] = rows
+        # Page validation rejects duplicate IDs before indexing the exact attempt.
+        jobs_by_key[key] = {row['id']: row for row in rows}
 
     evidence = load(evidence_path)
     if not isinstance(evidence, dict) or evidence.get('status') != 'complete_success_snapshot':
@@ -236,7 +237,7 @@ def validate_required(root: Path, evidence_path: Path) -> dict[str, Any]:
         if identity in observed_keys:
             fail(f'required_observed_duplicate:{identity}')
         observed_keys.add(identity)
-        raw_job = next((job for job in jobs_by_key[key] if job.get('id') == job_id), None)
+        raw_job = jobs_by_key[key].get(job_id)
         if raw_job is None:
             fail(f'required_observed_job_missing:{job_id}')
         if job_id not in checks_by_id:

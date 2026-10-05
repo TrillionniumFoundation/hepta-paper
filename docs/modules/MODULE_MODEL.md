@@ -51,7 +51,10 @@ Rules:
 - a manifest declares required authority but cannot grant it;
 - actual runtime authority must be no broader than the registered class;
 - raising a class is an authority change and requires architecture, security,
-  state, and independent review.
+  state and affected-consumer validation under the current
+  [ownership and review policy](../governance/OWNERSHIP_AND_REVIEW.md).
+  Runtime capability provisioning and authenticated operational evidence remain
+  separate requirements; repository review does not grant runtime authority.
 
 ## 4. Module identity
 
@@ -167,8 +170,13 @@ securityReviewerTeam when authority-bearing
 onCallOrEscalationOwner
 ```
 
-A module is not production-admissible while these roles are missing, inactive,
-or held by one person for an authority-bearing change.
+These are responsibility and escalation roles, not a requirement for distinct
+people or staffed GitHub teams. Under the current
+[single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md), one maintainer
+may perform these development roles and use authorized implementation tools.
+Production admission still requires the module's actual runtime principals,
+authority, single-writer, recovery and external-effect evidence. Human staffing
+neither substitutes for that evidence nor adds another development approval gate.
 
 ## 11. Public/private boundary
 

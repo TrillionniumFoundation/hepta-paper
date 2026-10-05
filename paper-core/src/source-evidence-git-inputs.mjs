@@ -312,7 +312,7 @@ export function assertPinnedSourcesCurrent(root, selected) {
     if (!Array.isArray(entry) || entry.length !== 2) fail('source_batch_pin_invalid');
     const [relative, pin] = entry;
     if (typeof relative !== 'string' || !relative || relative.includes('\\')
-        || /[\u0000\r\n]/u.test(relative) || path.isAbsolute(relative)
+        || relative.includes('\0') || /[\r\n]/u.test(relative) || path.isAbsolute(relative)
         || relative.split('/').some(part => !part || part === '.' || part === '..')) fail('path_escape', relative);
     if (!pin || !['100644', '100755'].includes(pin.mode) || !/^[0-9a-f]{40}$/u.test(pin.blob ?? '')) {
       fail('source_batch_pin_invalid', relative);

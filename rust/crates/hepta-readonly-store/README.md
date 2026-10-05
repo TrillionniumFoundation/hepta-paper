@@ -67,6 +67,15 @@ unsorted join to 1024 rows, then checks borrowed 64 KiB cells and a conservative
 arbitrary SQL, alter YAML fallback rules, or turn missing columns/malformed JSON
 into null values. Consumers still own normalization and selection policy.
 
+`automation_store_operational_integrity_v1(&AutomationIntegrityTimeV1)` runs the
+incumbent's fixed operational-integrity queries on this retained snapshot. It
+observes expired leases, stalled campaigns, terminal queued-node policies,
+required columns and quick-check failures without repair. The
+[implementation handoff](../../../docs/modules/AUTOMATION_STORE_INTEGRITY_HANDOFF.md)
+documents its typed clock, exact native bounds, actual Node differential tests
+and the remaining ordinary `automation-status` composition gap. This diagnostic
+is not an automation-readiness report or a complete command implementation.
+
 The shipping `hepta-paper-rust verify store -- DB` normal entry resolves database and runtime defaults from its actual frontend, emits the raw report directly, exits one for a blocked report, and closes SQLite before output or signal termination. The ordinary Node/native process owner in `paper-core/tests/native-store-integrity-normal.test.mjs` executes default/relative paths, raw receipts, actual SIGTERM/SIGKILL and same-input retry, including the explicitly different cold 0400 SHM effects. These tests bind source behavior; complete route and live host acceptance remain separate.
 
 The focused ordinary tests run the actual `hepta-paper verify store -- DB` Node

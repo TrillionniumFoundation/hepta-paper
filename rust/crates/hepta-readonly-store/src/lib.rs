@@ -5,11 +5,16 @@
 /// Additive diagnostic compatibility for a preserved earlier Rust wire format.
 pub mod logical_store_compat_v1;
 
+mod automation_integrity;
 mod inventory_projection;
 mod node_receipts;
 mod node_snapshot;
 mod one_shot_projection;
 mod ordinary;
+pub use automation_integrity::{
+    AutomationIntegrityTimeV1, AutomationStoreOperationalIntegrityV1, AutomationStoreQuickCheckV1,
+    AutomationStoreTableInspectionV1,
+};
 pub use inventory_projection::{
     FixedInventoryBudgetV1, FixedInventoryProjectionV1, FixedInventoryQueryV1, InventoryPaperRowV1,
     InventorySqlCellCoercionV1, InventoryVenueRowV1,
@@ -678,6 +683,10 @@ fn digest(hasher: Sha256) -> Result<Sha256Digest, ReadOnlyStoreError> {
 
 #[derive(Debug, Error)]
 pub enum ReadOnlyStoreError {
+    #[error("automation_status_inspection_time_invalid")]
+    AutomationInspectionTimeInvalid,
+    #[error("automation_status_no_progress_window_invalid")]
+    AutomationNoProgressWindowInvalid,
     #[error("read-only database path is invalid")]
     DatabasePathInvalid,
     #[error("read-only database exceeds the byte limit")]

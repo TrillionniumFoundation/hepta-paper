@@ -199,6 +199,7 @@ fn compute_native_business_implementation_hash_v1() -> String {
             include_bytes!("../build.rs"),
             include_bytes!("../../../Cargo.toml"),
             include_bytes!("worker.rs"),
+            include_bytes!("worker_bounded.rs"),
             include_bytes!("lib.rs"),
             include_bytes!("native_research_evidence.rs"),
             include_bytes!("native_research_evidence/candidates.rs"),

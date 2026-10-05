@@ -1054,7 +1054,7 @@ fn copied_key_cli_defaults_require_explicit_real_deployment_workspace() {
         if explicit {
             command.env("HEPTA_PAPER_WORKSPACE_ROOT", "workspace");
         }
-        command.output().unwrap()
+        copied_fixture_output(&mut command)
     };
     let missing = invoke(false);
     assert_eq!(missing.status.code(), Some(1));

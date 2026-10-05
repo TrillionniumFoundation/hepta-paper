@@ -11,43 +11,18 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
-    io::{self, BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Write},
     os::unix::fs::{MetadataExt, PermissionsExt, symlink},
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
-    sync::{
-        Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
 };
 use zeroize::Zeroizing;
+#[path = "support/copied_fixture.rs"]
+mod copied_fixture;
+use copied_fixture::{copied_fixture_output, copy_executable, output_default_stdio, spawn};
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
-// Keep executable writers and parent-process creation mutually exclusive.
-// Both helpers release the guard before caller I/O, waits, or native work.
-static EXECUTABLE_COPY_OR_SPAWN: Mutex<()> = Mutex::new(());
-
-fn copy_executable(from: &Path, to: &Path) -> io::Result<u64> {
-    let _guard = EXECUTABLE_COPY_OR_SPAWN.lock().unwrap();
-    fs::copy(from, to)
-}
-
-fn spawn(command: &mut Command) -> io::Result<Child> {
-    let _guard = EXECUTABLE_COPY_OR_SPAWN.lock().unwrap();
-    command.spawn()
-}
-
-// Only for audited output call sites whose stdio was initially unset and whose
-// later reuse does not depend on it remaining unset. This is not a general
-// replacement for Command::output with arbitrary explicit stdio settings.
-fn output_default_stdio(command: &mut Command) -> io::Result<Output> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = spawn(command)?;
-    child.wait_with_output()
-}
-
 const PRIVATE: &str = "release-integrity-ed25519-private.pem";
 const PUBLIC: &str = "release-integrity-ed25519-public.pem";
 struct Fixture {
@@ -132,26 +107,6 @@ fn compare_status(fixture: &Fixture) {
     let expected = oracle(&[fixture.request("status")]);
     safe_report(&native);
     assert_eq!(native, expected[0]["value"]);
-}
-// Preserve the existing bounded retry policy and sole deployed-copy caller.
-// This loop is unchanged policy, not the copy/spawn synchronization remedy.
-// Its original deadline, sleep, diagnostics, and error behavior remain intact.
-fn copied_fixture_output(command: &mut Command) -> std::process::Output {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-    loop {
-        match output_default_stdio(command) {
-            Ok(output) => return output,
-            Err(error)
-                if error.raw_os_error() == Some(26) && std::time::Instant::now() < deadline =>
-            {
-                eprintln!(
-                    "owned copied executable transient ETXTBSY; retrying within original owner"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Err(error) => panic!("owned copied executable spawn failed: {error}"),
-        }
-    }
 }
 fn leftovers(fixture: &Fixture) -> Vec<String> {
     let mut values = fs::read_dir(&fixture.root)
@@ -1093,7 +1048,7 @@ fn copied_key_cli_defaults_require_explicit_real_deployment_workspace() {
         if explicit {
             command.env("HEPTA_PAPER_WORKSPACE_ROOT", "workspace");
         }
-        output_default_stdio(&mut command).unwrap()
+        copied_fixture_output(&mut command)
     };
     let missing = invoke(false);
     assert_eq!(missing.status.code(), Some(1));

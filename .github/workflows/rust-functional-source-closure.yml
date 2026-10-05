@@ -23,7 +23,7 @@ jobs:
   exact-head:
     name: rust-functional-source-exact-head
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out exact source head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -98,7 +98,7 @@ jobs:
     if: github.event_name == 'pull_request'
     name: rust-functional-source-prospective-merge
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out immutable source head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

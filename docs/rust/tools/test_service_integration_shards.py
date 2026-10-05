@@ -166,6 +166,22 @@ class ServiceIntegrationShards(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     self.assert_foundation_target_isolation(changed)
 
+    def test_functional_producer_and_parent_oracle_share_bounded_job_headroom(self):
+        source = (ROOT / ".github/workflows/rust-functional-source-closure.yml").read_text()
+        jobs = re.split(r"(?m)^  (?:exact-head|prospective-merge):\n", source)[1:]
+        self.assertEqual(len(jobs), 2)
+        for job in jobs:
+            self.assertEqual(re.findall(r"(?m)^    timeout-minutes: (\d+)$", job), ["90"])
+            self.assertNotRegex(job, r"(?m)^        timeout-minutes:")
+            commands = [line for line in job.splitlines()
+                        if "node paper-core/bin/with-locked-parent-node-oracle.mjs " in line]
+            self.assertEqual(len(commands), 1)
+            self.assertIn(" --budget-profile functional-ci -- /bin/bash -euc '", commands[0])
+        repository = (ROOT / ".github/workflows/repository-source-evidence.yml").read_text()
+        self.assertNotIn("--budget-profile", repository)
+        self.assertNotIn("--job-timeout-minutes", source + repository)
+        self.assertEqual(re.findall(r"(?m)^    timeout-minutes: (\d+)$", repository), ["30", "30"])
+
     def test_observation_windows_outlive_producers_without_relaxing_acceptance(self):
         required = json.loads((ROOT / "docs/rust/qualification/source-required-checks.v1.json").read_text())
         producers = json.loads((ROOT / "docs/rust/qualification/source-check-producers.v1.json").read_text())

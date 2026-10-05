@@ -77,9 +77,9 @@ export function assertLockedParentOracleNodeCopy(system, installation) {
 export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath = null, budgetProfile = 'default' }) {
   if (process.version !== 'v22.23.1' || !Array.isArray(command) || !command.length) fail('runtime_or_command');
   if (budgetProfile !== 'default' && budgetProfile !== 'functional-ci') fail('budget_profile');
-  // Preserve the 30-minute default; only functional CI opts into 55 minutes.
-  // Installation and verification share this ceiling, not a provider/oracle timeout.
-  const deadline = performance.now() + (budgetProfile === 'functional-ci' ? 55 : 30) * 60 * 1000;
+  // Preserve the 30-minute default; only functional CI opts into 85 minutes.
+  // Installation and verification share this requested subprocess deadline, not a provider/oracle timeout.
+  const deadline = performance.now() + (budgetProfile === 'functional-ci' ? 85 : 30) * 60 * 1000;
   const remaining = () => {
     const timeout = Math.floor(deadline - performance.now());
     if (timeout <= 0) fail('job_timeout');

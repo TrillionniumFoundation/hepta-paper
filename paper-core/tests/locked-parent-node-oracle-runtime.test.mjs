@@ -79,7 +79,7 @@ closure = directory => { observations.push(['closure', directory]); return { row
 }
 
 test('wrapper profiles share one original decreasing deadline across version, install and verification', () => {
-  for (const [budgetProfile, milliseconds] of [['default', 1800000], ['functional-ci', 3300000]]) {
+  for (const [budgetProfile, milliseconds] of [['default', 1800000], ['functional-ci', 5100000]]) {
     const harness = budgetHarness({ times: [100, 1100, 60100, 120100] });
     assert.equal(harness.run({ budgetProfile }), 0);
     assert.deepEqual(harness.calls.map(call => call.options.timeout), [milliseconds - 1000, milliseconds - 60000, milliseconds - 120000]);
@@ -98,7 +98,7 @@ test('wrapper profiles share one original decreasing deadline across version, in
 });
 
 test('wrapper refuses an exhausted original deadline before each child, including the exact boundary', () => {
-  for (const [budgetProfile, deadline] of [['default', 1800000], ['functional-ci', 3300000]]) {
+  for (const [budgetProfile, deadline] of [['default', 1800000], ['functional-ci', 5100000]]) {
     for (const expiry of [deadline, deadline + 1]) {
       for (let child = 0; child < 3; child++) {
         const harness = budgetHarness({ times: [0, ...Array(child).fill(0), expiry] });
@@ -118,22 +118,22 @@ test('wrapper keeps library and CLI defaults, with no environment or arbitrary t
   const environment = { HEPTA_LOCKED_NODE_ORACLE_TIMEOUT: '999999999', HEPTA_LOCKED_NODE_ORACLE_BUDGET_PROFILE: 'functional-ci',
     npm_config_timeout: '999999999', budgetProfile: 'functional-ci' };
   const library = budgetHarness({ environment });
-  assert.equal(library.run({ timeout: 999999999, timeoutSeconds: 999999999 }), 0);
+  assert.equal(library.run({ timeout: 999999999, timeoutSeconds: 999999999, jobTimeoutMinutes: 90 }), 0);
   assert.deepEqual(library.calls.map(call => call.options.timeout), [1800000, 1800000, 1800000]);
-  for (const [selected, timeout] of [[[], 1800000], [['--budget-profile', 'functional-ci'], 3300000]]) {
+  for (const [selected, timeout] of [[[], 1800000], [['--budget-profile', 'functional-ci'], 5100000]]) {
     const cli = budgetHarness({ environment, argv: ['--receipt', '/receipt.json', ...selected, '--', '/verification', 'argument'] });
     assert.equal(cli.process.exitCode, 0);
     assert.deepEqual(cli.calls.map(call => call.options.timeout), [timeout, timeout, timeout]);
     assert.deepEqual(cli.calls[2].args, ['argument']);
   }
-  for (const budgetProfile of [null, true, false, 3300, 55, '', '3300', '55', 'functional-ci ', 'DEFAULT', {}, []]) {
+  for (const budgetProfile of [null, true, false, 3300, 55, 5100, 85, 90, '', '3300', '55', '5100', '85', '90', 'functional-ci ', 'DEFAULT', {}, []]) {
     const harness = budgetHarness();
     assert.throws(() => harness.run({ budgetProfile }), /parent_node_oracle_budget_profile/);
     assert.equal(harness.effects.length, 0);
     assert.equal(harness.calls.length, 0);
   }
   for (const selected of [['--budget-profile', '3300'], ['--budget-profile', 'default'], ['--timeout', '3300'],
-    ['--budget-profile=functional-ci'], ['--budget-profile', 'functional-ci', '--budget-profile', 'functional-ci']]) {
+    ['--job-timeout-minutes', '30'], ['--job-timeout-minutes', '90'], ['--budget-profile=functional-ci'], ['--budget-profile', 'functional-ci', '--budget-profile', 'functional-ci']]) {
     assert.throws(() => budgetHarness({ argv: ['--receipt', '/receipt.json', ...selected, '--', '/verification'] }), /parent_node_oracle_arguments/);
   }
 });
@@ -173,7 +173,7 @@ test('only the two functional workflow callers opt in, with exact producer pins 
   const invocations = source => source.split('\n').filter(line => line.includes('node paper-core/bin/with-locked-parent-node-oracle.mjs '));
   assert.deepEqual(invocations(functional).map(line => line.trim()), ['head', 'merge'].map(lane =>
     `node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/functional-node-oracle-${lane}.json --budget-profile functional-ci -- /bin/bash -euc '`));
-  assert.deepEqual([...functional.matchAll(/timeout-minutes: (\d+)/g)].map(match => Number(match[1])), [60, 60]);
+  assert.deepEqual([...functional.matchAll(/timeout-minutes: (\d+)/g)].map(match => Number(match[1])), [90, 90]);
   assert.deepEqual(invocations(repository).map(line => line.trim()), ['head', 'push', 'merge'].map(lane =>
     `node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/repository-node-oracle-${lane}.json -- /bin/bash -euc '`));
   for (const lane of ['head', 'push', 'merge']) {

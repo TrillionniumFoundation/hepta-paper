@@ -18,6 +18,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 use zeroize::Zeroizing;
+
+#[path = "support/copied_fixture.rs"]
+mod copied_fixture;
+use copied_fixture::copied_fixture_output;
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const PRIVATE: &str = "release-integrity-ed25519-private.pem";
 const PUBLIC: &str = "release-integrity-ed25519-public.pem";
@@ -102,26 +106,6 @@ fn compare_status(fixture: &Fixture) {
     let expected = oracle(&[fixture.request("status")]);
     safe_report(&native);
     assert_eq!(native, expected[0]["value"]);
-}
-// Only freshly copied, owned fixture executables can transiently retain a
-// kernel text-busy state. Other spawn errors fail immediately; the original
-// whole-owner deadline includes this bounded retry and every assertion below.
-fn copied_fixture_output(command: &mut Command) -> std::process::Output {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-    loop {
-        match command.output() {
-            Ok(output) => return output,
-            Err(error)
-                if error.raw_os_error() == Some(26) && std::time::Instant::now() < deadline =>
-            {
-                eprintln!(
-                    "owned copied executable transient ETXTBSY; retrying within original owner"
-                );
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Err(error) => panic!("owned copied executable spawn failed: {error}"),
-        }
-    }
 }
 fn leftovers(fixture: &Fixture) -> Vec<String> {
     let mut values = fs::read_dir(&fixture.root)

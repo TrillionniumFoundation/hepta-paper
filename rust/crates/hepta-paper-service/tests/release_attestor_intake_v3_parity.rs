@@ -12,6 +12,10 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
+#[path = "support/copied_fixture.rs"]
+mod copied_fixture;
+use copied_fixture::copied_fixture_output;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,
@@ -231,28 +235,24 @@ fn passive_v3_configuration_signatures_windows_independence_and_namespace_match_
 #[test]
 fn ordinary_v3_joint_readiness_uses_deployment_paths_original_environment_and_no_process() {
     let f = Fixture::new();
-    let out = f.ordinary().output().unwrap();
+    let out = copied_fixture_output(&mut f.ordinary());
     assert!(out.status.success());
     let empty: Value = serde_json::from_slice(&out.stdout).unwrap();
     let prepared =
         oracle(&json!({"root":f.root,"modes":["joint-ready"],"now":empty["observedAt"]}));
     let case = &prepared["results"][0];
     let before = snapshot(&f.root);
-    let out = f
-        .ordinary()
-        .args([
-            "--require-ready",
-            "--author-config",
-            case["authorPath"].as_str().unwrap(),
-            "--author-config-hash",
-            case["authorHash"].as_str().unwrap(),
-            "--release-attestor-config",
-            case["releasePath"].as_str().unwrap(),
-            "--release-attestor-config-hash",
-            case["releaseHash"].as_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
+    let out = copied_fixture_output(f.ordinary().args([
+        "--require-ready",
+        "--author-config",
+        case["authorPath"].as_str().unwrap(),
+        "--author-config-hash",
+        case["authorHash"].as_str().unwrap(),
+        "--release-attestor-config",
+        case["releasePath"].as_str().unwrap(),
+        "--release-attestor-config-hash",
+        case["releaseHash"].as_str().unwrap(),
+    ]));
     assert!(
         out.status.success(),
         "{}",

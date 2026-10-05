@@ -364,3 +364,27 @@ fn ordinary_acquisition_rejects_fifo_replay_and_initial_lock_without_publication
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+fn compiled_identity_cache_does_not_cache_mutable_source_currentness() {
+    use hepta_paper_service::native_business::native_business_implementation_hash_v1;
+
+    let identity = native_business_implementation_hash_v1();
+    let (root, archive) = fixture("compiled-identity-cache-currentness");
+    let ready = inspect_runtime_source_cas_v1(&root);
+    assert_eq!(ready["ready"], true, "{ready}");
+
+    // Same path and length, different bytes after a successful observation in
+    // this process. A compiled identity cache must never make this ready again.
+    fs::write(&archive, vec![b'y'; 128]).expect("change mutable source");
+    assert_eq!(native_business_implementation_hash_v1(), identity);
+    let changed = inspect_runtime_source_cas_v1(&root);
+    assert_eq!(changed["ready"], false, "{changed}");
+
+    // Every subsequent observation is fresh, including after a repair.
+    fs::write(&archive, vec![b'x'; 128]).expect("restore mutable source");
+    assert_eq!(native_business_implementation_hash_v1(), identity);
+    let repaired = inspect_runtime_source_cas_v1(&root);
+    assert_eq!(repaired["ready"], true, "{repaired}");
+    fs::remove_dir_all(root).expect("remove test fixture");
+}

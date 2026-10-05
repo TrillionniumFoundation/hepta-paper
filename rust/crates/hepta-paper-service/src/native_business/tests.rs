@@ -160,3 +160,39 @@ fn implementation_hash_binds_every_native_source_file() {
     assert!(hash.starts_with("sha256:"));
     assert_eq!(hash.len(), 71);
 }
+
+#[test]
+fn compiled_implementation_identity_matches_uncached_domain_hash() {
+    // The domain, framing and complete ordered input closure are unchanged.
+    // A rebuild changes the identity whenever an included source changes.
+    let uncached = compute_native_business_implementation_hash_v1();
+    assert_eq!(native_business_implementation_hash_v1(), uncached);
+    assert_eq!(native_business_implementation_hash_v1(), uncached);
+}
+
+#[test]
+fn compiled_implementation_identity_is_shared_across_concurrent_calls() {
+    const THREADS: usize = 8;
+    let barrier = std::sync::Barrier::new(THREADS);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    let shared = compiled_business_identity();
+                    for _ in 0..64 {
+                        assert!(std::ptr::eq(compiled_business_identity(), shared));
+                        assert_eq!(&native_business_implementation_hash_v1(), shared);
+                    }
+                    shared
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert!(std::ptr::eq(
+                handle.join().expect("identity worker"),
+                compiled_business_identity()
+            ));
+        }
+    });
+}

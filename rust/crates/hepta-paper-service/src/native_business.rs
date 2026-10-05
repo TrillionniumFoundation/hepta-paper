@@ -35,6 +35,7 @@ use reviewer::reviewer_assessment;
 use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
 use thiserror::Error;
 
 pub(super) const MAX_TEXT_BYTES: usize = 1024 * 1024;
@@ -42,7 +43,20 @@ pub(super) const MAX_TOTAL_TEXT_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const MAX_ARTIFACTS: usize = 8;
 
 /// Stable implementation identity bound into deployment and process manifests.
+///
+/// Only the immutable `include_bytes!` closure of this compiled binary is cached.
+/// Mutable runtime sources, executable files and CAS objects must still be read
+/// and checked by their owners at every existing currentness boundary.
 pub fn native_business_implementation_hash_v1() -> String {
+    compiled_business_identity().clone()
+}
+
+fn compiled_business_identity() -> &'static String {
+    static IDENTITY: OnceLock<String> = OnceLock::new();
+    IDENTITY.get_or_init(compute_native_business_implementation_hash_v1)
+}
+
+fn compute_native_business_implementation_hash_v1() -> String {
     hash_domain(
         "HeptaNativeBusinessImplementationV1",
         &[

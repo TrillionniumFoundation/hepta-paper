@@ -71,11 +71,7 @@ impl Fixture {
         )
         .unwrap();
         let frontend = workspace.join("bin/hepta-paper-rust");
-        copy_executable(
-            Path::new(env!("CARGO_BIN_EXE_hepta-paper-rust")),
-            &frontend,
-        )
-        .unwrap();
+        copy_executable(Path::new(env!("CARGO_BIN_EXE_hepta-paper-rust")), &frontend).unwrap();
         fs::set_permissions(&frontend, fs::Permissions::from_mode(0o555)).unwrap();
         Self {
             root,

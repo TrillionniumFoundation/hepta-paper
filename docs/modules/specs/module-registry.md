@@ -77,7 +77,7 @@ Reject unknown capabilities, owners, paths, work items, cyclic dependencies, ove
 
 ## Security and privacy
 
-A manifest declares requested authority but cannot grant it. Writer/external-effect implementations use mutual-exclusion groups and cross-team review.
+A manifest declares requested authority but cannot grant it. Writer/external-effect implementations use mutual-exclusion groups and the applicable authority, recovery and affected-consumer checks under the [current ownership policy](../../governance/OWNERSHIP_AND_REVIEW.md). Separate runtime principals and single-writer fencing remain product requirements; distinct human review teams are not a development prerequisite.
 
 ## Compatibility and migration
 

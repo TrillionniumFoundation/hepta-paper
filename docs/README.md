@@ -53,7 +53,7 @@ npm run security:source-gate
 npm run release:state-check
 ```
 
-The development-document validator rejects invalid schemas, unknown or nonreciprocal capability/module/work references, module dependency cycles, undeclared central writers, missing canonical documents, and historical/checkpoint/trigger naming patterns. The module-documentation validator additionally rejects missing or orphan module specifications/manifests, incomplete required sections, registry drift, placeholders, missing implementation roots, and absent authority-specific safety contracts.
+The development-document validator rejects invalid schemas, unknown or nonreciprocal capability/module/work references, module dependency cycles, undeclared central writers, missing canonical documents, and historical/checkpoint/trigger naming patterns. The module-documentation validator additionally rejects missing or orphan module specifications/manifests, registry drift, missing implementation roots, and inconsistent typed authority/effect contracts. The machine-bound Identity, Open blockers, and Operational runbook sections must each occur once and contain a body. The other twelve recommended headings and placeholder-only explanatory prose produce advisories, not build failures; see the [structural coverage policy](modules/README.md#structural-coverage-and-implementation-scope). A structural pass does not establish implementation or production qualification.
 
 ## Scope boundaries
 

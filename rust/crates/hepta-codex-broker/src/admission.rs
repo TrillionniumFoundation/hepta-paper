@@ -19,6 +19,7 @@ const HARD_MAXIMUM_READ_TIMEOUT_MS: u64 = 30_000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BrokerRolePolicyV1 {
     pub role: AgentRole,
+    pub purpose: crate::ProductCodexOperationPurposeV1,
     pub sandbox_policy: SandboxPolicy,
     pub runtime_identity_hash: Sha256Digest,
 }
@@ -29,6 +30,7 @@ impl BrokerRolePolicyV1 {
     pub fn author(runtime_identity_hash: Sha256Digest) -> Self {
         Self {
             role: AgentRole::Author,
+            purpose: crate::ProductCodexOperationPurposeV1::Business,
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
             runtime_identity_hash,
         }
@@ -39,6 +41,7 @@ impl BrokerRolePolicyV1 {
     pub fn reviewer(runtime_identity_hash: Sha256Digest) -> Self {
         Self {
             role: AgentRole::Reviewer,
+            purpose: crate::ProductCodexOperationPurposeV1::Business,
             sandbox_policy: SandboxPolicy::ReadOnly,
             runtime_identity_hash,
         }
@@ -49,6 +52,7 @@ impl BrokerRolePolicyV1 {
     pub fn formal_reviewer(runtime_identity_hash: Sha256Digest) -> Self {
         Self {
             role: AgentRole::FormalReviewer,
+            purpose: crate::ProductCodexOperationPurposeV1::Business,
             sandbox_policy: SandboxPolicy::ReadOnly,
             runtime_identity_hash,
         }
@@ -59,9 +63,27 @@ impl BrokerRolePolicyV1 {
     pub fn repairer(runtime_identity_hash: Sha256Digest) -> Self {
         Self {
             role: AgentRole::Repairer,
+            purpose: crate::ProductCodexOperationPurposeV1::Business,
             sandbox_policy: SandboxPolicy::WorkspaceWrite,
             runtime_identity_hash,
         }
+    }
+
+    /// A separate opt-in surface; default author/formal brokers never accept canaries.
+    pub fn one_shot_read_only_canary(
+        role: AgentRole,
+        runtime_identity_hash: Sha256Digest,
+    ) -> Result<Self, AdmissionError> {
+        let purpose = crate::ProductCodexOperationPurposeV1::OneShotReadOnlyCanary;
+        if !purpose.permits_role(role) {
+            return Err(AdmissionError::RoleSurfaceMismatch);
+        }
+        Ok(Self {
+            role,
+            purpose,
+            sandbox_policy: SandboxPolicy::ReadOnly,
+            runtime_identity_hash,
+        })
     }
 
     fn authorize(&self, request: &CodexExecutionRequestV1) -> Result<(), AdmissionError> {
@@ -70,6 +92,17 @@ impl BrokerRolePolicyV1 {
         }
         if request.codex_runtime_identity_hash != self.runtime_identity_hash {
             return Err(AdmissionError::RuntimeSurfaceMismatch);
+        }
+        if self.purpose == crate::ProductCodexOperationPurposeV1::OneShotReadOnlyCanary {
+            return if self.purpose.permits_role(self.role)
+                && request.task_kind == TaskKind::ReadOnlyCanary
+                && request.one_shot_canary.is_some()
+                && request.sandbox_policy == SandboxPolicy::ReadOnly
+            {
+                Ok(())
+            } else {
+                Err(AdmissionError::RoleSurfaceMismatch)
+            };
         }
         let task_allowed = matches!(
             (self.role, request.task_kind),
@@ -278,4 +311,69 @@ pub enum AdmissionError {
     RuntimeSurfaceMismatch,
     #[error("socket timeout configuration failed: {0:?}")]
     SocketConfiguration(std::io::ErrorKind),
+}
+
+#[cfg(test)]
+mod canary_tests {
+    use super::*;
+    #[test]
+    fn canary_broker_requires_explicit_profile_and_refuses_business_purpose() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let mut request: CodexExecutionRequestV1 = serde_json::from_value(serde_json::json!({
+            "version":1, "operationId":"operation-1", "idempotencyKey":digest,
+            "campaignId":"campaign-1", "nodeId":"author-1", "attemptId":"attempt-1",
+            "leaseGeneration":1, "campaignRevision":1, "role":"author", "taskKind":"draft",
+            "codexRuntimeIdentityHash":digest, "modelSelector":"model", "transport":"exec-jsonl-v1",
+            "sessionPolicy":"ephemeral-new-thread", "promptEnvelopeHash":digest, "inputManifestHash":digest,
+            "workspaceIdentityHash":digest, "outputSchemaHash":digest, "mutationPolicyHash":digest,
+            "sandboxPolicy":"workspace-write", "networkPolicy":"none", "approvalPolicy":"never",
+            "absoluteDeadlineUnixMs":20000, "maximumOutputBytes":1024, "maximumEventCount":100,
+            "maximumCostMicrousd":100, "remainingTokenHint":null,
+            "requestCapability":{"nonce":"nonce-1", "issuedAtUnixMs":1000, "expiresAtUnixMs":15000,
+                "signerKeyId":"key-1", "peerUid":1000, "peerGid":1000, "signatureBase64":"A".repeat(86)}
+        })).unwrap();
+        request.task_kind = TaskKind::ReadOnlyCanary;
+        request.sandbox_policy = SandboxPolicy::ReadOnly;
+        request.one_shot_canary = Some(Box::new(
+            hepta_codex_protocol::OneShotProviderCanarySubjectV1 {
+                version: 1,
+                attempt_id: "one-shot-attempt".into(),
+                phase: hepta_codex_protocol::OneShotProviderCanaryPhaseV1::ProviderStarted,
+                reservation_hash: request.input_manifest_hash.clone(),
+                marker_event_hash: request.prompt_envelope_hash.clone(),
+            },
+        ));
+        for role in [AgentRole::Author, AgentRole::FormalReviewer] {
+            request.role = role;
+            let hash = request.codex_runtime_identity_hash.clone();
+            let normal = if role == AgentRole::Author {
+                BrokerRolePolicyV1::author(hash.clone())
+            } else {
+                BrokerRolePolicyV1::formal_reviewer(hash.clone())
+            };
+            assert!(normal.authorize(&request).is_err());
+            let canary = BrokerRolePolicyV1::one_shot_read_only_canary(role, hash).unwrap();
+            canary.authorize(&request).unwrap();
+            let mut changed = request.clone();
+            changed.task_kind = if role == AgentRole::Author {
+                TaskKind::Draft
+            } else {
+                TaskKind::FormalReview
+            };
+            changed.one_shot_canary = None;
+            assert!(canary.authorize(&changed).is_err());
+            changed = request.clone();
+            changed.sandbox_policy = SandboxPolicy::WorkspaceWrite;
+            assert!(canary.authorize(&changed).is_err());
+        }
+        for role in [AgentRole::Reviewer, AgentRole::Repairer] {
+            assert!(
+                BrokerRolePolicyV1::one_shot_read_only_canary(
+                    role,
+                    request.codex_runtime_identity_hash.clone()
+                )
+                .is_err()
+            );
+        }
+    }
 }

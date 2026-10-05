@@ -50,6 +50,26 @@ const MAXIMUM_PROMPT_BYTES: u64 = 8 * 1024 * 1024;
 const MAXIMUM_INPUT_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
 const MAXIMUM_RECOVERY_OPERATIONS: usize = 1_000_000;
 
+/// Closed installed purpose. Legacy configurations omit Business on the wire.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductCodexOperationPurposeV1 {
+    #[default]
+    Business,
+    OneShotReadOnlyCanary,
+}
+impl ProductCodexOperationPurposeV1 {
+    pub fn is_business(&self) -> bool {
+        *self == Self::Business
+    }
+    pub fn permits_role(self, role: AgentRole) -> bool {
+        self == Self::Business || matches!(role, AgentRole::Author | AgentRole::FormalReviewer)
+    }
+    pub fn permits_task(self, task: TaskKind) -> bool {
+        (self == Self::OneShotReadOnlyCanary) == (task == TaskKind::ReadOnlyCanary)
+    }
+}
+
 /// One authority-owned operation contract consumed by a role-specific broker.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -63,6 +83,8 @@ pub struct ProductCodexOperationV1 {
     pub campaign_revision: u64,
     pub role: AgentRole,
     pub task_kind: TaskKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub one_shot_canary: Option<Box<hepta_codex_protocol::OneShotProviderCanarySubjectV1>>,
     pub valid_from_unix_ms: u64,
     pub expires_at_unix_ms: u64,
     pub workspace_path: PathBuf,
@@ -114,6 +136,7 @@ struct LoadedProductOperationV1 {
 #[derive(Clone)]
 pub struct ProductCodexDispatcherConfigurationV1 {
     pub role: AgentRole,
+    pub purpose: ProductCodexOperationPurposeV1,
     pub broker_uid: u32,
     pub broker_gid: u32,
     pub operation_authority_uid: u32,
@@ -143,11 +166,32 @@ struct ProductOperationDirectoryIdentityV1 {
 pub struct ProductCodexDispatcherV1 {
     configuration: ProductCodexDispatcherConfigurationV1,
     operation_directory_identity: ProductOperationDirectoryIdentityV1,
+    installed_canary: Option<crate::product_daemon::InstalledCanaryDispatcherBindingV1>,
 }
 
 impl ProductCodexDispatcherV1 {
     pub fn new(
         configuration: ProductCodexDispatcherConfigurationV1,
+    ) -> Result<Self, ProductCodexError> {
+        if !configuration.purpose.is_business() {
+            return Err(ProductCodexError::InstalledCanaryConfigurationRequired);
+        }
+        Self::construct(configuration, None)
+    }
+
+    pub(crate) fn from_installed_canary(
+        binding: crate::product_daemon::InstalledCanaryDispatcherBindingV1,
+    ) -> Result<Self, ProductCodexError> {
+        binding.assert_current()?;
+        if binding.resolved().purpose != ProductCodexOperationPurposeV1::OneShotReadOnlyCanary {
+            return Err(ProductCodexError::Configuration);
+        }
+        Self::construct(binding.resolved().clone(), Some(binding))
+    }
+
+    fn construct(
+        configuration: ProductCodexDispatcherConfigurationV1,
+        installed_canary: Option<crate::product_daemon::InstalledCanaryDispatcherBindingV1>,
     ) -> Result<Self, ProductCodexError> {
         let operation_directory_identity = capture_operation_directory_identity(
             &configuration.operation_directory,
@@ -158,7 +202,15 @@ impl ProductCodexDispatcherV1 {
         Ok(Self {
             configuration,
             operation_directory_identity,
+            installed_canary,
         })
+    }
+
+    fn assert_configuration_current(&self) -> Result<(), ProductCodexError> {
+        if let Some(binding) = &self.installed_canary {
+            binding.assert_current()?;
+        }
+        Ok(())
     }
     #[must_use]
     pub fn role(&self) -> AgentRole {
@@ -174,14 +226,23 @@ impl ProductCodexDispatcherV1 {
         &self,
         operation_id: &str,
     ) -> Result<LoadedProductOperationV1, ProductCodexError> {
+        self.assert_configuration_current()?;
         assert_operation_directory_current(&self.operation_directory_identity)?;
-        load_product_operation(
+        let loaded = load_product_operation(
             &self.configuration.operation_directory,
             operation_id,
             self.configuration.operation_authority_uid,
             self.configuration.broker_uid,
             self.configuration.broker_gid,
-        )
+        )?;
+        if !self
+            .configuration
+            .purpose
+            .permits_task(loaded.operation.task_kind)
+        {
+            return Err(ProductCodexError::Configuration);
+        }
+        Ok(loaded)
     }
 
     fn output_path(&self, operation_id: &str) -> PathBuf {
@@ -246,17 +307,24 @@ impl ProductCodexDispatcherV1 {
     }
 }
 impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
+    fn assert_current_authority(&self) -> Result<(), CodexDispatchError> {
+        self.assert_configuration_current().map_err(Into::into)
+    }
+
     fn prepared_delivery(
         &self,
         journal: &BrokerJournalStoreV1,
         operation_id: &str,
     ) -> Result<crate::BrokerPreparedDeliveryV1, CodexDispatchError> {
-        crate::load_codex_prepared_delivery(
+        self.assert_configuration_current()?;
+        let delivery = crate::load_codex_prepared_delivery(
             journal,
             &self.configuration.gate_policy.state_directory,
             operation_id,
             self.configuration.broker_uid,
-        )
+        )?;
+        self.assert_configuration_current()?;
+        Ok(delivery)
     }
 
     fn recover_before_ready(
@@ -268,6 +336,9 @@ impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
             &self.configuration.gate_policy.state_directory,
             &self.configuration.cgroup_policy,
         )?;
+        // Always clean exact persisted containment first, even after revocation.
+        // A revoked or empty-journal installation still cannot become ready.
+        self.assert_configuration_current()?;
         for operation in journal.list_operation_journals(MAXIMUM_RECOVERY_OPERATIONS)? {
             if !matches!(
                 operation.current_state,
@@ -287,6 +358,7 @@ impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
                 None,
                 false,
             )?;
+            self.assert_configuration_current()?;
             finalize_codex_prepared_result(
                 journal,
                 &self.configuration.gate_policy.state_directory,
@@ -300,6 +372,7 @@ impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
                     .map_err(|_| CodexDispatchError::Clock)?,
             )?;
         }
+        self.assert_configuration_current()?;
         Ok(())
     }
     fn dispatch(
@@ -340,6 +413,7 @@ impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
         )?;
         let child_environment = self.build_child_environment(&loaded.operation.workspace_path)?;
         let authority = ProductOperationAuthorityV1 {
+            installed_canary: self.installed_canary.clone(),
             loaded: loaded.clone(),
             expected_role: self.configuration.role,
             runtime_identity_hash: self.configuration.runtime.identity_hash.clone(),
@@ -360,6 +434,7 @@ impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
             cancelled,
         );
         run_reserved_codex_operation(journal, plan)?;
+        self.assert_configuration_current()?;
         finalize_codex_prepared_result(
             journal,
             &self.configuration.gate_policy.state_directory,
@@ -372,10 +447,12 @@ impl BrokerOperationDispatcherV1 for ProductCodexDispatcherV1 {
                 .now_unix_ms()
                 .map_err(|_| CodexDispatchError::Clock)?,
         )?;
+        self.assert_configuration_current()?;
         Ok(())
     }
 }
 struct ProductOperationAuthorityV1 {
+    installed_canary: Option<crate::product_daemon::InstalledCanaryDispatcherBindingV1>,
     loaded: LoadedProductOperationV1,
     expected_role: AgentRole,
     runtime_identity_hash: Sha256Digest,
@@ -394,6 +471,9 @@ impl CodexDispatchAuthorityV1 for ProductOperationAuthorityV1 {
         point: CodexDispatchAuthorizationPointV1,
         now_unix_ms: u64,
     ) -> Result<(), CodexDispatchError> {
+        if let Some(binding) = &self.installed_canary {
+            binding.assert_current()?;
+        }
         assert_operation_source_current(&self.loaded, self.broker_uid, self.broker_gid)?;
         let _prompt = read_live_authority_inputs(
             &self.loaded.operation,
@@ -415,6 +495,11 @@ impl CodexDispatchAuthorityV1 for ProductOperationAuthorityV1 {
             || invocation.output_schema_hash != self.loaded.operation.output_schema_hash
         {
             return Err(CodexDispatchError::AuthorityDenied);
+        }
+        // Bound reads and workspace inventory above can take time. Do not accept
+        // configuration that ceased to be current during those authority checks.
+        if let Some(binding) = &self.installed_canary {
+            binding.assert_current()?;
         }
         Ok(())
     }
@@ -474,7 +559,8 @@ fn validate_product_configuration(
     if configuration.operation_authority_uid == configuration.broker_uid {
         return Err(ProductCodexError::AuthoritySeparation);
     }
-    if configuration.runtime.model_selector.trim().is_empty()
+    if !configuration.purpose.permits_role(configuration.role)
+        || configuration.runtime.model_selector.trim().is_empty()
         || configuration.invocation_policy.execution_uid != configuration.broker_uid
         || configuration.invocation_policy.execution_gid != Some(configuration.broker_gid)
         || configuration.invocation_policy.schema_owner_uid != configuration.operation_authority_uid
@@ -787,6 +873,7 @@ fn validate_operation_against_request(
         || operation.lease_generation != request.lease_generation
         || operation.campaign_revision != request.campaign_revision
         || operation.task_kind != request.task_kind
+        || operation.one_shot_canary != request.one_shot_canary
     {
         return Err(CodexDispatchError::AuthorityDenied);
     }
@@ -812,18 +899,28 @@ fn validate_operation_against_request(
     {
         return Err(CodexDispatchError::AuthorityDenied);
     }
-    let expected_sandbox = match expected_role {
-        AgentRole::Author | AgentRole::Repairer => {
-            if operation.mutation_policy.read_only {
-                return Err(CodexDispatchError::AuthorityDenied);
-            }
-            hepta_codex_protocol::SandboxPolicy::WorkspaceWrite
+    let expected_sandbox = if request.task_kind == TaskKind::ReadOnlyCanary {
+        request
+            .validate()
+            .map_err(|_| CodexDispatchError::AuthorityDenied)?;
+        if operation.mutation_policy != MutationPolicyV1::reviewer_read_only() {
+            return Err(CodexDispatchError::AuthorityDenied);
         }
-        AgentRole::Reviewer | AgentRole::FormalReviewer => {
-            if !operation.mutation_policy.read_only {
-                return Err(CodexDispatchError::AuthorityDenied);
+        hepta_codex_protocol::SandboxPolicy::ReadOnly
+    } else {
+        match expected_role {
+            AgentRole::Author | AgentRole::Repairer => {
+                if operation.mutation_policy.read_only {
+                    return Err(CodexDispatchError::AuthorityDenied);
+                }
+                hepta_codex_protocol::SandboxPolicy::WorkspaceWrite
             }
-            hepta_codex_protocol::SandboxPolicy::ReadOnly
+            AgentRole::Reviewer | AgentRole::FormalReviewer => {
+                if !operation.mutation_policy.read_only {
+                    return Err(CodexDispatchError::AuthorityDenied);
+                }
+                hepta_codex_protocol::SandboxPolicy::ReadOnly
+            }
         }
     };
     if request.sandbox_policy != expected_sandbox
@@ -838,6 +935,15 @@ fn validate_operation_against_request(
     if workspace_identity_hash_v1(&workspace)
         .map_err(|_| CodexDispatchError::InvalidBinding("workspace_identity"))?
         != request.workspace_identity_hash
+    {
+        return Err(CodexDispatchError::AuthorityDenied);
+    }
+    if request.task_kind == TaskKind::ReadOnlyCanary
+        && !workspace
+            .inventory()
+            .map_err(|_| CodexDispatchError::InvalidBinding("workspace_inventory"))?
+            .entries
+            .is_empty()
     {
         return Err(CodexDispatchError::AuthorityDenied);
     }
@@ -862,6 +968,10 @@ fn digest(bytes: &[u8]) -> Result<Sha256Digest, ProductCodexError> {
 pub enum ProductCodexError {
     #[error("product Codex broker configuration is invalid")]
     Configuration,
+    #[error("canary dispatch requires the retained installed configuration composition")]
+    InstalledCanaryConfigurationRequired,
+    #[error("the original installed canary configuration is no longer current")]
+    ConfigurationChanged,
     #[error("operation authority must be distinct from the broker principal")]
     AuthoritySeparation,
     #[error("operation authority directory is invalid")]

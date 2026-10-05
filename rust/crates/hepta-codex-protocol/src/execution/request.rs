@@ -25,6 +25,24 @@ pub struct RequestCapabilityV1 {
     pub signature_base64: String,
 }
 
+/// The only one-shot phase allowed to request a provider canary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OneShotProviderCanaryPhaseV1 {
+    ProviderStarted,
+}
+
+/// Signed subject data, never a reconstructed journal marker or live permit.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OneShotProviderCanarySubjectV1 {
+    pub version: u16,
+    pub attempt_id: String,
+    pub phase: OneShotProviderCanaryPhaseV1,
+    pub reservation_hash: Sha256Digest,
+    pub marker_event_hash: Sha256Digest,
+}
+
 /// Fully bound request sent from the Rust control plane to a Codex broker.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -39,6 +57,8 @@ pub struct CodexExecutionRequestV1 {
     pub campaign_revision: u64,
     pub role: AgentRole,
     pub task_kind: TaskKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub one_shot_canary: Option<Box<OneShotProviderCanarySubjectV1>>,
     pub codex_runtime_identity_hash: Sha256Digest,
     pub model_selector: String,
     pub transport: Transport,
@@ -122,6 +142,13 @@ impl CodexExecutionRequestV1 {
         if self.remaining_token_hint == Some(0) {
             return Err(ProtocolValidationError::NonPositive("remainingTokenHint"));
         }
+        match (&self.one_shot_canary, self.task_kind) {
+            (Some(subject), TaskKind::ReadOnlyCanary) if subject.version == 1 => {
+                validate_identifier("oneShotCanary.attemptId", &subject.attempt_id)?;
+            }
+            (None, task) if task != TaskKind::ReadOnlyCanary => {}
+            _ => return Err(ProtocolValidationError::RoleTaskMismatch),
+        }
         validate_role_task_and_sandbox(self.role, self.task_kind, self.sandbox_policy)
     }
 }
@@ -131,6 +158,16 @@ fn validate_role_task_and_sandbox(
     task_kind: TaskKind,
     sandbox_policy: SandboxPolicy,
 ) -> Result<(), ProtocolValidationError> {
+    if task_kind == TaskKind::ReadOnlyCanary {
+        if !matches!(role, AgentRole::Author | AgentRole::FormalReviewer) {
+            return Err(ProtocolValidationError::RoleTaskMismatch);
+        }
+        return if sandbox_policy == SandboxPolicy::ReadOnly {
+            Ok(())
+        } else {
+            Err(ProtocolValidationError::RoleSandboxMismatch)
+        };
+    }
     let task_allowed = matches!(
         (role, task_kind),
         (AgentRole::Author, TaskKind::Draft | TaskKind::Revise)
@@ -234,6 +271,7 @@ mod tests {
             campaign_revision: 0,
             role,
             task_kind,
+            one_shot_canary: None,
             codex_runtime_identity_hash: digest('2'),
             model_selector: "qualified-model".into(),
             transport: Transport::ExecJsonlV1,
@@ -334,5 +372,72 @@ mod tests {
             value.validate(),
             Err(ProtocolValidationError::InvalidCapabilityTimeOrder),
         );
+    }
+    #[test]
+    fn read_only_canary_is_closed_to_exact_roles_phase_and_immutable_sandbox() {
+        let subject = OneShotProviderCanarySubjectV1 {
+            version: 1,
+            attempt_id: "one-shot-attempt".into(),
+            phase: OneShotProviderCanaryPhaseV1::ProviderStarted,
+            reservation_hash: digest('8'),
+            marker_event_hash: digest('9'),
+        };
+        for role in [
+            AgentRole::Author,
+            AgentRole::Reviewer,
+            AgentRole::FormalReviewer,
+            AgentRole::Repairer,
+        ] {
+            for sandbox in [SandboxPolicy::ReadOnly, SandboxPolicy::WorkspaceWrite] {
+                for with_subject in [false, true] {
+                    let mut value = request(role, TaskKind::ReadOnlyCanary, sandbox);
+                    value.one_shot_canary = with_subject.then(|| Box::new(subject.clone()));
+                    assert_eq!(
+                        value.validate().is_ok(),
+                        with_subject
+                            && sandbox == SandboxPolicy::ReadOnly
+                            && matches!(role, AgentRole::Author | AgentRole::FormalReviewer)
+                    );
+                }
+            }
+        }
+        for task in [TaskKind::Draft, TaskKind::Revise] {
+            assert!(
+                request(AgentRole::Author, task, SandboxPolicy::WorkspaceWrite)
+                    .validate()
+                    .is_ok()
+            );
+            assert!(
+                request(AgentRole::Author, task, SandboxPolicy::ReadOnly)
+                    .validate()
+                    .is_err()
+            );
+        }
+        let mut ordinary = request(
+            AgentRole::Author,
+            TaskKind::Draft,
+            SandboxPolicy::WorkspaceWrite,
+        );
+        let original = serde_json::to_vec(&ordinary).unwrap();
+        assert!(
+            !serde_json::to_value(&ordinary)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("oneShotCanary")
+        );
+        ordinary.one_shot_canary = Some(Box::new(subject.clone()));
+        assert!(ordinary.validate().is_err());
+        ordinary.one_shot_canary = None;
+        assert_eq!(serde_json::to_vec(&ordinary).unwrap(), original);
+        for phase in [
+            "launch_started",
+            "provider_completed",
+            "preconditions_verified",
+        ] {
+            let mut json = serde_json::to_value(&subject).unwrap();
+            json["phase"] = phase.into();
+            assert!(serde_json::from_value::<OneShotProviderCanarySubjectV1>(json).is_err());
+        }
     }
 }

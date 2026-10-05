@@ -108,6 +108,7 @@ impl Fixture {
             campaign_revision: 0,
             role: AgentRole::Author,
             task_kind: TaskKind::Draft,
+            one_shot_canary: None,
             codex_runtime_identity_hash: digest('2'),
             model_selector: "fixture-model".to_owned(),
             transport: Transport::ExecJsonlV1,

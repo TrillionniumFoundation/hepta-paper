@@ -133,6 +133,7 @@ fn admitted(operation_id: &str, nonce: &str, idempotency: char) -> Authenticated
         campaign_revision: 0,
         role: AgentRole::Author,
         task_kind: TaskKind::Draft,
+        one_shot_canary: None,
         codex_runtime_identity_hash: digest('2'),
         model_selector: "qualified-model".into(),
         transport: Transport::ExecJsonlV1,
@@ -788,3 +789,88 @@ fn unmarked_empty_database_is_not_adopted() {
 
 #[path = "tests/schema_definitions.rs"]
 mod schema_definitions;
+
+#[test]
+fn signed_business_and_canary_same_operation_never_replay_across_purpose() {
+    use crate::{CapabilityPolicyV1, CapabilityTrustStoreV1, verify_request_capability};
+    use base64ct::{Base64UrlUnpadded, Encoding};
+    use ed25519_dalek::{Signer, SigningKey};
+    let key = SigningKey::from_bytes(&[37_u8; 32]);
+    let trust = CapabilityTrustStoreV1::new([("key-1".to_owned(), key.verifying_key())]).unwrap();
+    let authenticate = |mut request: CodexExecutionRequestV1, peer| {
+        request.request_capability.signature_base64 = Base64UrlUnpadded::encode_string(
+            &key.sign(&capability_signing_bytes(&request).unwrap())
+                .to_bytes(),
+        );
+        let capability = verify_request_capability(
+            &request,
+            peer,
+            12_000,
+            CapabilityPolicyV1::default(),
+            &trust,
+        )
+        .unwrap();
+        let request_payload = serde_json::to_vec(&request).unwrap();
+        let request_hash = sha256_digest(&request_payload).unwrap();
+        AuthenticatedBrokerRequestV1 {
+            request,
+            request_payload,
+            request_hash,
+            peer,
+            capability,
+        }
+    };
+    for canary_first in [false, true] {
+        let fixture = TempJournal::new();
+        let mut store = fixture.open();
+        let base = admitted("operation-1", "nonce-business", '1');
+        let business = authenticate(base.request.clone(), base.peer);
+        let mut canary = base.request;
+        canary.task_kind = TaskKind::ReadOnlyCanary;
+        canary.sandbox_policy = SandboxPolicy::ReadOnly;
+        canary.request_capability.nonce = "nonce-canary".into();
+        canary.one_shot_canary = Some(Box::new(
+            hepta_codex_protocol::OneShotProviderCanarySubjectV1 {
+                version: 1,
+                attempt_id: "one-shot-attempt".into(),
+                phase: hepta_codex_protocol::OneShotProviderCanaryPhaseV1::ProviderStarted,
+                reservation_hash: digest('8'),
+                marker_event_hash: digest('9'),
+            },
+        ));
+        let canary = authenticate(canary, base.peer);
+        let (first, other) = if canary_first {
+            (&canary, &business)
+        } else {
+            (&business, &canary)
+        };
+        store
+            .reserve_operation(first, 12_000, FaultInjectionPointV1::None)
+            .unwrap();
+        let before = store.load_journal("operation-1").unwrap();
+        assert!(
+            store
+                .reserve_operation(other, 12_001, FaultInjectionPointV1::None)
+                .is_err()
+        );
+        assert_eq!(store.load_journal("operation-1").unwrap(), before);
+        assert_eq!(store.operation_count().unwrap(), 1);
+        assert!(matches!(
+            store
+                .reserve_operation(first, 12_002, FaultInjectionPointV1::None)
+                .unwrap(),
+            ReservationOutcomeV1::Existing(_)
+        ));
+        let db = rusqlite::Connection::open_with_flags(
+            &fixture.path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let count: i64 = db
+            .query_row("SELECT count(*) FROM capability_nonces", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+}

@@ -66,8 +66,13 @@ impl ResultQueryContext<'_> {
         let dispatcher = self.dispatcher.ok_or(ResultQueryError::Rejected(
             BrokerMachineCodeV1::PreparedResultMismatch,
         ))?;
-        let delivery = dispatcher
-            .prepared_delivery(self.journal, &request.operation_id)
+        let mut last_now = self.admitted_at_unix_ms;
+        self.check_current(admitted, &mut last_now)?;
+        let delivery = dispatcher.prepared_delivery(self.journal, &request.operation_id);
+        // Recheck even when payload loading failed: retained-owner revocation
+        // interrupts delivery and never becomes another response frame.
+        self.check_current(admitted, &mut last_now)?;
+        let delivery = delivery
             .map_err(|_| ResultQueryError::Rejected(BrokerMachineCodeV1::PreparedResultMismatch))?;
         let response = super::response_from_durable_journal(&journal, false)
             .map_err(|_| ResultQueryError::Rejected(BrokerMachineCodeV1::PreparedResultMismatch))?;
@@ -80,11 +85,9 @@ impl ResultQueryContext<'_> {
                 BrokerMachineCodeV1::PreparedResultMismatch,
             ));
         }
-        // Sidecar I/O and verification may outlive admission. Check the current
-        // trust and time again before exposing any prepared-response or output.
-        let mut last_now = self.admitted_at_unix_ms;
-        self.check_current(admitted, &mut last_now)
-            .map_err(ResultQueryError::Rejected)?;
+        // Sidecar I/O and verification may outlive admission. Check current
+        // trust, time and retained authority before exposing the first frame.
+        self.check_current(admitted, &mut last_now)?;
         let mut writer = AuthorizedWriter {
             stream,
             context: self,
@@ -103,20 +106,21 @@ impl ResultQueryContext<'_> {
         &self,
         admitted: &AuthenticatedBrokerRequestV1,
         last_now: &mut u64,
-    ) -> Result<(), BrokerMachineCodeV1> {
+    ) -> Result<(), ResultQueryError> {
+        let reject = ResultQueryError::Rejected;
         let now = self
             .clock
             .now_unix_ms()
-            .map_err(|_| BrokerMachineCodeV1::CapabilityUnavailable)?;
+            .map_err(|_| reject(BrokerMachineCodeV1::CapabilityUnavailable))?;
         if now < *last_now {
-            return Err(BrokerMachineCodeV1::CapabilityUnavailable);
+            return Err(reject(BrokerMachineCodeV1::CapabilityUnavailable));
         }
         let (trust, _, bundle_hash) = self
             .trust_manager
             .snapshot(now)
-            .map_err(|_| BrokerMachineCodeV1::CapabilityUnavailable)?;
+            .map_err(|_| reject(BrokerMachineCodeV1::CapabilityUnavailable))?;
         if bundle_hash != *self.startup_bundle_hash {
-            return Err(BrokerMachineCodeV1::TrustBundleChanged);
+            return Err(reject(BrokerMachineCodeV1::TrustBundleChanged));
         }
         verify_request_capability(
             admitted.request(),
@@ -125,7 +129,13 @@ impl ResultQueryContext<'_> {
             self.capability_policy,
             &trust,
         )
-        .map_err(|_| BrokerMachineCodeV1::AdmissionRejected)?;
+        .map_err(|_| reject(BrokerMachineCodeV1::AdmissionRejected))?;
+        // The dispatcher is the original trusted server composition. The caller
+        // cannot supply a guard, callback or replacement configuration for a query.
+        self.dispatcher
+            .ok_or(ResultQueryError::DeliveryInterrupted)?
+            .assert_current_authority()
+            .map_err(|_| ResultQueryError::DeliveryInterrupted)?;
         *last_now = now;
         Ok(())
     }
@@ -168,3 +178,6 @@ impl Write for AuthorizedWriter<'_, '_> {
         self.stream.flush()
     }
 }
+
+#[cfg(test)]
+mod tests;

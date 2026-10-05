@@ -243,6 +243,7 @@ printf '%s\n' '{{"type":"thread.started","thread_id":"thread-1"}}' '{{"type":"tu
             campaign_revision: 0,
             role: AgentRole::Author,
             task_kind: TaskKind::Draft,
+            one_shot_canary: None,
             codex_runtime_identity_hash: self.runtime.identity_hash.clone(),
             model_selector: self.runtime.model_selector.clone(),
             transport: Transport::ExecJsonlV1,

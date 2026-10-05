@@ -376,3 +376,79 @@ Node journal transaction/row/replay counterparts, leaf and parent replacement
 refusals, and the real process interruption owner. These source tests require
 fresh composed and signed head/merge verification after integration; earlier
 failures remain evidence of their original subjects.
+
+## One-shot invocation-owned journal markers
+
+`ordinary_one_shot::execution::OneShotJournalV1::claim_external_action_marker`
+closes the journal ownership prerequisite for a future native ordinary execute
+composition. It consumes the original append result once and returns an opaque
+`OneShotExternalActionMarkerV1`. Only a newly appended, acknowledged, independently
+verified and still-current `provider_started` or `launch_started` event can carry
+that claim. The original journal instance has an unforgeable in-process owner;
+reopening the same inode, inspecting/copying JSON, a reservation, a non-marker
+append, a terminal receipt, an exact replay or acknowledgment loss cannot restore
+ownership. The public diagnostic inspection and its original wire remain unchanged.
+
+A claim is consumed before its live check. A failed check therefore cannot be
+retried after clearing cancellation or supplying a new observation. Marker checks
+use the journal's original cancellation object and absolute deadline, retained
+runtime/control/database identities, complete schema and audited head. A check
+failure on the originating owner permanently revokes that marker. A wrong-owner
+check does not consume or revoke the actual owner's claim. Check/drop performs no
+journal mutation, rollback, deletion or external action; unknown durable markers
+remain available for historical observation and conservative recovery.
+
+This is a journal-ownership observation, **not complete execution authority**.
+The existing SQLite compare-and-append transaction remains the sole journal
+writer boundary. The marker does not hold a transaction across a provider call,
+exclude a noncooperating external writer, or close the check-to-effect interval.
+An admitted consumer must still retain and recheck immutable mount/dataset/source
+owners, live provider runtime and credential bindings, native worker bindings,
+create-only campaign admission and the native-store single-writer fence at every
+side-effect boundary. The future checked worker binding must also match the
+consumer's expected attempt and action phase; same-journal ownership plus a
+current marker alone is insufficient. There is no callback dispatch API or Node fallback here.
+The ordinary `--action execute` route still returns
+`native_one_shot_ordinary_execute_not_implemented`; it is not marked ported,
+qualified, production-enabled, or eligible for Node retirement.
+
+The source comparator is the actual pinned Node repository's
+`assertExternalActionSideEffectPermit`/`assertExternalActionMarkerCurrent`, using
+both marker phases, one-use consumption, cross-repository refusal, exact replay,
+terminal staleness and post-commit acknowledgment loss. Native tests compare
+complete inspections and all four business tables including rowids, and retain
+raw main-file identity/bytes through claim and read-only checking. Additional
+native checks cover cancellation, inherited expiry, byte-identical inode
+replacement and a peer's durable terminal append. Native permanent revocation
+and retained full filesystem epochs are intentional stricter bounds than the
+incumbent, not broad malformed-domain equivalence.
+
+Run the scoped owners with the repository-pinned Rust toolchain and a supported
+real Node oracle selected by `HEPTA_TEST_NODE`:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --lib ordinary_one_shot::execution::marker::tests -- --test-threads=1
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --lib ordinary_one_shot::execution::marker::native_tests -- --test-threads=1
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --lib ordinary_one_shot:: -- --test-threads=1
+```
+
+The separately named `native_tests` exercise the ownership/negative paths using
+`captured-input.v1.json`, a synthetic input whose original repository, domain,
+fixture builder and capture-script source hashes are checked at test time.
+Those native-only tests are not live differential passes. The `tests` owner
+still launches the actual Node comparator through the unchanged bounded process
+owner. If that owner's UID/kill checks refuse the host, record the differential
+as blocked; do not relax the process guard or count a captured input as a pass.
+
+The existing `execution-contract.v1.json` verifies source hashes before opening
+the journal. Its comparator pins are:
+
+- `paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs`:
+  `aeab2c37a6118804afb07ff0978d5b3c7ac58efae18415abad47b04d21ed9de9`
+- `paper-composition/automation/autonomous-research-one-shot-campaign-attempt-state-machine.mjs`:
+  `4eba4bb9590404c1bda5f316a3414301f49a0cfcc1347489e23f61ad976b88ba`
+- `paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs`:
+  `a220e6c9367007ea32b2926f38ef9c2882e20f9f634a97e51aa044f47bfd81e5`
+
+These synthetic business records establish neither provider identity/canary,
+scientific acceptance, deployment migration/rollback nor external authority.

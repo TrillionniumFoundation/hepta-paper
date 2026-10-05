@@ -108,9 +108,10 @@ pub use prepared_result::{
 };
 pub use product::{
     ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, ProductCodexError,
-    ProductCodexOperationPublisherV1, ProductCodexOperationV1, ProductOperationSourceIdentityV1,
-    inspect_product_codex_operation_prompt_v1, product_codex_prompt_hash_v1,
-    publish_product_codex_operation_v1, recover_product_codex_prompt_hash_v1,
+    ProductCodexOperationPublisherV1, ProductCodexOperationPurposeV1, ProductCodexOperationV1,
+    ProductOperationSourceIdentityV1, inspect_product_codex_operation_prompt_v1,
+    product_codex_prompt_hash_v1, publish_product_codex_operation_v1,
+    recover_product_codex_prompt_hash_v1,
 };
 pub use product_daemon::{
     LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,

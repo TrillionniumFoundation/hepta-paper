@@ -36,7 +36,7 @@ pub fn compose_product_codex_broker(
     loaded: LoadedProductCodexBrokerConfigurationV1,
     shutdown: Arc<AtomicBool>,
 ) -> Result<BrokerServerV1, ProductCodexBrokerDaemonError> {
-    let configuration = loaded.into_current_configuration()?;
+    let configuration = loaded.clone().into_current_configuration()?;
     let parent_environment = codex_parent_environment_policy_v1()
         .build(
             configuration
@@ -89,27 +89,35 @@ pub fn compose_product_codex_broker(
     cgroup_policy.cleanup_timeout_ms = configuration.cgroup.cleanup_timeout_ms;
     cgroup_policy.poll_interval_ms = configuration.cgroup.poll_interval_ms;
     let clock = Arc::new(SystemBrokerClockV1);
-    let dispatcher = Arc::new(ProductCodexDispatcherV1::new(
-        ProductCodexDispatcherConfigurationV1 {
-            role: configuration.role,
-            broker_uid: configuration.broker_uid,
-            broker_gid: configuration.broker_gid,
-            operation_authority_uid: configuration.operation_authority_uid,
-            operation_directory: configuration.operation_directory.clone(),
-            runtime: runtime.clone(),
-            runtime_identity_policy,
-            parent_environment,
-            model_child_environment_base: configuration
-                .runtime
-                .model_child_environment_base
-                .clone(),
-            invocation_policy,
-            process_limits: configuration.process_limits.into(),
-            gate_policy,
-            cgroup_policy,
-            clock: clock.clone(),
+    let resolved_dispatcher = ProductCodexDispatcherConfigurationV1 {
+        role: configuration.role,
+        purpose: configuration.purpose,
+        broker_uid: configuration.broker_uid,
+        broker_gid: configuration.broker_gid,
+        operation_authority_uid: configuration.operation_authority_uid,
+        operation_directory: configuration.operation_directory.clone(),
+        runtime: runtime.clone(),
+        runtime_identity_policy,
+        parent_environment,
+        model_child_environment_base: configuration.runtime.model_child_environment_base.clone(),
+        invocation_policy,
+        process_limits: configuration.process_limits.into(),
+        gate_policy,
+        cgroup_policy,
+        clock: clock.clone(),
+    };
+    let dispatcher = Arc::new(
+        if configuration.purpose == crate::ProductCodexOperationPurposeV1::OneShotReadOnlyCanary {
+            // Only this installed composition can couple the original loader owner
+            // to its derived runtime/policies. No caller-supplied donor guard exists.
+            ProductCodexDispatcherV1::from_installed_canary(InstalledCanaryDispatcherBindingV1 {
+                loaded,
+                resolved: resolved_dispatcher,
+            })?
+        } else {
+            ProductCodexDispatcherV1::new(resolved_dispatcher)?
         },
-    )?);
+    );
     let now_unix_ms = clock.now_unix_ms()?;
     let trust_authority = decode_bundle_authority(&configuration)?;
     let trust_source_policy = CapabilityTrustBundleSourcePolicyV1::strict(
@@ -130,14 +138,23 @@ pub fn compose_product_codex_broker(
     let trust_manager = Arc::new(CapabilityTrustBundleManagerV1::new(verified_bundle));
     let peer_policy = PeerPolicyV1::new(configuration.allowed_peers.clone())?;
     let peer_policy_hash = peer_policy.policy_hash()?;
-    let role_policy = match configuration.role {
-        AgentRole::Author => BrokerRolePolicyV1::author(runtime.identity_hash.clone()),
-        AgentRole::Reviewer => BrokerRolePolicyV1::reviewer(runtime.identity_hash.clone()),
-        AgentRole::FormalReviewer => {
-            BrokerRolePolicyV1::formal_reviewer(runtime.identity_hash.clone())
-        }
-        AgentRole::Repairer => BrokerRolePolicyV1::repairer(runtime.identity_hash.clone()),
-    };
+    let role_policy =
+        if configuration.purpose == crate::ProductCodexOperationPurposeV1::OneShotReadOnlyCanary {
+            BrokerRolePolicyV1::one_shot_read_only_canary(
+                configuration.role,
+                runtime.identity_hash.clone(),
+            )
+            .map_err(|_| ProductCodexBrokerDaemonError::ConfigurationPolicy)?
+        } else {
+            match configuration.role {
+                AgentRole::Author => BrokerRolePolicyV1::author(runtime.identity_hash.clone()),
+                AgentRole::Reviewer => BrokerRolePolicyV1::reviewer(runtime.identity_hash.clone()),
+                AgentRole::FormalReviewer => {
+                    BrokerRolePolicyV1::formal_reviewer(runtime.identity_hash.clone())
+                }
+                AgentRole::Repairer => BrokerRolePolicyV1::repairer(runtime.identity_hash.clone()),
+            }
+        };
     let admission_policy = AdmissionPolicyV1::for_role(role_policy);
     let journal_policy = BrokerJournalPolicyV1 {
         version: 1,
@@ -211,6 +228,26 @@ pub fn compose_product_codex_broker(
     Ok(server)
 }
 
+/// Private coupling of the real installed loader to the policies derived above.
+/// Neither a resolved configuration nor serialized identity can construct this.
+#[derive(Clone)]
+pub(crate) struct InstalledCanaryDispatcherBindingV1 {
+    loaded: LoadedProductCodexBrokerConfigurationV1,
+    resolved: ProductCodexDispatcherConfigurationV1,
+}
+
+impl InstalledCanaryDispatcherBindingV1 {
+    pub(crate) fn resolved(&self) -> &ProductCodexDispatcherConfigurationV1 {
+        &self.resolved
+    }
+
+    pub(crate) fn assert_current(&self) -> Result<(), crate::ProductCodexError> {
+        self.loaded
+            .assert_current()
+            .map_err(|_| crate::ProductCodexError::ConfigurationChanged)
+    }
+}
+
 pub fn run_product_codex_broker(
     configuration_path: &Path,
     shutdown: Arc<AtomicBool>,
@@ -280,3 +317,7 @@ fn update_length_prefixed(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
     hasher.update(bytes);
 }
+
+#[cfg(test)]
+#[path = "compose/denial_fixture.rs"]
+mod denial_fixture;

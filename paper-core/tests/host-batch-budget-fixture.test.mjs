@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { hostBatchFixtureBudget } from './support/host-batch-budget-fixture.mjs';
+import { hostBatchFixtureBudget, hostBatchFixtureWorkspace } from './support/host-batch-budget-fixture.mjs';
 import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import { buildCampaignBenchmarkSchedule } from '../../paper-domain/automation/system-benchmark-schedule.mjs';
 import { autonomousEmpiricalFamilyPluginProfileFor } from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
@@ -35,4 +39,32 @@ test('original per-worker timeout cap still refuses the old two-hour request and
 test('fixture deadline is finite, exact, bounded and never turns invalid input into a skip', () => {
   assert.equal(hostBatchFixtureBudget(5000).absoluteDeadlineEpochMs, 125000);
   for (const now of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER]) assert.throws(() => hostBatchFixtureBudget(now), /clock_invalid/);
+});
+
+function workspaceFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-batch-layout-control-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true })); return root;
+}
+const snapshot = root => inspectWorkspaceExecutionSnapshot(root, { excludeNames: sourceTreeExcludedNames(root) });
+test('old nested output changes the original directory manifest even when all file bytes stay equal', t => {
+  const root = workspaceFixture(t), output = path.join(root, 'output'); fs.mkdirSync(output);
+  fs.writeFileSync(path.join(root, 'main.tex'), 'same source bytes');
+  const before = snapshot(root); fs.mkdirSync(path.join(output, '.hepta-system-harness-owned/treatment/batch'), { recursive: true, mode: 0o700 });
+  const after = snapshot(root); assert.deepEqual(before.blockers, []); assert.deepEqual(after.blockers, []);
+  assert.equal(after.merkleHash, before.merkleHash); assert.notEqual(after.manifestHash, before.manifestHash);
+});
+test('sibling output growth preserves the original expected file and directory hashes', t => {
+  const owned = workspaceFixture(t), { sourceRoot, outputDirectory } = hostBatchFixtureWorkspace(owned);
+  fs.writeFileSync(path.join(sourceRoot, 'main.tex'), 'same source bytes'); const before = snapshot(sourceRoot);
+  for (const arm of ['treatment', 'baseline', 'ablation']) {
+    const target = path.join(outputDirectory, '.hepta-system-harness-owned', arm, 'batch'); fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(target, 'observation.json'), '{}');
+  }
+  const after = snapshot(sourceRoot); assert.deepEqual(after, before);
+  assert.equal(path.dirname(sourceRoot), owned); assert.equal(path.dirname(outputDirectory), owned); assert.notEqual(sourceRoot, outputDirectory);
+});
+test('source-directory drift is still detected with a separate output, never added to exclusions', t => {
+  const { sourceRoot } = hostBatchFixtureWorkspace(workspaceFixture(t)); fs.writeFileSync(path.join(sourceRoot, 'main.tex'), 'same source bytes');
+  const before = snapshot(sourceRoot); fs.mkdirSync(path.join(sourceRoot, 'unexpected-source-directory'));
+  const after = snapshot(sourceRoot); assert.equal(after.merkleHash, before.merkleHash); assert.notEqual(after.manifestHash, before.manifestHash);
 });

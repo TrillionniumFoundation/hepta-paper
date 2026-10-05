@@ -1,4 +1,4 @@
-import { assertNativeSignalTargetOwned, recordRequestedParentTermination } from './support/native-process-signal-fixture.mjs';
+import { assertNativeSignalTargetOwned, recordRequestedParentTermination, waitForRequestedParentTermination } from './support/native-process-signal-fixture.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -234,6 +234,11 @@ function signalCurrentNativePin(pin, signal, parentTermination = null) {
   assertNativeSignalTargetOwned(pin,now,process.getuid(),parentTermination,parentNow);
   process.kill(pin.pid,signal);return true;
 }
+async function signalAfterRequestedParentTermination(pin, signal, termination, deadline) {
+  const current=nativeProcessPin(pin.pid);if(!current||['Z','X'].includes(current.state))return false;
+  if(termination)await waitForRequestedParentTermination(termination,deadline,{readPin:nativeProcessPin});
+  return signalCurrentNativePin(pin,signal,termination);
+}
 async function pollNativeMarker(marker,deadline) {
   while(Date.now()<deadline) {
     if(fs.existsSync(marker)){const pin=fixture.pin(marker),raw=fs.readFileSync(marker);assert.deepEqual(fixture.pin(marker),pin);assert.ok(raw.length<4096);return JSON.parse(raw);}
@@ -249,19 +254,23 @@ test('normal_r_source_cas_active_transport_term_kill_preserve_unknown_stage_and_
     const argsBefore=fixture.snapshot(root), lockBefore=fixture.pin(path.join(context,'renv.lock'));
     const inFlight=fixture.run('native',args(['--action=acquire','--root',root]),{PATH:`${control.tools}:/usr/bin:/bin`},fixture.binary,null,null,signal,signal==='SIGTERM');
     let observed,transportPin,parentPin,parentTermination,result,failure;
+    const lifecycleDeadline=Date.now()+15000;
     try {
-      observed=await pollNativeMarker(path.join(control.state,'transport-marker.json'),Date.now()+15000);
+      observed=await pollNativeMarker(path.join(control.state,'transport-marker.json'),lifecycleDeadline);
       transportPin=nativeProcessPin(observed.pid);parentPin=nativeProcessPin(observed.parent);
       assert.ok(transportPin&&parentPin);assert.equal(transportPin.uid,process.getuid());assert.equal(transportPin.parent,parentPin.pid);
       assert.equal(parentPin.group,parentPin.pid);assert.equal(parentPin.session,parentPin.pid);assert.equal(fs.readlinkSync(`/proc/${parentPin.pid}/exe`),fixture.binary);
       const requested=signalCurrentNativePin(parentPin,signal);assert.equal(requested,true);
       parentTermination=recordRequestedParentTermination(parentPin,signal,requested);
-      if(signal==='SIGKILL')signalCurrentNativePin(transportPin,'SIGKILL',parentTermination);
+      if(signal==='SIGKILL')await signalAfterRequestedParentTermination(transportPin,'SIGKILL',parentTermination,lifecycleDeadline);
       result=await inFlight;
       const live=nativeProcessPin(transportPin.pid);assert.ok(!live||['Z','X'].includes(live.state),'actual existing cancellation owner stops transport');
     }catch(error){failure=error;}finally{
-      if(transportPin)signalCurrentNativePin(transportPin,'SIGKILL',parentTermination);if(parentPin)signalCurrentNativePin(parentPin,'SIGKILL');
-      try {result=await inFlight;}catch(error){failure??=error;}
+      try {if(transportPin)await signalAfterRequestedParentTermination(transportPin,'SIGKILL',parentTermination,lifecycleDeadline);}
+      catch(error){failure=failure?new AggregateError([failure,error],'native transport cleanup refused'):error;}
+      try {if(parentPin)signalCurrentNativePin(parentPin,'SIGKILL');}
+      catch(error){failure=failure?new AggregateError([failure,error],'native parent cleanup refused'):error;}
+      try {result=await inFlight;}catch(error){failure=failure?new AggregateError([failure,error],'native completion refused'):error;}
     }
     if(failure)throw failure;
     assert.equal(result.status,null);assert.equal(result.signal,signal);

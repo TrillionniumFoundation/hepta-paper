@@ -176,9 +176,10 @@ class ServiceIntegrationShards(unittest.TestCase):
             commands = [line for line in job.splitlines()
                         if "node paper-core/bin/with-locked-parent-node-oracle.mjs " in line]
             self.assertEqual(len(commands), 1)
-            self.assertIn(" --job-timeout-minutes 90 -- /bin/bash -euc '", commands[0])
+            self.assertIn(" --budget-profile functional-ci -- /bin/bash -euc '", commands[0])
         repository = (ROOT / ".github/workflows/repository-source-evidence.yml").read_text()
-        self.assertNotIn("--job-timeout-minutes", repository)
+        self.assertNotIn("--budget-profile", repository)
+        self.assertNotIn("--job-timeout-minutes", source + repository)
         self.assertEqual(re.findall(r"(?m)^    timeout-minutes: (\d+)$", repository), ["30", "30"])
 
     def test_observation_windows_outlive_producers_without_relaxing_acceptance(self):

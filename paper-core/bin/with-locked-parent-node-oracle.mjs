@@ -74,22 +74,17 @@ export function assertLockedParentOracleNodeCopy(system, installation) {
       || (BigInt(system.identity[2]) & 0o022n) !== 0n || system.sha256 !== installation.sha256) fail('system_node_copy_not_bound');
 }
 
-// This is shared by installation and verification. Only the two reviewed
-// source-qualification job budgets are admitted; child/test deadlines are
-// independent, and no ambient environment can extend this deadline.
-export function createLockedParentOracleJobBudget(jobTimeoutMinutes = 30) {
-  if (![30, 90].includes(jobTimeoutMinutes)) fail('job_timeout_minutes_invalid');
-  const deadline = performance.now() + jobTimeoutMinutes * 60 * 1000;
-  return () => {
+export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath = null, budgetProfile = 'default' }) {
+  if (process.version !== 'v22.23.1' || !Array.isArray(command) || !command.length) fail('runtime_or_command');
+  if (budgetProfile !== 'default' && budgetProfile !== 'functional-ci') fail('budget_profile');
+  // Preserve the 30-minute default; only functional CI opts into 85 minutes.
+  // Installation and verification share this requested subprocess deadline, not a provider/oracle timeout.
+  const deadline = performance.now() + (budgetProfile === 'functional-ci' ? 85 : 30) * 60 * 1000;
+  const remaining = () => {
     const timeout = Math.floor(deadline - performance.now());
     if (timeout <= 0) fail('job_timeout');
     return timeout;
   };
-}
-
-export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath = null, jobTimeoutMinutes = 30 }) {
-  if (process.version !== 'v22.23.1' || !Array.isArray(command) || !command.length) fail('runtime_or_command');
-  const remaining = createLockedParentOracleJobBudget(jobTimeoutMinutes);
   root = fs.realpathSync(root);
   const parent = path.dirname(root), dependencies = path.join(parent, 'node_modules');
   if (fs.realpathSync(parent) !== parent || fs.lstatSync(parent).uid !== process.getuid()
@@ -153,18 +148,12 @@ export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath
   return result.status;
 }
 
-export function parseLockedParentNodeOracleArguments(args) {
-  if (!Array.isArray(args) || args[0] !== '--receipt' || !args[1]) fail('arguments');
-  let separator = 2, jobTimeoutMinutes = 30;
-  if (args[separator] === '--job-timeout-minutes') {
-    if (!['30', '90'].includes(args[separator + 1])) fail('job_timeout_minutes_invalid');
-    jobTimeoutMinutes = Number(args[separator + 1]); separator += 2;
-  }
-  if (args[separator] !== '--' || args.length <= separator + 1) fail('arguments');
-  return { receipt: args[1], command: args.slice(separator + 1), jobTimeoutMinutes };
-}
-
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.exitCode = withLockedParentNodeOracle({ root: process.cwd(),
-    ...parseLockedParentNodeOracleArguments(process.argv.slice(2)) });
+  const args = process.argv.slice(2);
+  const selectedProfile = args[2] === '--budget-profile';
+  const commandOffset = selectedProfile ? 5 : 3;
+  if (args[0] !== '--receipt' || !args[1] || args[commandOffset - 1] !== '--' || args.length <= commandOffset
+      || (selectedProfile && args[3] !== 'functional-ci')) fail('arguments');
+  process.exitCode = withLockedParentNodeOracle({ root: process.cwd(), receipt: args[1], command: args.slice(commandOffset),
+    budgetProfile: selectedProfile ? args[3] : 'default' });
 }

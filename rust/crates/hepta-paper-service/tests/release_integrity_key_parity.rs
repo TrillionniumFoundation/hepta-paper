@@ -18,10 +18,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 use zeroize::Zeroizing;
-
 #[path = "support/copied_fixture.rs"]
 mod copied_fixture;
-use copied_fixture::copied_fixture_output;
+use copied_fixture::{copied_fixture_output, copy_executable, output_default_stdio, spawn};
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const PRIVATE: &str = "release-integrity-ed25519-private.pem";
 const PUBLIC: &str = "release-integrity-ed25519-public.pem";
@@ -61,14 +61,15 @@ impl Drop for Fixture {
 }
 fn oracle(requests: &[Value]) -> Vec<Value> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let mut child = Command::new("node")
-        .arg(root.join("rust/oracle/release-integrity-key-v1.mjs"))
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = spawn(
+        Command::new("node")
+            .arg(root.join("rust/oracle/release-integrity-key-v1.mjs"))
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     child
         .stdin
         .take()
@@ -520,15 +521,16 @@ fn crash_worker() {
 fn abrupt_crash_leaves_partial_or_multilink_pair_blocked_and_lock_intact() {
     for event in ["public", "private"] {
         let fixture = Fixture::new();
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "crash_worker"])
-            .env(
-                "HEPTA_RELEASE_KEY_TEST_CRASH_ROOT",
-                &fixture.context.runtime_root,
-            )
-            .env("HEPTA_RELEASE_KEY_TEST_CRASH_EVENT", event)
-            .output()
-            .unwrap();
+        let output = output_default_stdio(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "crash_worker"])
+                .env(
+                    "HEPTA_RELEASE_KEY_TEST_CRASH_ROOT",
+                    &fixture.context.runtime_root,
+                )
+                .env("HEPTA_RELEASE_KEY_TEST_CRASH_EVENT", event),
+        )
+        .unwrap();
         assert_eq!(output.status.code(), Some(73));
         assert_eq!(
             inspect_local_release_integrity_key_v1(&fixture.context).unwrap()["ready"],
@@ -714,15 +716,16 @@ fn shipped_binary_matches_readonly_cli_and_provisions_without_node_runtime() {
         vec!["--action=rotate"],
         vec!["--execute=true"],
     ] {
-        let output = Command::new(binary)
-            .args(&argv)
-            .env("PATH", "/nonexistent")
-            .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
-            .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
-            .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
-            .env_remove("HEPTA_PAPER_RUNTIME_ISOLATED")
-            .output()
-            .unwrap();
+        let output = output_default_stdio(
+            Command::new(binary)
+                .args(&argv)
+                .env("PATH", "/nonexistent")
+                .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
+                .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
+                .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
+                .env_remove("HEPTA_PAPER_RUNTIME_ISOLATED"),
+        )
+        .unwrap();
         let mut request = fixture.request("cli");
         request["argv"] = json!(argv);
         let expected = oracle(&[request]);
@@ -752,15 +755,16 @@ fn shipped_binary_matches_readonly_cli_and_provisions_without_node_runtime() {
             );
         }
     }
-    let output = Command::new(binary)
-        .args(["--action=provision", "--execute"])
-        .env("PATH", "/nonexistent")
-        .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
-        .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
-        .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
-        .env_remove("HEPTA_PAPER_RUNTIME_ISOLATED")
-        .output()
-        .unwrap();
+    let output = output_default_stdio(
+        Command::new(binary)
+            .args(["--action=provision", "--execute"])
+            .env("PATH", "/nonexistent")
+            .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
+            .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
+            .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
+            .env_remove("HEPTA_PAPER_RUNTIME_ISOLATED"),
+    )
+    .unwrap();
     assert!(
         output.status.success(),
         "native provisioning CLI failed without printing private material"
@@ -776,18 +780,19 @@ fn shipped_binary_matches_readonly_cli_and_provisions_without_node_runtime() {
 fn concurrent_processes_respect_the_same_lock_without_blocking_other_roots() {
     let fixture = Fixture::new();
     let other = Fixture::new();
-    let mut worker = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash_worker", "--nocapture"])
-        .env(
-            "HEPTA_RELEASE_KEY_TEST_CRASH_ROOT",
-            &fixture.context.runtime_root,
-        )
-        .env("HEPTA_RELEASE_KEY_TEST_CRASH_EVENT", "hold")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut worker = spawn(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "crash_worker", "--nocapture"])
+            .env(
+                "HEPTA_RELEASE_KEY_TEST_CRASH_ROOT",
+                &fixture.context.runtime_root,
+            )
+            .env("HEPTA_RELEASE_KEY_TEST_CRASH_EVENT", "hold")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     let stdout = worker.stdout.take().unwrap();
     let (sender, receiver) = std::sync::mpsc::channel();
     let reading = std::thread::spawn(move || {
@@ -805,15 +810,16 @@ fn concurrent_processes_respect_the_same_lock_without_blocking_other_roots() {
         panic!("provision worker did not acquire its lock");
     }
     let command = |fixture: &Fixture| {
-        Command::new(env!("CARGO_BIN_EXE_hepta-release-integrity-key"))
-            .args(["--action=provision", "--execute"])
-            .env("PATH", "/nonexistent")
-            .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
-            .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
-            .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
-            .env_remove("HEPTA_PAPER_RUNTIME_ISOLATED")
-            .output()
-            .unwrap()
+        output_default_stdio(
+            Command::new(env!("CARGO_BIN_EXE_hepta-release-integrity-key"))
+                .args(["--action=provision", "--execute"])
+                .env("PATH", "/nonexistent")
+                .env("HEPTA_PAPER_RUNTIME_ROOT", &fixture.context.runtime_root)
+                .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
+                .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
+                .env_remove("HEPTA_PAPER_RUNTIME_ISOLATED"),
+        )
+        .unwrap()
     };
     let blocked = command(&fixture);
     assert_eq!(blocked.status.code(), Some(1));
@@ -1022,7 +1028,11 @@ fn copied_key_cli_defaults_require_explicit_real_deployment_workspace() {
     let copied_root = fixture.root.join("unknown-copy");
     fs::create_dir(&copied_root).unwrap();
     let copied = copied_root.join("hepta-release-integrity-key");
-    fs::copy(env!("CARGO_BIN_EXE_hepta-release-integrity-key"), &copied).unwrap();
+    copy_executable(
+        Path::new(env!("CARGO_BIN_EXE_hepta-release-integrity-key")),
+        &copied,
+    )
+    .unwrap();
     let workspace = fixture.root.join("workspace");
     fs::create_dir(&workspace).unwrap();
     let invoke = |explicit: bool| {
@@ -1073,7 +1083,7 @@ fn standalone_key_refuses_nonunicode_selected_configuration_without_panicking() 
         .env("HEPTA_PAPER_ASSET_ROOT", &fixture.context.asset_root)
         .env("PAPER_FACTORY_LEGACY_ROOT", &fixture.context.legacy_root)
         .env("HEPTA_PAPER_WORKSPACE_ROOT", OsString::from_vec(vec![0xff]));
-    let output = command.output().unwrap();
+    let output = output_default_stdio(&mut command).unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert_eq!(
@@ -1097,7 +1107,11 @@ fn copied_deployed_key_frontend_uses_exact_root_bin_marker_without_cwd_or_source
     )
     .unwrap();
     let frontend = bin.join("hepta-release-integrity-key");
-    fs::copy(env!("CARGO_BIN_EXE_hepta-release-integrity-key"), &frontend).unwrap();
+    copy_executable(
+        Path::new(env!("CARGO_BIN_EXE_hepta-release-integrity-key")),
+        &frontend,
+    )
+    .unwrap();
     let invoke = |selected: &Path| {
         let mut command = Command::new(selected);
         command
@@ -1121,7 +1135,7 @@ fn copied_deployed_key_frontend_uses_exact_root_bin_marker_without_cwd_or_source
     assert_eq!(value["privateKeyRead"], false);
     assert!(!fixture.key_root().exists());
     let renamed = bin.join("unknown-key-copy");
-    fs::copy(&frontend, &renamed).unwrap();
+    copy_executable(&frontend, &renamed).unwrap();
     let unknown = invoke(&renamed);
     assert_eq!(unknown.status.code(), Some(1));
     assert!(unknown.stdout.is_empty());

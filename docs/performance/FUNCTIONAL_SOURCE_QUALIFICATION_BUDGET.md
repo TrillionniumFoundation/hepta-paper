@@ -1,11 +1,21 @@
 # Functional source qualification job budget
 
 The exact-head and prospective-merge functional source jobs have a 90-minute
-outer budget and explicitly pass the same budget to the locked parent Node
-oracle wrapper. The wrapper uses one monotonic deadline across npm qualification,
-installation and the verifier child; it does not renew time between stages.
-Other wrapper callers retain the 30-minute default. Only 30 and 90 minutes are
-accepted, and ambient environment variables cannot expand this budget.
+Actions job limit and explicitly select `--budget-profile functional-ci` for the
+locked parent Node oracle wrapper. That named profile requests an 85-minute
+shared subprocess deadline across npm qualification, installation and the
+verifier child. One monotonic deadline supplies each subprocess's remaining
+timeout; it does not renew time between stages. Other wrapper callers retain
+the 30-minute default. Only the `default` and `functional-ci` library profiles
+are accepted; the CLI accepts the explicit `functional-ci` profile or omission
+for the default. Numeric timeout overrides and ambient environment variables
+cannot expand this budget.
+
+The 85-minute wrapper deadline starts after earlier Actions setup steps, not
+at job start. It is a shared requested subprocess deadline, not a hard bound
+on every wrapper operation: the existing final closure and receipt checks do
+not independently check expiry. The difference between 90 and 85 minutes does
+not guarantee five minutes reserved for cleanup, revalidation or upload.
 
 This is bounded qualification headroom. It is not a measured full-run duration,
 a completed qualification receipt, an optimization of behavior tests, or Rust
@@ -43,8 +53,10 @@ unchanged. No local profiling result is represented as a hosted speedup.
 
 ## Scope and dependent budgets
 
-- All 708 baseline verification commands, their expected outcomes, source pins,
-  exact test inventory, and individual monotonic deadlines are unchanged.
+- The budget adjustment preserves all 708 baseline verification command
+  definitions, expected outcomes, exact test selections and individual monotonic
+  deadlines. Separate fixture synchronization refreshes only the selected
+  fixture/support source bindings; it does not change command definitions.
 - The verifier still charges runtime qualification, Cargo discovery, inventory,
   execution and postchecks to each command. Final artifact/source revalidation
   remains charged to the last command.
@@ -58,11 +70,13 @@ unchanged. No local profiling result is represented as a hosted speedup.
 - Current workflow bindings are refreshed for the two functional contexts.
   Historical evidence and receipts are unchanged.
 
-The wrapper previously had a separate hardcoded 30-minute cutoff. Explicitly
-aligning that aggregate installation/verifier budget is necessary; changing only
-the Actions job limit would still interrupt qualification. Other bounded host,
-network, Git and per-command operations are not aggregate job cutoffs and have
-not been extended.
+The wrapper previously had a separate hardcoded 30-minute deadline. Explicitly
+selecting the functional profile for the shared installation/verifier deadline
+is necessary; changing only the Actions job limit would still interrupt
+qualification. Other bounded host, network, Git and per-command operations are
+not aggregate job cutoffs and have not been extended.
 
-A complete source-bound hosted run must still establish all 708 commands and
-final revalidation before qualification can be claimed.
+A complete source-bound hosted run must still establish every registered command
+at its exact selected source head and final revalidation before qualification
+can be claimed. Successors that add owner commands have a larger inventory;
+historical results for the 708-command baseline do not qualify that inventory.

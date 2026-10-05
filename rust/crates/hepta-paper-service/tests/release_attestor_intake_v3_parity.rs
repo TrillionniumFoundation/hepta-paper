@@ -14,7 +14,7 @@ use std::{
 };
 #[path = "support/copied_fixture.rs"]
 mod copied_fixture;
-use copied_fixture::copied_fixture_output;
+use copied_fixture::{copied_fixture_output, copy_executable, spawn};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
@@ -46,7 +46,7 @@ impl Fixture {
         )
         .unwrap();
         let frontend = workspace.join("bin/hepta-paper-rust");
-        fs::copy(env!("CARGO_BIN_EXE_hepta-paper-rust"), &frontend).unwrap();
+        copy_executable(Path::new(env!("CARGO_BIN_EXE_hepta-paper-rust")), &frontend).unwrap();
         fs::set_permissions(&frontend, fs::Permissions::from_mode(0o555)).unwrap();
         Self {
             root,
@@ -72,14 +72,15 @@ impl Drop for Fixture {
 fn oracle(v: &Value) -> Value {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let node = std::env::var_os("HEPTA_TEST_NODE").unwrap_or_else(|| "node".into());
-    let mut p = Command::new(node)
-        .arg(root.join("rust/oracle/release-attestor-intake-v3.mjs"))
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut p = spawn(
+        Command::new(node)
+            .arg(root.join("rust/oracle/release-attestor-intake-v3.mjs"))
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     p.stdin
         .take()
         .unwrap()

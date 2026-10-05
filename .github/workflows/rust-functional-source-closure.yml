@@ -75,6 +75,7 @@ jobs:
               --expected-head "$HEPTA_EVIDENCE_HEAD" \
               --expected-tree "$HEPTA_EVIDENCE_TREE" \
               --execute \
+              --progress \
               --receipt /tmp/rust-functional-source-head.json
           '
           test -s /tmp/rust-functional-source-head.json
@@ -152,6 +153,7 @@ jobs:
               --expected-head "$HEPTA_EVIDENCE_HEAD" \
               --expected-tree "$HEPTA_EVIDENCE_TREE" \
               --execute \
+              --progress \
               --receipt /tmp/rust-functional-source-merge.json
           '
           test -s /tmp/rust-functional-source-merge.json

@@ -149,6 +149,44 @@ model-generated research, general theorem proving or live external submission.
 Database inspection remains read-only and does not itself translate all Node
 business tables into the new campaign schema.
 
+The service now stages CAS-independent business jobs through at most two native
+computation threads, capped by `available_parallelism` (one on detection failure).
+The closed allowlist is author drafting, structural review, formal certificates,
+empirical aggregation/inference, linear solving, build packaging, legacy
+submission manifest/intent preparation and prepared submission. Existing kernel
+bounds still apply (for example, 128 matrix dimensions and 16,384 proof steps),
+as does the 16 MiB verified CAS payload limit; no new queue lifts those limits.
+The coordinator captures each verified payload, checks the exact reservation ceiling,
+rechecks live admission both before and after fsyncing the dispatch intent, and
+launches that request immediately. Threads receive owned inputs and cancellation/
+deadline controls, never the object store, broker context or admission callback.
+There is no unbounded pending queue. Existing dependency-wave reservations stay
+held until every started computation has joined.
+
+CAS writes and prepared records remain coordinator-only and in request order.
+Live admission is checked before CAS publication and again after artifact/evidence
+I/O immediately before writing each prepared record.
+This also makes identical output objects safe without changing the store's
+exclusive-create/torn-object contract. CAS-consuming research/submission jobs,
+brokers, processes, database inspection, inventory, cached attempts and duplicate
+in-flight requests are serial barriers. A failed admission stops later launches and suppresses pending publication;
+started workers are joined even on error or panic, and unresolved intents remain
+recovery fences. Cancellation/deadline checks prevent kernel entry and successful
+publication; these bounded Rust kernels are not forcibly interrupted mid-compute.
+A partial failure can retain earlier prepared results, but the batch does not
+return success. The existing authoritative sequencer is unchanged.
+
+Run the focused owner regressions with `cargo test --locked -p hepta-paper-service
+--lib worker::bounded::tests::` from `rust/`. They cover genuine overlap, the
+concurrency ceiling, whole prepared-value and CAS-byte equality with the retained serial executor, ordering,
+identical-output reuse, cache replay, admission refusal, cancellation, expiry,
+panic joining and unresolved-intent recovery. This is a bounded native-compute
+slice, not full legacy parity, measured speedup, OS resource enforcement or
+production/Node-retirement acceptance. Registry/resource policy, external package
+contracts, principal permissions, authoritative-writer ownership and required
+check contexts have no delta. The changed implementation and owner tests require
+fresh exact-source evidence; previous source qualification does not carry over.
+
 For a process worker, the registry binds executable bytes, fixed argument vector,
 working directory, declared implementation language, timeout, network declaration
 and source-file hash closure. Interpreted workers require explicit code files;

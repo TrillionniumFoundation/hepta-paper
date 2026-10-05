@@ -34,6 +34,9 @@ use std::{
 #[path = "worker_recovery.rs"]
 mod recovery;
 
+#[path = "worker_bounded.rs"]
+mod bounded;
+
 /// Explicit backend: native Rust or a pinned process, never a silent fallback.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -373,7 +376,7 @@ impl ServiceExecutorV1 {
         if !readonly_query {
             record_started()?;
         }
-        let (mut artifacts, evidence, actual_cost_microusd, broker_commit) = match (binding, job) {
+        let (artifacts, evidence, actual_cost_microusd, broker_commit) = match (binding, job) {
             (WorkerBindingV1::BrokerPrepared { source }, NativeJobV1::BrokerPrepared { input })
             | (WorkerBindingV1::BrokerExecute { source }, NativeJobV1::BrokerExecute { input }) => {
                 let mode = match binding {
@@ -464,23 +467,8 @@ impl ServiceExecutorV1 {
                     self.inherited_native_deadline,
                 )
                 .map_err(|_| ServiceError::Execution)?;
-                let mut hashes = Vec::with_capacity(output.artifacts.len());
-                for bytes in output.artifacts {
-                    hashes.push(self.objects.put(&bytes)?);
-                }
-                (
-                    hashes,
-                    json!({
-                        "version": 1,
-                        "requestHash": identity,
-                        "verifier": "native_business_kernel",
-                        "nativeBusinessImplementationHash": native_business_implementation_hash_v1(),
-                        "workerEvidence": output.evidence,
-                        "scope": "prepared_result_only_no_external_authority"
-                    }),
-                    request.candidate.cost_microusd,
-                    None,
-                )
+                let (hashes, evidence) = self.store_native_output(&identity, output)?;
+                (hashes, evidence, request.candidate.cost_microusd, None)
             }
             (WorkerBindingV1::Process { .. }, NativeJobV1::Process { input }) => {
                 let response = run_process(binding, request, input, &self.cancelled)?;
@@ -506,6 +494,51 @@ impl ServiceExecutorV1 {
             }
             _ => return Err(ServiceError::Configuration),
         };
+        self.publish_result(
+            request,
+            &identity,
+            (artifacts, evidence),
+            actual_cost_microusd,
+            broker_commit,
+            &mut || Ok(()),
+        )
+    }
+
+    fn store_native_output(
+        &self,
+        identity: &Sha256Digest,
+        output: crate::native_business::NativeBusinessOutputV1,
+    ) -> Result<(Vec<Sha256Digest>, Value), ServiceError> {
+        let mut hashes = Vec::with_capacity(output.artifacts.len());
+        for bytes in output.artifacts {
+            hashes.push(self.objects.put(&bytes)?);
+        }
+        Ok((
+            hashes,
+            json!({
+                "version": 1,
+                "requestHash": identity,
+                "verifier": "native_business_kernel",
+                "nativeBusinessImplementationHash": native_business_implementation_hash_v1(),
+                "workerEvidence": output.evidence,
+                "scope": "prepared_result_only_no_external_authority"
+            }),
+        ))
+    }
+
+    fn publish_result(
+        &self,
+        request: &ExecutionRequestV1,
+        identity: &Sha256Digest,
+        output: (Vec<Sha256Digest>, Value),
+        actual_cost_microusd: u64,
+        broker_commit: Option<(
+            crate::broker_prepared::BrokerPreparedSourceV1,
+            hepta_codex_broker::PreparedResultAcknowledgementSubjectV2,
+        )>,
+        revalidate_publication: &mut dyn FnMut() -> Result<(), ServiceError>,
+    ) -> Result<PreparedResultV1, ServiceError> {
+        let (mut artifacts, evidence) = output;
         // PreparedResultV1 is a set of content addresses; worker output order
         // and repeated identical bytes do not change the integrated artifact set.
         artifacts.sort();
@@ -540,8 +573,12 @@ impl ServiceExecutorV1 {
                 result: result.clone(),
             })?;
         }
+        // Pure parallel work rechecks coordinator-owned live admission after
+        // all artifact/evidence I/O, immediately before its durable publication.
+        // Serial backends retain their original transport/recovery contract.
+        revalidate_publication()?;
         self.objects.record(
-            &prepared,
+            &self.objects.attempt_path(identity, "prepared"),
             &serde_json::to_vec(&result).map_err(|_| ServiceError::Artifact)?,
         )?;
         Ok(result)
@@ -563,8 +600,8 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
         requests: &[ExecutionRequestV1],
         revalidate_admission: &mut dyn FnMut() -> Result<(), ControlPlaneError>,
     ) -> Result<Vec<PreparedResultV1>, ControlPlaneError> {
-        // Exact reservations remain held for the whole dependency wave. Bounded
-        // sequential dispatch is conservative; parallel workers require host admission.
+        // Exact reservations remain held for the whole dependency wave. Only
+        // bounded pure computation can leave this coordinator; writes never do.
         // Only the exact incoming read-only query can revisit its start record.
         // An unresolved provider/process attempt still fences the entire owner.
         let active_plan = requests.first().map(|request| &request.plan_hash);
@@ -602,27 +639,16 @@ impl ModuleExecutorV1 for ServiceExecutorV1 {
                 .map(|context| &context.committed_results),
         )
         .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
-        requests
-            .iter()
-            .map(|request| {
-                guard
-                    .validate()
-                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
-                // This is after recovery validation and before handing this
-                // particular request to the worker. The preceding worker can
-                // advance time, so a wave-wide check cannot replace this one.
-                revalidate_admission()?;
-                let mut refresh_current_time =
-                    || revalidate_admission().map_err(|_| ServiceError::Execution);
-                let result = self
-                    .execute_one(request, &mut refresh_current_time)
-                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
-                guard
-                    .validate()
-                    .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
-                Ok(result)
-            })
-            .collect()
+        let limit = std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(2);
+        self.execute_bounded_batch(
+            requests,
+            revalidate_admission,
+            &guard,
+            limit,
+            &bounded::compute,
+        )
     }
 }
 

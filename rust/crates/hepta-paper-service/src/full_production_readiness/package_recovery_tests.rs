@@ -6,6 +6,262 @@ use std::{
 };
 
 const OBSERVED_AT: &str = "2026-09-20T00:00:00.000Z";
+
+enum PipeRead {
+    StopThenWouldBlock,
+    Error(ErrorKind),
+    Data(usize),
+    Eof,
+}
+
+struct SequencedPipe<'a> {
+    stopped: &'a AtomicBool,
+    steps: std::collections::VecDeque<PipeRead>,
+    reads: usize,
+}
+
+impl Read for SequencedPipe<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.reads += 1;
+        match self.steps.pop_front().expect("unexpected additional read") {
+            // Models the coordinator stopping between the actual read's
+            // WouldBlock observation and the reader examining stop state.
+            PipeRead::StopThenWouldBlock => {
+                self.stopped.store(true, Ordering::Release);
+                Err(std::io::Error::from(ErrorKind::WouldBlock))
+            }
+            PipeRead::Error(kind) => Err(std::io::Error::from(kind)),
+            PipeRead::Data(count) => {
+                assert!(count <= buffer.len());
+                buffer[..count].fill(b'x');
+                Ok(count)
+            }
+            PipeRead::Eof => Ok(0),
+        }
+    }
+}
+
+fn capture_test_pipe(
+    pipe: impl Read,
+    stopped: &AtomicBool,
+    overflow: &AtomicBool,
+) -> (Vec<u8>, bool) {
+    bounded_output(
+        pipe,
+        stopped,
+        overflow,
+        Instant::now(),
+        Duration::from_secs(1),
+    )
+}
+
+#[test]
+fn bounded_capture_deadline_is_checked_after_interrupted_and_data_reads() {
+    struct SlowReadyPipe {
+        interrupted: bool,
+        reads: usize,
+    }
+    impl Read for SlowReadyPipe {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.reads += 1;
+            // The finite fourth-read error makes a missing deadline assertion
+            // fail rather than allowing this negative control to hang forever.
+            if self.reads == 4 {
+                return Err(std::io::Error::from(ErrorKind::BrokenPipe));
+            }
+            thread::sleep(Duration::from_millis(2));
+            if self.interrupted {
+                Err(std::io::Error::from(ErrorKind::Interrupted))
+            } else {
+                buffer[0] = b'x';
+                Ok(1)
+            }
+        }
+    }
+    for interrupted in [true, false] {
+        let cancelled = AtomicBool::new(false);
+        let overflow = AtomicBool::new(false);
+        let mut pipe = SlowReadyPipe {
+            interrupted,
+            reads: 0,
+        };
+        let started = Instant::now();
+        let (bytes, complete) = bounded_output(
+            &mut pipe,
+            &cancelled,
+            &overflow,
+            started,
+            Duration::from_millis(5),
+        );
+        assert!(!complete);
+        assert!(
+            pipe.reads <= 3,
+            "capture must stop at the original deadline"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(5));
+        assert!(bytes.len() <= 3);
+        assert!(!overflow.load(Ordering::Acquire));
+    }
+}
+
+#[test]
+fn bounded_capture_rejects_inherited_pipe_at_original_deadline_without_cancellation() {
+    let stopped = AtomicBool::new(false);
+    let overflow = AtomicBool::new(false);
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: [PipeRead::Data(6), PipeRead::Error(ErrorKind::WouldBlock)].into(),
+        reads: 0,
+    };
+    let started = Instant::now() - Duration::from_secs(1);
+    let (bytes, complete) = bounded_output(
+        &mut pipe,
+        &stopped,
+        &overflow,
+        started,
+        Duration::from_secs(1),
+    );
+    assert!(!complete);
+    assert!(bytes.is_empty());
+    assert_eq!(pipe.reads, 0);
+    assert!(!stopped.load(Ordering::Acquire));
+    assert!(!overflow.load(Ordering::Acquire));
+}
+
+#[test]
+fn bounded_capture_waits_for_late_data_and_eof_inside_original_window() {
+    let stopped = AtomicBool::new(false);
+    let overflow = AtomicBool::new(false);
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: [
+            PipeRead::Error(ErrorKind::WouldBlock),
+            PipeRead::Data(6),
+            PipeRead::Error(ErrorKind::WouldBlock),
+            PipeRead::Eof,
+        ]
+        .into(),
+        reads: 0,
+    };
+    let (bytes, complete) = capture_test_pipe(&mut pipe, &stopped, &overflow);
+    assert!(complete);
+    assert_eq!(bytes, b"xxxxxx");
+    assert_eq!(pipe.reads, 4);
+    assert!(!stopped.load(Ordering::Acquire));
+    assert!(!overflow.load(Ordering::Acquire));
+}
+
+#[test]
+fn bounded_capture_observes_late_eof_after_pre_stop_would_block() {
+    let stopped = AtomicBool::new(false);
+    let overflow = AtomicBool::new(false);
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: [PipeRead::StopThenWouldBlock, PipeRead::Eof].into(),
+        reads: 0,
+    };
+    let (bytes, complete) = capture_test_pipe(&mut pipe, &stopped, &overflow);
+    assert!(complete);
+    assert!(bytes.is_empty());
+    assert_eq!(pipe.reads, 2);
+    assert!(!overflow.load(Ordering::Acquire));
+}
+
+#[test]
+fn bounded_capture_drains_late_data_before_observing_eof() {
+    let stopped = AtomicBool::new(false);
+    let overflow = AtomicBool::new(false);
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: [
+            PipeRead::StopThenWouldBlock,
+            PipeRead::Data(6),
+            PipeRead::Eof,
+        ]
+        .into(),
+        reads: 0,
+    };
+    let (bytes, complete) = capture_test_pipe(&mut pipe, &stopped, &overflow);
+    assert!(complete);
+    assert_eq!(bytes, b"xxxxxx");
+    assert_eq!(pipe.reads, 3);
+    assert!(!overflow.load(Ordering::Acquire));
+}
+
+#[test]
+fn bounded_capture_rejects_descendant_pipe_still_open_after_stop() {
+    let stopped = AtomicBool::new(true);
+    let overflow = AtomicBool::new(false);
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: [PipeRead::Data(6), PipeRead::Error(ErrorKind::WouldBlock)].into(),
+        reads: 0,
+    };
+    let (bytes, complete) = capture_test_pipe(&mut pipe, &stopped, &overflow);
+    assert!(!complete);
+    assert_eq!(bytes, b"xxxxxx");
+    assert_eq!(pipe.reads, 2);
+    assert!(!overflow.load(Ordering::Acquire));
+}
+
+#[test]
+fn bounded_capture_cancellation_has_one_final_nonblocking_observation() {
+    let stopped = AtomicBool::new(false);
+    let overflow = AtomicBool::new(false);
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: [
+            PipeRead::StopThenWouldBlock,
+            PipeRead::Error(ErrorKind::WouldBlock),
+        ]
+        .into(),
+        reads: 0,
+    };
+    let (bytes, complete) = capture_test_pipe(&mut pipe, &stopped, &overflow);
+    assert!(!complete);
+    assert!(bytes.is_empty());
+    assert_eq!(pipe.reads, 2);
+    assert!(!overflow.load(Ordering::Acquire));
+}
+
+#[test]
+fn bounded_capture_final_drain_preserves_output_cap() {
+    let stopped = AtomicBool::new(true);
+    let overflow = AtomicBool::new(false);
+    let maximum_reads = MAXIMUM_PACKAGE_READINESS_OUTPUT_BYTES / 8192 + 1;
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: (0..maximum_reads).map(|_| PipeRead::Data(8192)).collect(),
+        reads: 0,
+    };
+    let (bytes, complete) = capture_test_pipe(&mut pipe, &stopped, &overflow);
+    assert!(!complete);
+    assert_eq!(bytes.len(), MAXIMUM_PACKAGE_READINESS_OUTPUT_BYTES);
+    assert_eq!(pipe.reads, maximum_reads);
+    assert!(overflow.load(Ordering::Acquire));
+}
+
+#[test]
+fn bounded_capture_interruption_and_read_error_remain_distinct() {
+    let stopped = AtomicBool::new(true);
+    let overflow = AtomicBool::new(false);
+    let mut pipe = SequencedPipe {
+        stopped: &stopped,
+        steps: [PipeRead::Error(ErrorKind::Interrupted), PipeRead::Eof].into(),
+        reads: 0,
+    };
+    assert!(capture_test_pipe(&mut pipe, &stopped, &overflow).1);
+    assert_eq!(pipe.reads, 2);
+    let mut failed = SequencedPipe {
+        stopped: &stopped,
+        steps: [PipeRead::Error(ErrorKind::BrokenPipe)].into(),
+        reads: 0,
+    };
+    assert!(!capture_test_pipe(&mut failed, &stopped, &overflow).1);
+    assert_eq!(failed.reads, 1);
+    assert!(!overflow.load(Ordering::Acquire));
+}
+
 struct Fixture {
     root: PathBuf,
     path: PathBuf,

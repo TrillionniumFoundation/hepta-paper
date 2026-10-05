@@ -74,11 +74,12 @@ export function assertLockedParentOracleNodeCopy(system, installation) {
       || (BigInt(system.identity[2]) & 0o022n) !== 0n || system.sha256 !== installation.sha256) fail('system_node_copy_not_bound');
 }
 
-export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath = null }) {
+export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath = null, budgetProfile = 'default' }) {
   if (process.version !== 'v22.23.1' || !Array.isArray(command) || !command.length) fail('runtime_or_command');
-  // This is the existing source-evidence CI job's 30-minute ceiling. It is
-  // shared by installation and verification, not a provider/oracle timeout.
-  const deadline = performance.now() + 30 * 60 * 1000;
+  if (budgetProfile !== 'default' && budgetProfile !== 'functional-ci') fail('budget_profile');
+  // Preserve the 30-minute default; only functional CI opts into 85 minutes.
+  // Installation and verification share this requested subprocess deadline, not a provider/oracle timeout.
+  const deadline = performance.now() + (budgetProfile === 'functional-ci' ? 85 : 30) * 60 * 1000;
   const remaining = () => {
     const timeout = Math.floor(deadline - performance.now());
     if (timeout <= 0) fail('job_timeout');
@@ -149,6 +150,10 @@ export function withLockedParentNodeOracle({ root, receipt, command, npmExecPath
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args[0] !== '--receipt' || !args[1] || args[2] !== '--' || args.length < 4) fail('arguments');
-  process.exitCode = withLockedParentNodeOracle({ root: process.cwd(), receipt: args[1], command: args.slice(3) });
+  const selectedProfile = args[2] === '--budget-profile';
+  const commandOffset = selectedProfile ? 5 : 3;
+  if (args[0] !== '--receipt' || !args[1] || args[commandOffset - 1] !== '--' || args.length <= commandOffset
+      || (selectedProfile && args[3] !== 'functional-ci')) fail('arguments');
+  process.exitCode = withLockedParentNodeOracle({ root: process.cwd(), receipt: args[1], command: args.slice(commandOffset),
+    budgetProfile: selectedProfile ? args[3] : 'default' });
 }

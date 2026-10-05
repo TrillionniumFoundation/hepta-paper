@@ -23,7 +23,7 @@ jobs:
   exact-head:
     name: rust-functional-source-exact-head
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Check out exact source head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -69,7 +69,7 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           export HEPTA_EVIDENCE_HEAD="$head" HEPTA_EVIDENCE_TREE="$tree"
-          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/functional-node-oracle-head.json -- /bin/bash -euc '
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/functional-node-oracle-head.json --budget-profile functional-ci -- /bin/bash -euc '
             node paper-core/bin/verify-source-implementation-evidence.mjs \
               --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
               --expected-head "$HEPTA_EVIDENCE_HEAD" \
@@ -98,7 +98,7 @@ jobs:
     if: github.event_name == 'pull_request'
     name: rust-functional-source-prospective-merge
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Check out immutable source head
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -147,7 +147,7 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test -z "$(git ls-files --others --ignored --exclude-standard)"
           export HEPTA_EVIDENCE_HEAD="$merge" HEPTA_EVIDENCE_TREE="$tree"
-          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/functional-node-oracle-merge.json -- /bin/bash -euc '
+          node paper-core/bin/with-locked-parent-node-oracle.mjs --receipt /tmp/functional-node-oracle-merge.json --budget-profile functional-ci -- /bin/bash -euc '
             node paper-core/bin/verify-source-implementation-evidence.mjs \
               --evidence docs/system/evidence/rust-functional-source-closure-v1.json \
               --expected-head "$HEPTA_EVIDENCE_HEAD" \

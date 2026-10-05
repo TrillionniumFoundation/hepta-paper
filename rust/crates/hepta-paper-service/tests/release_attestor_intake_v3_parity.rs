@@ -12,6 +12,10 @@ use std::{
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
+#[path = "support/copied_fixture.rs"]
+mod copied_fixture;
+use copied_fixture::{copied_fixture_output, copy_executable, spawn};
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,
@@ -42,7 +46,7 @@ impl Fixture {
         )
         .unwrap();
         let frontend = workspace.join("bin/hepta-paper-rust");
-        fs::copy(env!("CARGO_BIN_EXE_hepta-paper-rust"), &frontend).unwrap();
+        copy_executable(Path::new(env!("CARGO_BIN_EXE_hepta-paper-rust")), &frontend).unwrap();
         fs::set_permissions(&frontend, fs::Permissions::from_mode(0o555)).unwrap();
         Self {
             root,
@@ -68,14 +72,15 @@ impl Drop for Fixture {
 fn oracle(v: &Value) -> Value {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let node = std::env::var_os("HEPTA_TEST_NODE").unwrap_or_else(|| "node".into());
-    let mut p = Command::new(node)
-        .arg(root.join("rust/oracle/release-attestor-intake-v3.mjs"))
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut p = spawn(
+        Command::new(node)
+            .arg(root.join("rust/oracle/release-attestor-intake-v3.mjs"))
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     p.stdin
         .take()
         .unwrap()
@@ -231,28 +236,24 @@ fn passive_v3_configuration_signatures_windows_independence_and_namespace_match_
 #[test]
 fn ordinary_v3_joint_readiness_uses_deployment_paths_original_environment_and_no_process() {
     let f = Fixture::new();
-    let out = f.ordinary().output().unwrap();
+    let out = copied_fixture_output(&mut f.ordinary());
     assert!(out.status.success());
     let empty: Value = serde_json::from_slice(&out.stdout).unwrap();
     let prepared =
         oracle(&json!({"root":f.root,"modes":["joint-ready"],"now":empty["observedAt"]}));
     let case = &prepared["results"][0];
     let before = snapshot(&f.root);
-    let out = f
-        .ordinary()
-        .args([
-            "--require-ready",
-            "--author-config",
-            case["authorPath"].as_str().unwrap(),
-            "--author-config-hash",
-            case["authorHash"].as_str().unwrap(),
-            "--release-attestor-config",
-            case["releasePath"].as_str().unwrap(),
-            "--release-attestor-config-hash",
-            case["releaseHash"].as_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
+    let out = copied_fixture_output(f.ordinary().args([
+        "--require-ready",
+        "--author-config",
+        case["authorPath"].as_str().unwrap(),
+        "--author-config-hash",
+        case["authorHash"].as_str().unwrap(),
+        "--release-attestor-config",
+        case["releasePath"].as_str().unwrap(),
+        "--release-attestor-config-hash",
+        case["releaseHash"].as_str().unwrap(),
+    ]));
     assert!(
         out.status.success(),
         "{}",

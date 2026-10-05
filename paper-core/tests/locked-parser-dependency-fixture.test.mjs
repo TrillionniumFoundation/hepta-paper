@@ -68,3 +68,25 @@ test('incomplete setup retains its original error instead of reading an uncreate
   assert.throws(() => assertReadonlyFixtureSetupComplete(true, original), error => error === original);
   assert.doesNotThrow(() => assertReadonlyFixtureSetupComplete(true, null));
 });
+
+for (const layout of ['local', 'parent']) test(`shared qualification module resolves the exact ${layout} locked installation`, t => {
+  const f = fixture(t, layout), context = path.join(f.source, 'paper-core/tests/support/native-qualification-normal-fixture-v1.mjs');
+  fs.mkdirSync(path.dirname(context)); fs.writeFileSync(context, '// resolver context; no native fixture execution\n');
+  const found = resolveReadonlyParserDependencies({ source: f.source, pin, context });
+  assert.equal(found.installation, f.installation); assert.equal(Object.keys(found.roots).length, 7);
+  for (const [file, expected] of found.contextPins) assert.deepEqual(pin(file), expected);
+});
+test('a shared helper cannot use an outside or aliased module context', t => {
+  const f = fixture(t, 'parent'), outside = path.join(f.parent, 'outside.mjs'); fs.writeFileSync(outside, '// not source\n');
+  assert.throws(() => resolveReadonlyParserDependencies({ source: f.source, pin, context: outside }), /context must belong/);
+  const alias = path.join(f.source, 'paper-core/tests/context-alias.mjs'); fs.symlinkSync(outside, alias);
+  assert.throws(() => resolveReadonlyParserDependencies({ source: f.source, pin, context: alias }), /canonical module context/);
+});
+test('a closer package shadow at the actual shared context is refused', t => {
+  const f = fixture(t, 'parent'), context = path.join(f.source, 'paper-core/tests/support/native-qualification-normal-fixture-v1.mjs');
+  fs.mkdirSync(path.dirname(context)); fs.writeFileSync(context, '// resolver context\n');
+  const shadow = path.join(path.dirname(context), 'node_modules/espree'); fs.mkdirSync(shadow, { recursive: true });
+  fs.writeFileSync(path.join(shadow, 'package.json'), JSON.stringify({ name: 'espree', version: '1.0.0', main: 'index.js' }));
+  fs.writeFileSync(path.join(shadow, 'index.js'), "throw new Error('shadow must never execute');\n");
+  assert.throws(() => resolveReadonlyParserDependencies({ source: f.source, pin, context }), /outside locked/);
+});

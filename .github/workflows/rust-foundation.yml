@@ -36,6 +36,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Prepare isolated Cargo target directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(realpath "$RUNNER_TEMP")/hepta-rust-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          workspace="$(realpath "$GITHUB_WORKSPACE")"
+          case "$target/" in
+            "$workspace/"*)
+              echo 'Cargo build outputs must remain outside the source workspace.' >&2
+              exit 1
+              ;;
+          esac
+          # An exclusive mkdir rejects stale/shared directories and symlinks.
+          # Keep all Cargo steps on this one target; source snapshot rules stay unchanged.
+          mkdir -- "$target"
+          printf 'CARGO_TARGET_DIR=%s\n' "$target" >> "$GITHUB_ENV"
+
       - name: Verify scientific host source contracts
         shell: bash
         run: python3 -B .github/scripts/test_scientific_host_source.py
@@ -191,7 +208,7 @@ jobs:
           cargo build --manifest-path rust/Cargo.toml --locked --all-features \
             -p hepta-paper-service --example native-authority-fixture-client \
             2>&1 | tee "/tmp/hepta-rust-validation/native-authority-fixture-build.log"
-          test -x rust/target/debug/examples/native-authority-fixture-client
+          test -x "$CARGO_TARGET_DIR/debug/examples/native-authority-fixture-client"
 
       # Source-only feedback does not need a privileged scientific host. Keep
       # the complete workspace test command behind the unchanged host gate;

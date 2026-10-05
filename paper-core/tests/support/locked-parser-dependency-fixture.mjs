@@ -9,9 +9,10 @@ export const READONLY_PARSER_PACKAGES = Object.freeze([
 
 // Resolve actual package entries but accept only the two existing locked layouts.
 // No arbitrary ancestor, global package directory or PATH grants fixture trust.
-export function resolveReadonlyParserDependencies({ source, pin }) {
+export function resolveReadonlyParserDependencies({ source, pin, context = path.join(source, 'paper-core/tests/native-readonly-operator-normal.test.mjs') }) {
   assert.equal(fs.realpathSync(source), source, 'canonical source required');
-  const context = path.join(source, 'paper-core/tests/native-readonly-operator-normal.test.mjs');
+  const relativeContext = path.relative(source, context);
+  assert.ok(relativeContext && relativeContext !== '..' && !relativeContext.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeContext), 'module context must belong to the source');
   assert.equal(fs.realpathSync(context), context, 'canonical module context required');
   const resolve = createRequire(context).resolve;
   const installations = [path.join(source, 'node_modules'), path.join(path.dirname(source), 'node_modules')];

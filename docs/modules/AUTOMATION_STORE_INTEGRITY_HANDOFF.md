@@ -10,8 +10,9 @@ not accept SQL, callbacks, provider configuration, or mutation capabilities.
 
 `AutomationIntegrityTimeV1::new(unix_ms)` uses the incumbent thirty-minute
 no-progress window. `with_no_progress_window(unix_ms, window_ms)` accepts a
-nonnegative integral millisecond window. Both times must fit the ECMAScript
-Date domain. This bounded native input profile does not emulate arbitrary
+nonnegative integral millisecond window no greater than JavaScript’s maximum
+safe integer, 9,007,199,254,740,991. Larger values are rejected rather than
+rounded differently from Node. Both times must fit the ECMAScript Date domain. This bounded native input profile does not emulate arbitrary
 JavaScript Date coercion or negative/fractional windows.
 
 The typed report serializes the incumbent's complete operational-integrity
@@ -95,3 +96,12 @@ have no promotion delta. This is an additive diagnostic library API; the
 ordinary command, recovery/writer ownership, installation and operator
 permissions are unchanged. New source requires the existing exact-head
 validation; local fixtures are not production or installed-host evidence.
+
+The functional source inventory selects this implementation and its exact test
+owners as additional source-only evidence. Existing verification commands and
+all promotion/authority records are retained. The native-business worker's
+manual implementation-identity closure is not expanded: this observer is not
+called by a Native worker or the ordinary dispatcher. Its existing selected
+`hepta-readonly-store/src/lib.rs` input still changes normally. Any later wiring
+of this API into a worker must review and extend that worker's source dependency
+identity before using the resulting deployment identity.

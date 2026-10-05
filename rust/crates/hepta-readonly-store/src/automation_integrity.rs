@@ -14,10 +14,13 @@ const MAX_COLUMN_BYTES: usize = 64 * 1024;
 const MAX_COLUMNS: usize = 4096;
 const MAX_SELECTED_BYTES: usize = 1024 * 1024;
 const DATE_LIMIT: i64 = 8_640_000_000_000_000;
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 /// Finite, integral millisecond profile of Node's Date/ISO observation clock.
 /// No clock here establishes lease authority. The default no-progress window is
-/// the incumbent's thirty minutes; callers can supply a nonnegative window.
+/// the incumbent's thirty minutes; callers can supply a nonnegative window
+/// within JavaScript's safe-integer range. Larger integers are rejected rather
+/// than silently using a different cutoff from Node's Number conversion.
 #[derive(Clone, Debug)]
 pub struct AutomationIntegrityTimeV1 {
     inspected_at: String,
@@ -33,6 +36,9 @@ impl AutomationIntegrityTimeV1 {
     ) -> Result<Self, Error> {
         let inspected_at =
             iso(inspected_at_unix_ms).ok_or(Error::AutomationInspectionTimeInvalid)?;
+        if window_ms > MAX_SAFE_INTEGER {
+            return Err(Error::AutomationNoProgressWindowInvalid);
+        }
         let cutoff = i64::try_from(window_ms)
             .ok()
             .and_then(|window| inspected_at_unix_ms.checked_sub(window))

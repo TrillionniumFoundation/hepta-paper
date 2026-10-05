@@ -514,3 +514,50 @@ fn cumulative_column_text_bound_is_an_infrastructure_refusal() {
         ))
     ));
 }
+
+#[test]
+fn no_progress_window_rejects_unsafe_integers_and_matches_node_at_safe_boundary() {
+    let fixture = Fixture::new();
+    fixture.initialize();
+    // These unsafe inputs round as JavaScript Numbers; accepting their exact
+    // Rust u64 values would produce a different (otherwise valid) Date cutoff.
+    for window in [MAX_SAFE_INTEGER + 1, MAX_SAFE_INTEGER + 2, u64::MAX] {
+        assert!(matches!(
+            AutomationIntegrityTimeV1::with_no_progress_window(DATE_LIMIT, window),
+            Err(Error::AutomationNoProgressWindowInvalid)
+        ));
+    }
+    let accepted =
+        AutomationIntegrityTimeV1::with_no_progress_window(DATE_LIMIT, MAX_SAFE_INTEGER).unwrap();
+    let connection = fixture.writer();
+    campaign(
+        &connection,
+        "at-cutoff",
+        "running",
+        &accepted.no_progress_cutoff,
+        "{}",
+    );
+    node_row(&connection, "queued", "at-cutoff", "queued", None);
+    drop(connection);
+    let report = fixture.report(DATE_LIMIT, MAX_SAFE_INTEGER);
+    assert_eq!(report["noProgressRunningCampaignCount"], 1);
+    // Changing the accepted window by one millisecond moves the SQL boundary.
+    let report = fixture.report(DATE_LIMIT, MAX_SAFE_INTEGER - 1);
+    assert_eq!(report["noProgressRunningCampaignCount"], 1);
+    let connection = fixture.writer();
+    connection
+        .execute(
+            "UPDATE paper_campaigns SET updated_at=?",
+            [iso(DATE_LIMIT - MAX_SAFE_INTEGER as i64 + 1).unwrap()],
+        )
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        fixture.report(DATE_LIMIT, MAX_SAFE_INTEGER)["noProgressRunningCampaignCount"],
+        0
+    );
+    assert_eq!(
+        fixture.report(DATE_LIMIT, MAX_SAFE_INTEGER - 1)["noProgressRunningCampaignCount"],
+        1
+    );
+}

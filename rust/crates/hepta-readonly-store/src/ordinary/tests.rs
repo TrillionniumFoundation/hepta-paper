@@ -1,32 +1,24 @@
 use super::*;
+#[cfg(target_os = "linux")]
+mod ancestry;
 use crate::{FixedInventoryBudgetV1, ReadOnlyStoreV1};
 use std::{
     process::Command,
-    sync::{
-        MutexGuard,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::atomic::{AtomicU64, Ordering},
 };
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
     root: PathBuf,
-    _lifecycle_guard: MutexGuard<'static, ()>,
 }
 impl Fixture {
     fn new() -> Self {
-        let lifecycle_guard = crate::READ_ONLY_FIXTURE_DIRECTORY_LIFECYCLE
-            .lock()
-            .expect("read-only test fixture lifecycle poisoned");
         let root = PathBuf::from("/dev/shm").join(format!(
             "hepta-ordinary-store-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
-        Self {
-            root,
-            _lifecycle_guard: lifecycle_guard,
-        }
+        Self { root }
     }
     fn database(&self) -> PathBuf {
         self.root.join("ordinary.sqlite")

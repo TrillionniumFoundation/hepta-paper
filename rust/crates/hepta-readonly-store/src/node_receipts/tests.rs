@@ -1,24 +1,17 @@
 use super::*;
 use rusqlite::Connection;
 use serde_json::Value;
-use std::{fs, path::PathBuf, process::Command, sync::MutexGuard};
+use std::{fs, path::PathBuf, process::Command};
 
 struct OwnedFixture {
     root: PathBuf,
-    _lifecycle_guard: MutexGuard<'static, ()>,
 }
 impl OwnedFixture {
     fn new() -> Self {
-        let lifecycle_guard = crate::READ_ONLY_FIXTURE_DIRECTORY_LIFECYCLE
-            .lock()
-            .expect("read-only test fixture lifecycle poisoned");
         let root = PathBuf::from("/dev/shm")
             .join(format!("hepta-raw-node-receipts-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
-        Self {
-            root,
-            _lifecycle_guard: lifecycle_guard,
-        }
+        Self { root }
     }
 }
 impl Drop for OwnedFixture {

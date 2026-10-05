@@ -28,14 +28,29 @@ uses original property order, including duplicate updates and the last falsy
 
 The connection still opens by pathname. Held main/WAL/journal file hashes and
 full named/held metadata, canonical target and held path directories are checked
-before and after inspection. Every captured directory must retain mtime/ctime;
-concurrent unrelated ancestor changes are an explicit native safety refusal.
+before and after inspection. The immediate database parent retains its full
+mtime/ctime, size and link-count guard. Higher ancestors retain their held/named
+device, inode, type/mode and owner/group identity, while a descriptor-anchored
+Linux inotify witness continuously watches their selected child and self events
+on local tmpfs, ext-family, XFS and Btrfs ancestors. Other filesystem types,
+including network, FUSE and overlay filesystems, keep the original full metadata
+checks because local events need not cover changes through another filesystem view.
+Unrelated ancestor siblings may be created, renamed or removed; selected-path
+rename/restore, permission/owner changes, replacement, watch loss, unmount or
+event overflow refuse the read. Event draining is bounded to 4096 events and 64
+reads per checkpoint; inability to establish complete continuity refuses rather
+than accepting a new baseline. Cancellation and the absolute deadline also cover
+event draining. See the [ancestry handoff](../../../docs/modules/ORDINARY_OBSERVER_ANCESTRY_HANDOFF.md).
+Other Unix targets retain the prior strict full-ancestor metadata policy; they
+do not claim this Linux selected-event behavior. Cancellation after an event
+batch is consumed invalidates the witness conservatively and requires reopening.
 This is not a claim that SQLite opened the held descriptor. SQLite WAL reads can
 create coordination files. For WAL headers, this owner atomically prepares only
 missing fixed WAL/SHM leaves as zero files through the held parent with NoReplace,
 checks the exact entry delta, then captures the directory baseline before SQLite
 opens. It never overwrites an existing leaf or deletes a possibly shared leaf on
-failure. After this window, directory drift is refused without an SHM exception.
+failure. After this window, immediate-parent directory drift is refused without
+an SHM exception; unrelated changes above that parent do not alter its baseline.
 `coordination_observation()` reports these preparation effects separately from the
 Node report. SHM content/readmarks may change; main/WAL/journal bytes must remain
 fixed. If the prepared leaf cannot be reopened with SQLite's required permissions,

@@ -168,9 +168,16 @@ Live admission is checked before CAS publication and again after artifact/eviden
 I/O immediately before writing each prepared record.
 This also makes identical output objects safe without changing the store's
 exclusive-create/torn-object contract. CAS-consuming research/submission jobs,
-brokers, processes, database inspection, inventory, cached attempts and duplicate
-in-flight requests are serial barriers. A failed admission stops later launches and suppresses pending publication;
-started workers are joined even on error or panic, and unresolved intents remain
+brokers, processes, database inspection, inventory, cached attempts, duplicate
+in-flight requests and repeated exact immutable payloads are serial barriers.
+Repeated work observes its predecessor's publication before any new handoff;
+distinct immutable payloads may still overlap. The first typed admission/clock
+failure is preserved through internal service callbacks.
+A failed admission stops later launches and suppresses pending publication.
+This cutoff starts when the coordinator observes the refusal. Distinct work
+admitted before a later clock change may already be running; it is still joined
+and cannot publish after that refusal is observed.
+Started workers are joined even on error or panic, and unresolved intents remain
 recovery fences. Cancellation/deadline checks prevent kernel entry and successful
 publication; these bounded Rust kernels are not forcibly interrupted mid-compute.
 A partial failure can retain earlier prepared results, but the batch does not

@@ -32,6 +32,30 @@ pub(super) fn compute(
     Ok(output)
 }
 
+// Service/broker callbacks use ServiceError internally. Keep the coordinator's
+// first typed admission failure across that adapter instead of flattening a
+// clock/lease refusal into an execution failure. The refusal is sticky even if
+// an inner operation accidentally calls its callback again or returns success.
+fn preserve_admission_error<T>(
+    admission: &mut dyn FnMut() -> Result<(), ControlPlaneError>,
+    operation: impl FnOnce(&mut dyn FnMut() -> Result<(), ServiceError>) -> Result<T, ServiceError>,
+) -> Result<T, ControlPlaneError> {
+    let mut admission_error = None;
+    let result = operation(&mut || {
+        if admission_error.is_some() {
+            return Err(ServiceError::Execution);
+        }
+        admission().map_err(|error| {
+            admission_error = Some(error);
+            ServiceError::Execution
+        })
+    });
+    match admission_error {
+        Some(error) => Err(error),
+        None => result.map_err(|_| ControlPlaneError::ExecutionInvalid),
+    }
+}
+
 impl ServiceExecutorV1 {
     fn capture_pure_business(
         &self,
@@ -107,11 +131,11 @@ impl ServiceExecutorV1 {
             if !publish_allowed || first_error.is_some() {
                 continue;
             }
-            let result: Result<_, ServiceError> = (|| {
+            let result = preserve_admission_error(admission, |admission| {
                 let output = output?;
                 guard.validate()?;
                 check_control(&self.cancelled, self.inherited_native_deadline)?;
-                admission().map_err(|_| ServiceError::Execution)?;
+                admission()?;
                 guard.validate()?;
                 check_control(&self.cancelled, self.inherited_native_deadline)?;
                 let (artifacts, evidence) = self.store_native_output(&pending.identity, output)?;
@@ -124,17 +148,17 @@ impl ServiceExecutorV1 {
                     &mut || {
                         guard.validate()?;
                         check_control(&self.cancelled, self.inherited_native_deadline)?;
-                        admission().map_err(|_| ServiceError::Execution)?;
+                        admission()?;
                         guard.validate()?;
                         check_control(&self.cancelled, self.inherited_native_deadline)
                     },
                 )?;
                 guard.validate()?;
                 Ok(result)
-            })();
+            });
             match result {
                 Ok(result) => prepared.push(result),
-                Err(_) => first_error = Some(ControlPlaneError::ExecutionInvalid),
+                Err(error) => first_error = Some(error),
             }
         }
         first_error.map_or(Ok(()), Err)
@@ -162,7 +186,16 @@ impl ServiceExecutorV1 {
                 let result = (|| {
                     // Drain before capturing another bounded payload: even input
                     // preparation cannot accumulate an unbounded queue.
-                    if pending.len() == limit {
+                    // Repeated exact immutable work is a serial barrier even
+                    // when candidate/attempt identities differ. Publishing its
+                    // predecessor may change the live clock/lease observation;
+                    // do not spend a second reservation on the same payload
+                    // before that observation. Distinct payloads still overlap.
+                    if pending.len() == limit
+                        || pending.iter().any(|work: &Pending<'_, '_>| {
+                            work.request.candidate.payload_hash == request.candidate.payload_hash
+                        })
+                    {
                         self.drain_pure_business(
                             &mut pending,
                             &mut prepared,
@@ -186,11 +219,9 @@ impl ServiceExecutorV1 {
                             .validate()
                             .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
                         admission()?;
-                        let result = self
-                            .execute_one(request, &mut || {
-                                admission().map_err(|_| ServiceError::Execution)
-                            })
-                            .map_err(|_| ControlPlaneError::ExecutionInvalid)?;
+                        let result = preserve_admission_error(admission, |refresh| {
+                            self.execute_one(request, refresh)
+                        })?;
                         guard
                             .validate()
                             .map_err(|_| ControlPlaneError::ExecutionInvalid)?;

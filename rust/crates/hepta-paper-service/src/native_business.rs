@@ -186,6 +186,8 @@ fn compute_native_business_implementation_hash_v1() -> String {
             include_bytes!("../../hepta-readonly-store/src/node_receipts.rs"),
             include_bytes!("../../hepta-readonly-store/src/node_snapshot.rs"),
             include_bytes!("../../hepta-readonly-store/src/ordinary.rs"),
+            include_bytes!("../../hepta-readonly-store/src/ordinary/ancestry.rs"),
+            include_bytes!("../../hepta-readonly-store/src/ordinary/ancestry_fallback.rs"),
             include_bytes!("../../hepta-legacy-compatibility/src/node_adapter.rs"),
             include_bytes!("../../hepta-legacy-compatibility/data/node22-en-us-unihan.postcard"),
             include_bytes!("../../hepta-codex-protocol/src/lib.rs"),

@@ -57,7 +57,20 @@ impl Fixture {
                     cost_microusd: 1,
                     uncertainty_ppm: 0,
                     evidence_tier: QualificationTierV1::Source,
-                    payload_hash: hash.clone(),
+                    // Independent immutable systems share the solution but
+                    // have distinct input identities and can genuinely overlap.
+                    payload_hash: objects
+                        .put(
+                            &serde_json::to_vec(&NativeJobV1::Business {
+                                job: NativeBusinessJobV1::NumericalLinearSolve {
+                                    matrix: vec![vec![2.0 + index as f64]],
+                                    rhs: vec![3.0 * (2.0 + index as f64)],
+                                    tolerance: 0.00001,
+                                },
+                            })
+                            .unwrap(),
+                        )
+                        .unwrap(),
                 },
                 reservation: ResourceReservationV1 {
                     reservation_id: format!("reserve-{index}"),
@@ -128,7 +141,7 @@ fn rendezvous(pair: &(Mutex<usize>, Condvar)) {
     let mut entered = pair.0.lock().unwrap();
     *entered += 1;
     pair.1.notify_all();
-    let required = if *entered % 2 == 0 {
+    let required = if entered.is_multiple_of(2) {
         *entered
     } else {
         *entered + 1
@@ -217,7 +230,6 @@ fn actual_pure_workers_overlap_with_two_slots_and_preserve_exact_order_and_cache
         result
             .validate(&request.candidate, &request.plan_hash)
             .unwrap();
-        assert_eq!(result.artifact_hashes, results[0].artifact_hashes);
         assert_eq!(result.actual_resources, request.reservation.reserved);
         let bytes = fixture
             .executor
@@ -536,6 +548,9 @@ fn revocation_after_evidence_io_cannot_write_prepared_record_or_publish_later_ou
     let guard = fixture.guard();
     let mut admissions = 0;
     let finished = AtomicUsize::new(0);
+    let before = fs::read_dir(fixture.executor.objects.root())
+        .unwrap()
+        .count();
     assert!(
         fixture
             .executor
@@ -563,11 +578,155 @@ fn revocation_after_evidence_io_cannot_write_prepared_record_or_publish_later_ou
     assert_eq!(admissions, 6);
     assert_eq!(finished.load(Ordering::SeqCst), 2);
     assert_eq!(fixture.records("prepared"), 0);
-    // Original payload plus only the first result's staged artifact and evidence.
+    // Only the first result's artifact/evidence may have been staged.
     assert_eq!(
         fs::read_dir(fixture.executor.objects.root())
             .unwrap()
             .count(),
-        3
+        before + 2
     );
+}
+
+#[test]
+fn original_admission_error_is_retained_at_handoff_and_publication_boundaries() {
+    for error in [
+        ControlPlaneError::PersistenceInvalid,
+        ControlPlaneError::ResourceClockRollback,
+        ControlPlaneError::ResourceDenied,
+        ControlPlaneError::CommitInvalid,
+    ] {
+        for fail_at in [1, 2, 5, 6] {
+            let fixture = Fixture::new(2);
+            let guard = fixture.guard();
+            let mut calls = 0;
+            let finished = AtomicUsize::new(0);
+            let result = fixture.executor.execute_bounded_batch(
+                &fixture.requests,
+                &mut || {
+                    calls += 1;
+                    if calls == fail_at { Err(error) } else { Ok(()) }
+                },
+                &guard,
+                2,
+                &|job, capability, cancelled, deadline| {
+                    let output = compute(job, capability, cancelled, deadline);
+                    finished.fetch_add(1, Ordering::SeqCst);
+                    output
+                },
+            );
+            assert_eq!(result.unwrap_err(), error);
+            assert_eq!(calls, fail_at);
+            assert_eq!(
+                finished.load(Ordering::SeqCst),
+                if fail_at <= 2 { 0 } else { 2 }
+            );
+            assert_eq!(fixture.records("prepared"), 0);
+        }
+    }
+}
+
+#[test]
+fn repeated_payload_observes_publication_before_second_handoff_on_two_slot_host() {
+    let mut fixture = Fixture::new(2);
+    fixture.requests[1].candidate.payload_hash = fixture.requests[0].candidate.payload_hash.clone();
+    let guard = fixture.guard();
+    let finished = AtomicUsize::new(0);
+    let result = fixture.executor.execute_bounded_batch(
+        &fixture.requests,
+        &mut || {
+            if fixture.records("prepared") > 0 {
+                Err(ControlPlaneError::PersistenceInvalid)
+            } else {
+                Ok(())
+            }
+        },
+        &guard,
+        2,
+        &|job, capability, cancelled, deadline| {
+            let output = compute(job, capability, cancelled, deadline);
+            finished.fetch_add(1, Ordering::SeqCst);
+            output
+        },
+    );
+    assert_eq!(result.unwrap_err(), ControlPlaneError::PersistenceInvalid);
+    assert_eq!(finished.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.records("started"), 1);
+    assert_eq!(fixture.records("prepared"), 1);
+}
+
+#[test]
+fn distinct_payloads_with_identical_outputs_publish_without_cas_races() {
+    use crate::native_business::BuildEntryV1;
+    let mut fixture = Fixture::new(2);
+    let mut entries = vec![
+        BuildEntryV1 {
+            path: "a.txt".into(),
+            content: "first".into(),
+            media_type: "text/plain".into(),
+        },
+        BuildEntryV1 {
+            path: "b.txt".into(),
+            content: "second".into(),
+            media_type: "text/plain".into(),
+        },
+    ];
+    for request in &mut fixture.requests {
+        request.candidate.capability_id = "CAP-BUILD".into();
+        request.candidate.payload_hash = fixture
+            .executor
+            .objects
+            .put(
+                &serde_json::to_vec(&NativeJobV1::Business {
+                    job: NativeBusinessJobV1::BuildPackage {
+                        entries: entries.clone(),
+                    },
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        entries.reverse();
+    }
+    assert_ne!(
+        fixture.requests[0].candidate.payload_hash,
+        fixture.requests[1].candidate.payload_hash
+    );
+    let guard = fixture.guard();
+    let entered = (Mutex::new(0), Condvar::new());
+    let results = fixture
+        .executor
+        .execute_bounded_batch(
+            &fixture.requests,
+            &mut || Ok(()),
+            &guard,
+            2,
+            &|job, capability, cancelled, deadline| {
+                rendezvous(&entered);
+                compute(job, capability, cancelled, deadline)
+            },
+        )
+        .unwrap();
+    assert_eq!(results[0].artifact_hashes, results[1].artifact_hashes);
+    assert_eq!(results[0].artifact_hashes.len(), 2);
+    for hash in &results[0].artifact_hashes {
+        assert!(!fixture.executor.objects.read(hash).unwrap().is_empty());
+    }
+    assert_eq!(fixture.records("prepared"), 2);
+}
+
+#[test]
+fn service_callback_adapter_keeps_first_admission_error_sticky() {
+    let mut calls = 0;
+    let result = preserve_admission_error(
+        &mut || {
+            calls += 1;
+            Err(ControlPlaneError::PersistenceInvalid)
+        },
+        |admission| {
+            assert!(admission().is_err());
+            assert!(admission().is_err());
+            Ok(())
+        },
+    );
+    assert_eq!(result, Err(ControlPlaneError::PersistenceInvalid));
+    assert_eq!(calls, 1);
 }

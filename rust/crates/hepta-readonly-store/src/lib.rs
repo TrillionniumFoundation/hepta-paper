@@ -44,11 +44,6 @@ const MAXIMUM_DATABASE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const MAXIMUM_TABLES: usize = 4096;
 const MAXIMUM_ROWS_PER_TABLE: usize = 2_000_000;
 
-// Ordinary readers guard ancestor timestamps. All crate-owned /dev/shm
-// fixtures must retain this test-only lock through their directory cleanup.
-#[cfg(test)]
-static READ_ONLY_FIXTURE_DIRECTORY_LIFECYCLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FileIdentityV1 {
     device: u64,

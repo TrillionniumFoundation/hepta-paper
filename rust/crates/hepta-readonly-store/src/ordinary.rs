@@ -1,9 +1,15 @@
 //! Ordinary, bounded read-only inspection. This handle grants no migration authority.
+#[cfg(target_os = "linux")]
+mod ancestry;
+#[cfg(not(target_os = "linux"))]
+#[path = "ordinary/ancestry_fallback.rs"]
+mod ancestry;
 use crate::{
     NodeLogicalTableV1, ReadOnlyStoreError, digest,
     node_receipts::{self, NodeValue},
     node_snapshot, percent_encode_path, sidecar,
 };
+use ancestry::AncestorContinuity;
 use hepta_codex_protocol::Sha256Digest;
 use nix::fcntl::{OFlag, open, openat};
 use nix::sys::stat::Mode;
@@ -83,6 +89,13 @@ impl Identity {
             gid: m.gid(),
             links: m.nlink(),
         }
+    }
+    fn same_directory(&self, other: &Self) -> bool {
+        self.dev == other.dev
+            && self.ino == other.ino
+            && self.mode == other.mode
+            && self.uid == other.uid
+            && self.gid == other.gid
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -251,6 +264,7 @@ struct HeldDirectory {
     path: PathBuf,
     file: File,
     identity: FullIdentity,
+    selective_ancestry: bool,
 }
 impl HeldDirectory {
     fn names(
@@ -300,6 +314,12 @@ impl HeldDirectory {
         self.verify()
     }
     fn open(path: PathBuf) -> Result<Self, ReadOnlyStoreError> {
+        Self::open_observed(path, |_| Ok(false))
+    }
+    fn open_observed(
+        path: PathBuf,
+        observe: impl FnOnce(&File) -> Result<bool, ReadOnlyStoreError>,
+    ) -> Result<Self, ReadOnlyStoreError> {
         let fd = open(
             &path,
             OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
@@ -307,6 +327,9 @@ impl HeldDirectory {
         )
         .map_err(|_| ReadOnlyStoreError::DatabasePathInvalid)?;
         let file = File::from(fd);
+        // Arm the selected-name/self witness before this directory's baseline.
+        // SQLite and database/sidecar capture happen only after all are armed.
+        let selective_ancestry = observe(&file)?;
         let metadata = file
             .metadata()
             .map_err(|_| ReadOnlyStoreError::DatabasePathInvalid)?;
@@ -314,9 +337,13 @@ impl HeldDirectory {
             path,
             file,
             identity: FullIdentity::of(&metadata),
+            selective_ancestry,
         })
     }
     fn verify(&self) -> Result<(), ReadOnlyStoreError> {
+        self.verify_metadata(true)
+    }
+    fn verify_metadata(&self, full: bool) -> Result<(), ReadOnlyStoreError> {
         let named =
             fs::symlink_metadata(&self.path).map_err(|_| ReadOnlyStoreError::DatabaseChanged)?;
         let held = self
@@ -324,8 +351,12 @@ impl HeldDirectory {
             .metadata()
             .map_err(|_| ReadOnlyStoreError::DatabaseChanged)?;
         if !named.is_dir()
-            || FullIdentity::of(&named) != self.identity
-            || FullIdentity::of(&held) != self.identity
+            || !held.is_dir()
+            || !Identity::of(&named).same_directory(&self.identity.core)
+            || !Identity::of(&held).same_directory(&self.identity.core)
+            || (full
+                && (FullIdentity::of(&named) != self.identity
+                    || FullIdentity::of(&held) != self.identity))
         {
             #[cfg(test)]
             eprintln!(
@@ -339,6 +370,21 @@ impl HeldDirectory {
         }
         Ok(())
     }
+}
+fn verify_directories(
+    directories: &[HeldDirectory],
+    ancestry: &AncestorContinuity,
+    control: &ReadControl,
+) -> Result<(), ReadOnlyStoreError> {
+    ancestry.verify(control)?;
+    for (index, directory) in directories.iter().enumerate() {
+        control.check()?;
+        // Only the immediate DB namespace retains the full timestamp/link-count
+        // guard. Higher ancestors require stable object/security identity plus
+        // uninterrupted observation of their selected child and self events.
+        directory.verify_metadata(index == 0 || !directory.selective_ancestry)?;
+    }
+    ancestry.verify(control)
 }
 fn optional(
     path: PathBuf,
@@ -420,6 +466,7 @@ pub struct OrdinaryReadOnlyStoreV1 {
     pub(crate) connection: Connection,
     pub(crate) control: ReadControl,
     directories: Vec<HeldDirectory>,
+    ancestry: AncestorContinuity,
     main: HeldFile,
     wal: Option<HeldFile>,
     journal: Option<HeldFile>,
@@ -457,12 +504,24 @@ impl OrdinaryReadOnlyStoreV1 {
         let path = fs::canonicalize(&requested)
             .map_err(|e| ReadOnlyStoreError::Filesystem("ordinary_canonical", e.kind()))?;
         let _ = percent_encode_path(&path)?;
-        let mut directories = path
+        let parent = path
             .parent()
-            .ok_or(ReadOnlyStoreError::DatabasePathInvalid)?
-            .ancestors()
-            .map(|p| HeldDirectory::open(p.to_path_buf()))
-            .collect::<Result<Vec<_>, _>>()?;
+            .ok_or(ReadOnlyStoreError::DatabasePathInvalid)?;
+        let mut ancestry = AncestorContinuity::new(&control)?;
+        let mut directories = vec![HeldDirectory::open(parent.to_path_buf())?];
+        let mut child = parent;
+        for ancestor in parent.ancestors().skip(1) {
+            control.check()?;
+            let selected = child
+                .file_name()
+                .ok_or(ReadOnlyStoreError::DatabasePathInvalid)?;
+            directories.push(HeldDirectory::open_observed(
+                ancestor.to_path_buf(),
+                |file| ancestry.watch(file, selected),
+            )?);
+            child = ancestor;
+        }
+        verify_directories(&directories, &ancestry, &control)?;
         let main = HeldFile::open(path.clone(), true, control.clone())?;
         let mut wal = optional(sidecar(&path, "-wal"), true, &control)?;
         let journal = optional(sidecar(&path, "-journal"), true, &control)?;
@@ -471,9 +530,7 @@ impl OrdinaryReadOnlyStoreV1 {
         let mut shm = before_shm;
         let mut wal_created = false;
         let mut shm_created = false;
-        for directory in &directories {
-            directory.verify()?;
-        }
+        verify_directories(&directories, &ancestry, &control)?;
         let mut header = [0_u8; 20];
         if main
             .file
@@ -489,9 +546,7 @@ impl OrdinaryReadOnlyStoreV1 {
                     continue;
                 }
                 control.check()?;
-                for directory in &directories {
-                    directory.verify()?;
-                }
+                verify_directories(&directories, &ancestry, &control)?;
                 main.verify(true)?;
                 if let Some(wal) = &wal {
                     wal.verify(true)?;
@@ -521,9 +576,7 @@ impl OrdinaryReadOnlyStoreV1 {
                 control.check()?;
             }
         }
-        for directory in &directories {
-            directory.verify()?;
-        }
+        verify_directories(&directories, &ancestry, &control)?;
         let connection = Connection::open_with_flags(
             format!("file:{}?mode=ro", percent_encode_path(&path)?),
             OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -564,6 +617,7 @@ impl OrdinaryReadOnlyStoreV1 {
             connection,
             control,
             directories,
+            ancestry,
             main,
             wal,
             journal,
@@ -583,13 +637,14 @@ impl OrdinaryReadOnlyStoreV1 {
         {
             return Err(ReadOnlyStoreError::DatabaseChanged);
         }
-        for directory in &self.directories {
-            directory.verify()?;
-        }
+        verify_directories(&self.directories, &self.ancestry, &self.control)?;
         self.main.verify(true)?;
         verify_optional(&self.wal, &sidecar(&self.path, "-wal"), true)?;
         verify_optional(&self.journal, &sidecar(&self.path, "-journal"), true)?;
         verify_optional(&self.shm, &sidecar(&self.path, "-shm"), false)?;
+        // Hashing may take time. Close the selected-path observation window
+        // after file/sidecar verification, not merely before it.
+        verify_directories(&self.directories, &self.ancestry, &self.control)?;
         Ok(())
     }
     pub fn node_logical_integrity_report(

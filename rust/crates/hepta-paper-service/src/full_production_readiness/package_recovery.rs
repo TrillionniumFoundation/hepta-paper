@@ -307,13 +307,22 @@ fn nonblocking(file: &impl std::os::fd::AsFd) -> bool {
 }
 fn bounded_output(
     mut pipe: impl Read,
-    stopped: &AtomicBool,
+    cancelled: &AtomicBool,
     overflow: &AtomicBool,
+    started: Instant,
+    timeout: Duration,
 ) -> (Vec<u8>, bool) {
     let mut bytes = Vec::new();
     let mut total = 0usize;
     let mut buffer = [0u8; 8192];
     loop {
+        // Observe cancellation before reading: an earlier WouldBlock cannot
+        // rule out data or EOF that became available before cancellation.
+        // The original query deadline independently bounds both readers.
+        let cancelled_before_read = cancelled.load(Ordering::Acquire);
+        if started.elapsed() >= timeout {
+            return (bytes, false);
+        }
         match pipe.read(&mut buffer) {
             Ok(0) => return (bytes, true),
             Ok(count) => {
@@ -326,7 +335,7 @@ fn bounded_output(
             }
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                if stopped.load(Ordering::Acquire) {
+                if cancelled_before_read {
                     return (bytes, false);
                 }
                 thread::sleep(Duration::from_millis(2));
@@ -393,12 +402,12 @@ fn run_child(
         let _ = child.wait();
         return Err("full_production_package_readiness_child_infrastructure_failed".to_owned());
     }
-    let stopped = AtomicBool::new(false);
+    let cancelled = AtomicBool::new(false);
     let overflow = AtomicBool::new(false);
     let started = Instant::now();
     let (status, timed_out, stdout, stderr) = thread::scope(|scope| {
-        let out = scope.spawn(|| bounded_output(stdout, &stopped, &overflow));
-        let err = scope.spawn(|| bounded_output(stderr, &stopped, &overflow));
+        let out = scope.spawn(|| bounded_output(stdout, &cancelled, &overflow, started, timeout));
+        let err = scope.spawn(|| bounded_output(stderr, &cancelled, &overflow, started, timeout));
         let mut timed_out = false;
         let status = loop {
             match child.try_wait() {
@@ -416,7 +425,14 @@ fn run_child(
         kill_group(pid);
         let _ = child.kill();
         let _ = child.wait();
-        stopped.store(true, Ordering::Release);
+        // Successful root exit does not establish EOF for inherited pipes.
+        // Keep draining inside the original query window; never grant a new one.
+        if timed_out
+            || overflow.load(Ordering::Acquire)
+            || !status.is_some_and(|value| value.success())
+        {
+            cancelled.store(true, Ordering::Release);
+        }
         (status, timed_out, out.join(), err.join())
     });
     drop(executable);
@@ -425,6 +441,7 @@ fn run_child(
     let (_, stderr_complete) = stderr
         .map_err(|_| "full_production_package_readiness_child_infrastructure_failed".to_owned())?;
     if timed_out
+        || started.elapsed() >= timeout
         || overflow.load(Ordering::Acquire)
         || !stdout_complete
         || !stderr_complete

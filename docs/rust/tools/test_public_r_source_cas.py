@@ -92,6 +92,23 @@ class PublicSourceTests(unittest.TestCase):
         self.assertEqual(list(self.target.iterdir()), [])
         self.assertEqual(list(self.target.parent.iterdir()), [self.target])
 
+    def test_foundation_prepares_exact_public_inputs_before_original_workspace_tests(self):
+        workflow = (R.ROOT / '.github/workflows/rust-foundation.yml').read_text()
+        self.assertIn('fetch-depth: 0', workflow)
+        self.assertNotIn('fetch-depth: 1', workflow)
+        prepare = workflow.index('python3 -B docs/rust/tools/materialize-public-r-source-cas.py')
+        self.assertLess(workflow.index('python3 -B docs/rust/tools/test_public_r_source_cas.py'), prepare)
+        self.assertLess(workflow.index('mkdir -p /tmp/hepta-rust-validation'), prepare)
+        self.assertLess(prepare, workflow.index('      - name: Run tests'))
+        original_command = workflow[workflow.index('      - name: Run tests'):workflow.index('      - name: Upload Rust validation logs')]
+        for required in ['cargo test', '--workspace', '--all-features', '--locked']:
+            self.assertIn(required, original_command)
+        self.assertNotIn('--test ', original_command)
+        self.assertNotIn('--skip', original_command)
+        self.assertEqual(R.ROUTE['materializer']['networkAllowed'], False)
+        self.assertEqual(R.ROUTE['materializer']['packageExecutionAllowed'], False)
+        self.assertEqual(R.ROUTE['materializer']['overwriteDriftAllowed'], False)
+
     def test_unverified_or_noncanonical_source_is_not_accepted(self):
         with self.assertRaisesRegex(ValueError, 'manifest_identity_mismatch'):
             R.validate_bundle(self.files)

@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify scientific host source contracts
@@ -104,6 +104,16 @@ jobs:
       - name: Prepare validation log directory
         shell: bash
         run: mkdir -p /tmp/hepta-rust-validation
+
+      - name: Prepare exact public R source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Use the same pinned historical Git input as the existing source lanes.
+          # The original materializer verifies all blobs and refuses input drift.
+          python3 -B docs/rust/tools/test_public_r_source_cas.py
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py \
+            | tee /tmp/hepta-rust-validation/public-r-source-inputs.json
 
       - name: Check formatting
         id: rustfmt

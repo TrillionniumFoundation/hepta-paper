@@ -1,3 +1,4 @@
+import { resolveReadonlyParserDependencies, assertReadonlyFixtureSetupComplete } from './support/locked-parser-dependency-fixture.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,6 +18,8 @@ const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..
 const routes = ['journal-connector-coverage', 'autonomous-supervisor-health'];
 let fixture, root, caller, binary, unknown, graph, shippedPin, unknownPin, markerPin;
 let keepFixture = false;
+let fixtureSetupComplete = false, fixtureSetupFailure = null;
+const dependencyContextPins = new Map();
 const dependencies = new Map();
 const immutableCopyPins = new Map();
 const identity = s => [s.dev, s.ino, s.mode, s.uid, s.gid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String);
@@ -201,6 +204,7 @@ async function pair(name, forwarded = [], additions = {}) {
   assert.deepEqual(snapshot(root), before); return JSON.parse(node.stdout || 'null');
 }
 before(() => {
+  try {
   const owners = buildNativeOwners().owners;
   fixture = fs.mkdtempSync(path.join(fs.realpathSync(os.userInfo().homedir), '.hepta-readonly-normal-'));
   root = path.join(fixture, 'deployment'); caller = path.join(fixture, 'caller');
@@ -244,8 +248,10 @@ before(() => {
   const lockFile = path.join(source, 'package-lock.json'), lockPin = pin(lockFile);
   const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8')); assert.deepEqual(pin(lockFile), lockPin);
   graph.set('package-lock.json', copy(lockFile, path.join(root, 'package-lock.json')));
-  for (const name of ['espree', 'eslint-scope', 'acorn', 'acorn-jsx', 'eslint-visitor-keys', 'esrecurse', 'estraverse']) {
-    const selected = path.join(source, 'node_modules', name), manifest = path.join(selected, 'package.json');
+  const parserInputs = resolveReadonlyParserDependencies({ source, pin });
+  for (const [file, expected] of parserInputs.contextPins) dependencyContextPins.set(file, expected);
+  for (const [name, selected] of Object.entries(parserInputs.roots)) {
+    const manifest = path.join(selected, 'package.json');
     const metadata = pin(manifest), value = JSON.parse(fs.readFileSync(manifest, 'utf8'));
     assert.deepEqual(pin(manifest), metadata); assert.equal(value.name, name);
     assert.equal(value.version, lock.packages[`node_modules/${name}`].version);
@@ -267,10 +273,14 @@ before(() => {
   fs.mkdirSync(path.join(root, 'relative-runtime'), { mode: 0o700 });
   fs.mkdirSync(path.join(caller, 'relative-runtime'), { mode: 0o700 });
   fs.writeFileSync(path.join(caller, 'package.json'), JSON.stringify({ name: 'hepta-paper-workspace', version: '999' }), { mode: 0o600 });
+  fixtureSetupComplete = true;
+  } catch (error) { fixtureSetupFailure = error; throw error; }
 });
 after(() => {
   if (!fixture) return;
   try {
+    assertReadonlyFixtureSetupComplete(fixtureSetupComplete, fixtureSetupFailure);
+    for (const [file, expected] of dependencyContextPins) assert.deepEqual(pin(file), expected);
     assert.deepEqual(pin(binary), shippedPin); assert.deepEqual(pin(unknown), unknownPin);
     assert.deepEqual(pin(path.join(root, 'package.json')), markerPin);
     for (const [relative, expected] of dependencies) {

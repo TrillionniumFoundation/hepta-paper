@@ -13,6 +13,7 @@ mod tests;
 
 use thiserror::Error;
 
+pub(crate) use compose::InstalledCanaryDispatcherBindingV1;
 pub use compose::{compose_product_codex_broker, run_product_codex_broker};
 pub use config::{
     LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,

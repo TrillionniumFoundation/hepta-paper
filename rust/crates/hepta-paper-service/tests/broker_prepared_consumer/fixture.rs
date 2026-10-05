@@ -363,6 +363,7 @@ impl Fixture {
             campaign_revision: 1,
             role: AgentRole::Author,
             task_kind: TaskKind::Draft,
+            one_shot_canary: None,
             codex_runtime_identity_hash: source.runtime_identity_hash.clone(),
             model_selector: "local-test-model".into(),
             transport: Transport::ExecJsonlV1,

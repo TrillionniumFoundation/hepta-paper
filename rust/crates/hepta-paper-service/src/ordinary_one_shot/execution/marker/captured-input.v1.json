@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "kind": "NativeOneShotMarkerSyntheticBusinessInput",
+  "sourceHashes": {
+    "paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs": "aeab2c37a6118804afb07ff0978d5b3c7ac58efae18415abad47b04d21ed9de9",
+    "paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs": "a220e6c9367007ea32b2926f38ef9c2882e20f9f634a97e51aa044f47bfd81e5",
+    "paper-core/tests/support/autonomous-research-one-shot-campaign-attempt-fixture.mjs": "c06eed4b3412f0703d9d97f5cb273eaf0aa33b74bbc3bbd0677a1ddc5d0a01ac",
+    "rust/crates/hepta-paper-service/src/ordinary_one_shot/execution/marker/oracle.mjs": "7c651fa1ebaeb6afbb8f6ac2386e8e07006b6322da327a5b6f675ca6232d7008"
+  },
+  "reservation": {
+    "version": 1,
+    "kind": "AutonomousResearchOneShotCampaignAttemptReservation",
+    "status": "attempt_reserved",
+    "attemptId": "native-fixed-one-shot-journal",
+    "idempotencyKey": "sha256:8b8d9024864bf128c1de2d92558c844fe53d6a60642c4f46fd09346731a0b0f6",
+    "campaignId": "autonomous-research:local-auto-20260730-57",
+    "protectedCampaignId": "autonomous-research:local-auto-20260730-51",
+    "executionBinding": {
+      "autonomousResearchProviderConfigurationHash": "sha256:7fe1d221302fb8e5b1c1c7ccb33ea341311d00a994ff9b3f6dd433af82964792",
+      "campaignLaunchPolicy": {
+        "allowedRecoveryActions": [
+          "status"
+        ],
+        "createOnly": true,
+        "forbiddenActions": [
+          "converge",
+          "resume"
+        ],
+        "version": 1
+      },
+      "codeProvenance": {
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commitTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "evidenceClass": "runtime_unclassified",
+        "evidenceEnvironment": "production",
+        "indexStateHash": "sha256:5165638586c39e2e4fff006f2e71729a003954b290034acd6eba07614b77bbf9",
+        "kind": "CodeProvenance",
+        "packageVersion": "0.21.0",
+        "repositoryContentHash": "sha256:4ac0f779ee5e071ee5753d9c8f6ca53010a5ba83adcbc2b1d245ba80b26141ec",
+        "repositoryEntryCount": 2000,
+        "tags": [],
+        "treeDirty": false,
+        "version": 2,
+        "worktreeStateHash": "sha256:fbe5da9c16c13b01cac507a762a93523a6c64e6100235c0e9f01500ad6492db9"
+      },
+      "codeProvenanceHash": "sha256:bdfd803ed0e35eb9c548c7d3e23cc159efb7c00d98111719a06a0dbf678e5c29",
+      "environmentProjection": {
+        "HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE": "deterministic-bounded"
+      },
+      "preparationPolicy": {
+        "allowedExternalActionKinds": [],
+        "contentMode": "deterministic-bounded",
+        "environmentProjectionHash": "sha256:623f54ec9abab93755e258142a33c34347fda64768584bb33c93382fbedde24a",
+        "forbiddenEnvironmentKeys": [
+          "HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG",
+          "HEPTA_EXTERNAL_REPLAY_CONFIG",
+          "HEPTA_EXTERNAL_REPLAY_CONFIG_HASH",
+          "HEPTA_EXTERNAL_REPLAY_SERVICE_TOKEN_FILE",
+          "HEPTA_PRIOR_ART_SERVICE_CONFIG",
+          "HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH",
+          "HEPTA_PRIOR_ART_SERVICE_TOKEN_FILE"
+        ],
+        "mode": "deterministic-bounded-offline-v1",
+        "providerFreeRequired": true,
+        "version": 1
+      },
+      "protectedCampaignDefinition": {
+        "activeNodeCount": 0,
+        "campaignId": "autonomous-research:local-auto-20260730-51",
+        "failedTerminalNodeCount": 1,
+        "failureClass": "agent_usage_unknown_terminal",
+        "ledgerCount": 0,
+        "logicalStateHash": "sha256:89400b428b5ec1b958781df279c342a32532f514dbabe64d1549e19805d88730",
+        "nodeLeaseCount": 0,
+        "outboxCount": 0,
+        "resourceLeaseCount": 0,
+        "skippedNodeCount": 65,
+        "status": "failed",
+        "submissionCount": 0,
+        "version": 1,
+        "waiterCount": 0
+      },
+      "protectedCampaignFingerprintHash": "sha256:a7fa4f24792e04822a912af48238a1673b02de71ac0f7a04bf0e4e182f034506",
+      "providerRuntimeBinding": {
+        "formalReviewerCapabilityReceiptHash": "sha256:6773213a3a7974fc65f4512161690d7fb23d852b8096d2d6f7002ce074544708",
+        "formalReviewerCredentialConfigIdentityHash": "sha256:a6034ff6e09cb540163d662f2b322035eb7f0831a18f481feecc70fb3fb19481",
+        "formalReviewerOpenClawManagedAuthProfileIdentityHash": "sha256:a1872826f9cb264838fbf65cda469de23b4d44e2328bc527d72819597d1091f6",
+        "kind": "AutonomousResearchOneShotProviderRuntimeBinding",
+        "openClawManagedAuthBindingMode": "user-locked-profile",
+        "openClawManagedAuthSourceIdentityHash": "sha256:dee3e74d987df78e9c07b782f3925b7d15fccffce7d25f11b5dbd47f81bcbf84",
+        "openClawManagedGatewayRouteIdentityHash": null,
+        "openClawManagedRuntimeProvenanceHash": "sha256:c6281b7940e8e0c08edc608ba913ac6970ec63a2dbdeb0f171b4e53e3f58b66f",
+        "providerConfigurationHash": "sha256:7fe1d221302fb8e5b1c1c7ccb33ea341311d00a994ff9b3f6dd433af82964792",
+        "researchAuthorCapabilityReceiptHash": "sha256:10f8f111674b60d330a78800225d8bb1d852b2294eebe38e3209d7600bcb3605",
+        "researchAuthorCredentialConfigIdentityHash": "sha256:0ca7075e55ed2715d68c8a4f8b8c7d1a3dbe6f36454b4f6fe12178ea9307b423",
+        "researchAuthorOpenClawManagedAuthProfileIdentityHash": "sha256:6f72d48c6614098af217ffca0996aa5e9abc45480ec6b1388e98346bb3762632",
+        "version": 2
+      },
+      "providerRuntimeBindingHash": "sha256:f696eb2247372d2f8e908392d48e8b5eb7dfa759fabdf1f86f39558f4a38de09",
+      "sourceExecutionSnapshot": {
+        "manifestHash": "sha256:2a573a26268bbd424681785826e372f895276dfbd2e861a16e804c06f5eb5ed3",
+        "merkleHash": "sha256:9a56ad613974491a8d6f1bf6419d10f4292ad9f2f2c3baebdfc5ef432ccebfb6",
+        "version": 1
+      },
+      "sourceExecutionSnapshotHash": "sha256:8a813cc9e8c07a03f5bfe0ceacda7991680d0cfc8fa01a864cb092214dae6014",
+      "targetCampaignDefinition": {
+        "budgets": {
+          "maxAgentCalls": 201,
+          "maxCostUsd": 9007199254740991,
+          "maxCpuJobs": 14400,
+          "maxGpuJobs": 16,
+          "maxMemoryMiB": 8192,
+          "maxTokenCount": 9007199254740991,
+          "maxWallTimeMs": 7200000
+        },
+        "campaignId": "autonomous-research:local-auto-20260730-57",
+        "datasetMountsHash": "sha256:586dd4d1edb5ca3efee48d02726a1c7cf2044a6afe81b34bc5821c1e97d9c520",
+        "effectiveLaunchMode": "golden-bootstrap",
+        "humanSubjects": false,
+        "localOnly": true,
+        "objective": "Evaluate a deterministic bounded candidate intervention under the fixed finance_asset_pricing_benchmark protocol, including treatment, control, ablation, and an isolated deterministic rerun.",
+        "paperId": "local-auto-20260730-57",
+        "privateData": false,
+        "protocolFamily": "finance_asset_pricing_benchmark",
+        "refereeCount": 3,
+        "requestedLaunchMode": "local-run",
+        "requireCampaignAbsentAtLaunch": true,
+        "requireLaunchReady": true,
+        "revisionRounds": 3,
+        "unlimitedAggregateCost": true,
+        "unlimitedAggregateTokens": true,
+        "version": 1,
+        "worker": {
+          "agentSlots": 4,
+          "concurrency": 8,
+          "cpuSlots": 4,
+          "gpuSlots": 1,
+          "memoryMiB": 8192
+        }
+      },
+      "targetCampaignDefinitionHash": "sha256:4bd04322f87028ec55ddb8e64d3f8d92c86d6e6001cf9a75ad6347f1f7e3f3f7",
+      "version": 1
+    },
+    "executionBindingHash": "sha256:a0e3b3cfaf126c429e0aa6111a4f67ffc0e0ba03d8e3f3cc5f04e08bccf4505d",
+    "reservedAt": "2026-08-03T00:00:00.000Z",
+    "autonomousResearchOneShotCampaignAttemptReservationHash": "sha256:ae8fe5dbb6944edfa73772ac7c6fedcbcdd216e2e825423953b7a121eb9bf015"
+  },
+  "requests": [
+    {
+      "attemptId": "native-fixed-one-shot-journal",
+      "phase": "preconditions_verified",
+      "evidence": {
+        "kind": "local_protocol_fixture",
+        "phase": "preconditions_verified"
+      },
+      "expectedSequence": 2,
+      "expectedPhase": "attempt_reserved",
+      "expectedPreviousEventHash": "sha256:48a351ea2c7af5576874e6d847f8b6a8cd7bd1fbd5d1e1834d1131164515c663",
+      "recordedAt": "2026-08-03T00:00:00.000Z"
+    },
+    {
+      "attemptId": "native-fixed-one-shot-journal",
+      "phase": "prepare_verified",
+      "evidence": {
+        "kind": "local_protocol_fixture",
+        "phase": "prepare_verified"
+      },
+      "expectedSequence": 3,
+      "expectedPhase": "preconditions_verified",
+      "expectedPreviousEventHash": "sha256:59f558ba820dd2029662be73201aeea4803473865f926e3b92748b457bece966",
+      "recordedAt": "2026-08-03T00:00:00.000Z"
+    },
+    {
+      "attemptId": "native-fixed-one-shot-journal",
+      "phase": "provider_started",
+      "evidence": {
+        "kind": "local_protocol_fixture",
+        "phase": "provider_started"
+      },
+      "expectedSequence": 4,
+      "expectedPhase": "prepare_verified",
+      "expectedPreviousEventHash": "sha256:edeb109788fb59c90c69167c1fde122ca6960593ec827e03e8a0b9ed172901ee",
+      "recordedAt": "2026-08-03T00:00:00.000Z"
+    },
+    {
+      "attemptId": "native-fixed-one-shot-journal",
+      "phase": "provider_completed",
+      "evidence": {
+        "kind": "local_protocol_fixture",
+        "phase": "provider_completed"
+      },
+      "expectedSequence": 5,
+      "expectedPhase": "provider_started",
+      "expectedPreviousEventHash": "sha256:18f533ce38062cd16b48339644b12636d6bc2498f591b1d253b2428e643e5cb9",
+      "recordedAt": "2026-08-03T00:00:00.000Z"
+    },
+    {
+      "attemptId": "native-fixed-one-shot-journal",
+      "phase": "launch_started",
+      "evidence": {
+        "kind": "local_protocol_fixture",
+        "phase": "launch_started"
+      },
+      "expectedSequence": 6,
+      "expectedPhase": "provider_completed",
+      "expectedPreviousEventHash": "sha256:d9c4f432a91fb03af8b545cf063bd4c5650e6926cc07da157af1ba694b0a1a14",
+      "recordedAt": "2026-08-03T00:00:00.000Z"
+    }
+  ]
+}

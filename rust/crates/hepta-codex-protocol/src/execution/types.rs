@@ -20,6 +20,8 @@ pub enum TaskKind {
     FormalReview,
     CodeRepair,
     LatexRepair,
+    /// Explicit ephemeral read-only probe; never an author/repair mutation.
+    ReadOnlyCanary,
 }
 
 /// Codex transport qualified by protocol version 1.

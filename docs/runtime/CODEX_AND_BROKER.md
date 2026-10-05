@@ -158,3 +158,119 @@ retaining the same durable semantics.
 Real Codex execution remains blocked until target-host listener/schema/gate/
 containment evidence, independent key lifecycle evidence, and separated
 credential-bearing author/reviewer canaries are accepted.
+
+## Opt-in one-shot read-only canary profile
+
+The ordinary one-shot Node composition asks both research-author and formal-reviewer
+identities to run an ephemeral, read-only model-availability probe. The original
+native Author Draft/Revise profile permits only WorkspaceWrite. Relabeling a probe
+as Draft or Review would not preserve that boundary.
+
+The native signed request contract now has the closed `read_only_canary` task.
+It requires Author or FormalReviewer, ReadOnly, the existing ephemeral-new-thread,
+network-none and approval-never policies, and an exact `oneShotCanary` subject:
+version 1, original one-shot attempt ID, `provider_started` phase, reservation hash
+and marker event hash. Other roles, launch/completed phases, absent subject, and a
+canary subject attached to a business task refuse. The original request also binds
+child operation/attempt, campaign, lease generation, validity, runtime/model,
+prompt/input/schema/workspace/mutation hashes and bounded resource commitments.
+The capability signature covers all those existing fields plus the explicit
+one-shot-canary purpose and subject. This serializable subject is **not** a live
+journal or provider permit.
+
+Admission requires a dedicated `one_shot_read_only_canary` installed purpose on
+both the broker and operation publisher. Default Business author/formal instances
+continue rejecting canaries; canary instances reject business tasks. The publisher
+and dispatcher require the exact existing read-only mutation policy and an empty
+workspace, retain original authority/source checks, and compare the complete
+canary subject against the signed request. Live descriptor validity, original
+runtime identity, immutable prompt/schema bytes, kernel peer identity, signature,
+lease/deadline and process-containment checks remain in their existing owners.
+Same-operation retries cannot cross purpose or replace the durable request.
+
+`OneShotExternalActionMarkerV1::provider_canary_subject_v1` produces the subject
+only after live currentness checks on the originating journal, exact expected
+attempt and provider-started phase. A launch marker cannot produce it. Copying or
+deserializing this subject never restores the marker. A sender must retain the
+opaque owner and recheck it together with live configuration/runtime/lease/source
+owners at physical handoff; a projected JSON subject alone is insufficient.
+
+### Compatibility and remaining composition
+
+This extends the V1 wire schema while preserving existing Business wire bytes.
+The new Rust fields and enum variant are source-breaking for downstream struct
+literals and exhaustive matches. Older closed decoders reject the new
+task/subject/purpose; there is no downgrade
+or fallback. Existing request and descriptor fields are unchanged, absent optional
+canary subjects are not serialized, and default Business purpose is not serialized.
+Existing Draft/Revise signing bytes and JSON wire bytes retain golden checks and
+their original writable-only validation. Rust struct-literal callers must supply
+`None` for the new subject and Business for the new installed purpose; legacy JSON
+configuration files require no added fields.
+
+The new profile does not establish model availability, OpenClaw managed-auth
+compatibility, a completed provider canary pair, scientific acceptance or production
+qualification. No installed configuration, principal, credential, cgroup or provider
+was changed or invoked. Ordinary service payloads selecting this canary task still
+refuse before signer, publisher or transport I/O until a retained one-shot runtime
+composition exists; ordinary `--action execute` remains fail-closed. The remaining
+consumer must bind the two concrete native workers and challenge/output contract,
+retain the actual marker and runtime witnesses, sample current lease/time at each
+handoff, and preserve unknown-outcome query-only recovery. Existing arbitrary
+callbacks and serialized reports are not substitutes.
+
+Scoped source tests cover role/purpose/sandbox matrices, old wire/signing goldens,
+real signature tampering across purpose/parent attempt/marker/reservation/runtime/
+lease, same-operation cross-purpose journal refusal, private empty-workspace and
+source drift, and marker attempt/phase mismatches. They perform no provider call.
+
+The original Node semantic references are pinned here for this scope:
+
+- `paper-adapters/automation/codex-runtime-preflight.mjs`:
+  `6e4315872f0a9db2a166e97a9552a1a78c758abfa1c9b473bba5b7235493ed8c`
+- `paper-composition/automation/autonomous-research-provider-canary.mjs`:
+  `533abfcd62384f04b18301be26efa6d0374ced5edb1af80ce4019cd1d36027ed`
+- `paper-composition/automation/autonomous-research-one-shot-campaign-execution-fence.mjs`:
+  `49c0dbebc332448d1246524d276ef17a934330c5a219f05d811f1a210bb85311`
+
+### Retained installed-configuration checks
+
+The installed canary composition now retains the original configuration file and
+its parent directory as nonserializable open descriptors. Loader clones share a
+permanently revocable owner. The file identity includes modification/change times,
+content hash, inode/device, owner/group, mode, link count and size. The parent binds
+stable identity and permissions, excluding volatile timestamps so unrelated sibling
+activity does not revoke it. Reads use separately opened cursors; an observed
+failure cannot be repaired by restoring bytes or by reloading another owner.
+
+The actual composition privately couples this owner to the runtime and dispatcher
+policies derived from that same configuration. The public resolved-configuration
+constructor refuses Canary before filesystem access. Business construction remains
+available; its installed startup preflight also benefits from stronger file/parent
+identity checks without changing Business wire or task policy.
+
+Canary checks occur before dispatch preparation, at all three existing provider
+authorization boundaries, before result finalization, around prepared delivery and
+before recovery readiness, including an empty journal. Recovery still cleans exact
+persisted containment before configuration refusal. These are bounded currentness
+checks, not a continuous watcher. A fresh process does not recover the previous
+process's opaque owner: durable cross-restart native configuration binding remains
+an explicit prerequisite. Ordinary one-shot execution is still closed.
+
+Single-UID source tests exercise actual filesystem drift, restoration, shared-clone
+revocation and parallel reads through private source-inspection helpers, and assert
+that the public loader rejects the wrong principal. They do not establish a
+successful separately installed broker or any physical provider execution.
+
+The trusted dispatcher also exposes a read-only currentness check consumed by the
+server. Product canaries use the same private retained configuration binding;
+Business has no added lifetime check. Result queries call this after capability
+and trust validation, before payload loading, again after loading, before the first
+frame and before every bounded write and flush. Revocation interrupts delivery,
+keeps the journal unchanged for a later explicitly authenticated query and does not
+emit an acknowledgement or a second frame. It cannot retract bytes already sent.
+The server repeats this same check after all startup cleanup, generic process
+reconciliation, integrity checks and journal closing, immediately before readiness.
+Source tests cover the actual Product denial hook and socketpair multi-chunk
+transfer with signed capabilities and a synthetic revocable trusted dispatcher;
+they do not claim successful installed authority or live provider execution.

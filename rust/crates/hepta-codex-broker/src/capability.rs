@@ -203,6 +203,17 @@ pub fn capability_signing_bytes(
         "capabilityPeerGid",
         u64::from(request.request_capability.peer_gid),
     )?;
+    if let Some(subject) = &request.one_shot_canary {
+        writer.text(
+            "oneShotCanaryPurpose",
+            "one-shot-read-only-provider-canary-v1",
+        )?;
+        writer.u64("oneShotCanaryVersion", u64::from(subject.version))?;
+        writer.text("oneShotCanaryAttemptId", &subject.attempt_id)?;
+        writer.text("oneShotCanaryPhase", "provider_started")?;
+        writer.digest("oneShotCanaryReservationHash", &subject.reservation_hash)?;
+        writer.digest("oneShotCanaryMarkerEventHash", &subject.marker_event_hash)?;
+    }
     Ok(writer.finish())
 }
 
@@ -280,6 +291,7 @@ fn task_name(value: TaskKind) -> &'static str {
         TaskKind::FormalReview => "formal_review",
         TaskKind::CodeRepair => "code_repair",
         TaskKind::LatexRepair => "latex_repair",
+        TaskKind::ReadOnlyCanary => "read_only_canary",
     }
 }
 
@@ -405,6 +417,7 @@ mod tests {
             campaign_revision: 0,
             role: AgentRole::Author,
             task_kind: TaskKind::Draft,
+            one_shot_canary: None,
             codex_runtime_identity_hash: digest('2'),
             model_selector: "qualified-model".into(),
             transport: Transport::ExecJsonlV1,
@@ -518,5 +531,102 @@ mod tests {
             ),
             Err(CapabilityVerificationError::Expired),
         );
+    }
+    #[test]
+    fn canary_signature_binds_attempt_phase_marker_role_lease_runtime_and_purpose() {
+        use hepta_codex_protocol::{OneShotProviderCanaryPhaseV1, OneShotProviderCanarySubjectV1};
+        let peer = PeerIdentityV1 {
+            pid: 42,
+            uid: 1000,
+            gid: 1000,
+        };
+        let (legacy, trust) = signed_request(peer);
+        let legacy_bytes = capability_signing_bytes(&legacy).unwrap();
+        // Pre-extension, independently encoded V1 golden subject and wire.
+        assert_eq!(
+            sha256_digest(&legacy_bytes).unwrap().as_str(),
+            "sha256:6da77fb152fab343635fca42c3098089731acf121e1e1440c80ee2ac53a7facc"
+        );
+        assert_eq!(
+            sha256_digest(&serde_json::to_vec(&legacy).unwrap())
+                .unwrap()
+                .as_str(),
+            "sha256:4215f8d724775790efefcc92b53b119ca1d755014c72076a671b51e2c5c26982"
+        );
+        assert!(
+            !serde_json::to_value(&legacy)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("oneShotCanary")
+        );
+        let mut canary = legacy.clone();
+        canary.task_kind = TaskKind::ReadOnlyCanary;
+        canary.sandbox_policy = SandboxPolicy::ReadOnly;
+        canary.one_shot_canary = Some(Box::new(OneShotProviderCanarySubjectV1 {
+            version: 1,
+            attempt_id: "campaign-57-attempt".into(),
+            phase: OneShotProviderCanaryPhaseV1::ProviderStarted,
+            reservation_hash: legacy.input_manifest_hash.clone(),
+            marker_event_hash: legacy.prompt_envelope_hash.clone(),
+        }));
+        // The old business signature can never authorize the new purpose.
+        assert!(
+            verify_request_capability(&canary, peer, 12_000, CapabilityPolicyV1::default(), &trust)
+                .is_err()
+        );
+        let key = SigningKey::from_bytes(&[7_u8; 32]);
+        canary.request_capability.signature_base64 = Base64UrlUnpadded::encode_string(
+            &key.sign(&capability_signing_bytes(&canary).unwrap())
+                .to_bytes(),
+        );
+        verify_request_capability(&canary, peer, 12_000, CapabilityPolicyV1::default(), &trust)
+            .unwrap();
+        for case in 0..8 {
+            let mut changed = canary.clone();
+            match case {
+                0 => changed
+                    .one_shot_canary
+                    .as_mut()
+                    .unwrap()
+                    .attempt_id
+                    .push_str("-other"),
+                1 => {
+                    changed.one_shot_canary.as_mut().unwrap().marker_event_hash =
+                        legacy.workspace_identity_hash.clone()
+                }
+                2 => {
+                    changed.one_shot_canary.as_mut().unwrap().reservation_hash =
+                        legacy.workspace_identity_hash.clone()
+                }
+                3 => changed.role = AgentRole::FormalReviewer,
+                4 => changed.lease_generation += 1,
+                5 => changed.codex_runtime_identity_hash = legacy.workspace_identity_hash.clone(),
+                6 => changed.sandbox_policy = SandboxPolicy::WorkspaceWrite,
+                _ => {
+                    changed.task_kind = TaskKind::Draft;
+                    changed.sandbox_policy = SandboxPolicy::WorkspaceWrite;
+                    changed.one_shot_canary = None;
+                }
+            }
+            assert!(
+                verify_request_capability(
+                    &changed,
+                    peer,
+                    12_000,
+                    CapabilityPolicyV1::default(),
+                    &trust
+                )
+                .is_err(),
+                "case {case}"
+            );
+        }
+        assert!(
+            verify_request_capability(&canary, peer, 15_000, CapabilityPolicyV1::default(), &trust)
+                .is_err()
+        );
+        assert_eq!(capability_signing_bytes(&legacy).unwrap(), legacy_bytes);
+        verify_request_capability(&legacy, peer, 12_000, CapabilityPolicyV1::default(), &trust)
+            .unwrap();
     }
 }

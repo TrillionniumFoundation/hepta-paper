@@ -1,17 +1,26 @@
 use std::{
     collections::BTreeMap,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use hepta_codex_protocol::{AgentRole, Sha256Digest};
 use hepta_codex_runtime::ProcessLimitsV1;
-use nix::unistd::{Gid, Uid};
+use nix::{
+    fcntl::{OFlag, openat},
+    sys::stat::Mode,
+    unistd::{Gid, Uid},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::os::fd::AsFd;
 
 use crate::{CommitBindingDatabaseScopeV2, PeerPrincipalV1};
 
@@ -148,6 +157,11 @@ pub struct ProductCodexBrokerConfigurationV1 {
     pub broker_uid: u32,
     pub broker_gid: u32,
     pub role: AgentRole,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::ProductCodexOperationPurposeV1::is_business"
+    )]
+    pub purpose: crate::ProductCodexOperationPurposeV1,
     pub operation_authority_uid: u32,
     pub operation_directory: PathBuf,
     pub trust_bundle_path: PathBuf,
@@ -171,6 +185,11 @@ pub struct ProductCodexBrokerConfigurationV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductCodexBrokerConfigurationIdentityV1 {
     canonical_path: PathBuf,
+    pub(super) parent: ConfigurationParentIdentityV1,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
     pub device: u64,
     pub inode: u64,
     pub mode: u32,
@@ -181,15 +200,57 @@ pub struct ProductCodexBrokerConfigurationIdentityV1 {
     pub content_hash: Sha256Digest,
 }
 
+/// Stable directory identity; sibling churn cannot revoke the configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ConfigurationParentIdentityV1 {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    uid: u32,
+    gid: u32,
+}
+
+impl ConfigurationParentIdentityV1 {
+    fn capture(metadata: &fs::Metadata) -> Self {
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+        }
+    }
+
+    pub(super) fn matches(&self, metadata: &fs::Metadata) -> bool {
+        metadata.is_dir() && *self == Self::capture(metadata)
+    }
+}
+
 impl ProductCodexBrokerConfigurationIdentityV1 {
     #[must_use]
     pub fn canonical_path(&self) -> &Path {
         &self.canonical_path
     }
+
+    pub(super) fn matches_file(&self, metadata: &fs::Metadata) -> bool {
+        metadata.is_file()
+            && self.device == metadata.dev()
+            && self.inode == metadata.ino()
+            && self.mode == metadata.mode() & 0o7777
+            && self.uid == metadata.uid()
+            && self.gid == metadata.gid()
+            && self.link_count == metadata.nlink()
+            && self.size == metadata.size()
+            && self.modified_seconds == metadata.mtime()
+            && self.modified_nanoseconds == metadata.mtime_nsec()
+            && self.changed_seconds == metadata.ctime()
+            && self.changed_nanoseconds == metadata.ctime_nsec()
+    }
 }
 
 /// Configuration captured by the installed-principal loader. Callers may inspect
 /// it but cannot replace its policy while retaining a previously checked identity.
+/// Clones share held file/parent descriptors and permanent source revocation.
 ///
 /// ```compile_fail
 /// use hepta_codex_broker::{LoadedProductCodexBrokerConfigurationV1, ProductCodexBrokerConfigurationV1};
@@ -198,11 +259,26 @@ impl ProductCodexBrokerConfigurationIdentityV1 {
 ///     loaded.configuration = replacement;
 /// }
 /// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct LoadedProductCodexBrokerConfigurationV1 {
     pub(super) configuration: ProductCodexBrokerConfigurationV1,
     pub(super) identity: ProductCodexBrokerConfigurationIdentityV1,
+    source: Arc<ConfigurationSourceV1>,
 }
+
+#[derive(Debug)]
+struct ConfigurationSourceV1 {
+    parent: File,
+    file: File,
+    revoked: AtomicBool,
+}
+
+impl PartialEq for LoadedProductCodexBrokerConfigurationV1 {
+    fn eq(&self, other: &Self) -> bool {
+        self.configuration == other.configuration && self.identity == other.identity
+    }
+}
+impl Eq for LoadedProductCodexBrokerConfigurationV1 {}
 
 impl LoadedProductCodexBrokerConfigurationV1 {
     #[must_use]
@@ -220,15 +296,80 @@ impl LoadedProductCodexBrokerConfigurationV1 {
     pub(super) fn into_current_configuration(
         self,
     ) -> Result<ProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError> {
-        let current = load_product_codex_broker_configuration(self.identity.canonical_path())?;
-        if current != self {
+        self.assert_current()?;
+        Ok(self.configuration)
+    }
+
+    pub(super) fn assert_current(&self) -> Result<(), ProductCodexBrokerDaemonError> {
+        if let Err(error) = assert_configuration_principal(&self.configuration) {
+            self.source.revoked.store(true, Ordering::Release);
+            return Err(error);
+        }
+        self.assert_source_current()
+    }
+
+    pub(super) fn assert_source_current(&self) -> Result<(), ProductCodexBrokerDaemonError> {
+        if self.source.revoked.load(Ordering::Acquire) {
             return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
         }
-        Ok(current.configuration)
+        let checked = self.check_source();
+        if checked.is_err() {
+            self.source.revoked.store(true, Ordering::Release);
+        }
+        checked?;
+        if self.source.revoked.load(Ordering::Acquire) {
+            return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn revoke_for_test(&self) {
+        self.source.revoked.store(true, Ordering::Release);
+    }
+
+    fn check_source(&self) -> Result<(), ProductCodexBrokerDaemonError> {
+        let parent = self.source.parent.metadata().map_err(|error| {
+            ProductCodexBrokerDaemonError::Filesystem("retained_parent", error.kind())
+        })?;
+        let file = self.source.file.metadata().map_err(|error| {
+            ProductCodexBrokerDaemonError::Filesystem("retained_config", error.kind())
+        })?;
+        if !self.identity.parent.matches(&parent) || !self.identity.matches_file(&file) {
+            return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
+        }
+        // The fresh read has its own cursor; shared clones never seek/read the
+        // retained descriptor. Held descriptors prevent inode-reuse substitution.
+        let current = load_configuration_source(self.identity.canonical_path())?;
+        if current != *self {
+            return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
+        }
+        Ok(())
     }
 }
 
 pub fn load_product_codex_broker_configuration(
+    path: &Path,
+) -> Result<LoadedProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError> {
+    let loaded = load_configuration_source(path)?;
+    assert_configuration_principal(&loaded.configuration)?;
+    Ok(loaded)
+}
+
+fn assert_configuration_principal(
+    configuration: &ProductCodexBrokerConfigurationV1,
+) -> Result<(), ProductCodexBrokerDaemonError> {
+    if Uid::effective().as_raw() != configuration.broker_uid
+        || Gid::effective().as_raw() != configuration.broker_gid
+    {
+        return Err(ProductCodexBrokerDaemonError::BrokerPrincipal);
+    }
+    Ok(())
+}
+
+// Source inspection is separate only for internal filesystem tests. Public loading
+// and retained production checks always also verify the actual installed principal.
+pub(super) fn load_configuration_source(
     path: &Path,
 ) -> Result<LoadedProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError> {
     if !path.is_absolute() || fs::canonicalize(path).ok().as_deref() != Some(path) {
@@ -253,11 +394,27 @@ pub fn load_product_codex_broker_configuration(
     {
         return Err(ProductCodexBrokerDaemonError::ConfigurationFile);
     }
-    let mut file = OpenOptions::new()
+    let parent_file = OpenOptions::new()
         .read(true)
-        .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
-        .open(path)
-        .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("config_open", error.kind()))?;
+        .custom_flags(nix::libc::O_DIRECTORY | nix::libc::O_NOFOLLOW | nix::libc::O_CLOEXEC)
+        .open(parent)
+        .map_err(|error| ProductCodexBrokerDaemonError::Filesystem("parent_open", error.kind()))?;
+    let held_parent = parent_file.metadata().map_err(|error| {
+        ProductCodexBrokerDaemonError::Filesystem("parent_metadata", error.kind())
+    })?;
+    if !ConfigurationParentIdentityV1::capture(&parent_metadata).matches(&held_parent) {
+        return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
+    }
+    let mut file = File::from(
+        openat(
+            parent_file.as_fd(),
+            path.file_name()
+                .ok_or(ProductCodexBrokerDaemonError::ConfigurationPath)?,
+            OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| ProductCodexBrokerDaemonError::ConfigurationFile)?,
+    );
     let opened = file.metadata().map_err(|error| {
         ProductCodexBrokerDaemonError::Filesystem("config_metadata", error.kind())
     })?;
@@ -289,16 +446,30 @@ pub fn load_product_codex_broker_configuration(
     {
         return Err(ProductCodexBrokerDaemonError::ConfigurationAuthority);
     }
-    if Uid::effective().as_raw() != configuration.broker_uid
-        || Gid::effective().as_raw() != configuration.broker_gid
+    let parent_after = fs::symlink_metadata(parent).map_err(|error| {
+        ProductCodexBrokerDaemonError::Filesystem("config_parent_recheck", error.kind())
+    })?;
+    let parent_identity = ConfigurationParentIdentityV1::capture(&parent_metadata);
+    if !parent_identity.matches(&parent_after)
+        || fs::canonicalize(path).ok().as_deref() != Some(path)
     {
-        return Err(ProductCodexBrokerDaemonError::BrokerPrincipal);
+        return Err(ProductCodexBrokerDaemonError::ConfigurationChanged);
     }
     let content_hash = sha256_digest(&bytes)?;
     Ok(LoadedProductCodexBrokerConfigurationV1 {
         configuration,
+        source: Arc::new(ConfigurationSourceV1 {
+            parent: parent_file,
+            file,
+            revoked: AtomicBool::new(false),
+        }),
         identity: ProductCodexBrokerConfigurationIdentityV1 {
             canonical_path: path.to_path_buf(),
+            parent: parent_identity,
+            modified_seconds: first.mtime(),
+            modified_nanoseconds: first.mtime_nsec(),
+            changed_seconds: first.ctime(),
+            changed_nanoseconds: first.ctime_nsec(),
             device: first.dev(),
             inode: first.ino(),
             mode: first.mode() & 0o7777,
@@ -315,6 +486,7 @@ pub(super) fn validate_configuration_shape(
     configuration: &ProductCodexBrokerConfigurationV1,
 ) -> Result<(), ProductCodexBrokerDaemonError> {
     if configuration.version != 1
+        || !configuration.purpose.permits_role(configuration.role)
         || configuration.configuration_authority_uid == configuration.broker_uid
         || configuration.operation_authority_uid == configuration.broker_uid
         || configuration.trust_bundle_authority_uid == configuration.broker_uid
@@ -406,3 +578,6 @@ fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
         && left.ctime() == right.ctime()
         && left.ctime_nsec() == right.ctime_nsec()
 }
+
+#[cfg(test)]
+mod tests;

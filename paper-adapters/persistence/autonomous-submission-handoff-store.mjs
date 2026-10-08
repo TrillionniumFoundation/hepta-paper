@@ -212,10 +212,18 @@ function pathInside(root, candidate) {
 
 function fileIdentity(candidate) {
   const stat = fs.lstatSync(candidate, { bigint: true });
-  return Object.freeze({
-    device: String(stat.dev), inode: String(stat.ino), mode: String(stat.mode),
-    links: String(stat.nlink), size: String(stat.size),
-  });
+  const identity = {
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    kind: stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other',
+    mode: String(stat.mode),
+    links: String(stat.nlink),
+  };
+  // Directory byte size is an implementation detail that changes whenever a
+  // child entry is created or removed. It cannot identify replacement of the
+  // directory and caused fresh provisioning to reject its own SQLite file.
+  if (!stat.isDirectory()) identity.size = String(stat.size);
+  return Object.freeze(identity);
 }
 
 function assertSameIdentity(left, right, code) {

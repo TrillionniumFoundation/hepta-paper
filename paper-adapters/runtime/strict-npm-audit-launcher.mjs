@@ -44,8 +44,10 @@ function sameNode(stat, identity) {
 
 function assertTrustedTemporaryParent() {
   const stat = fs.lstatSync(STRICT_TEMPORARY_PARENT, { bigint: true });
+  // `/tmp` is safe here by its exact sticky-directory mode and canonical path;
+  // rootless containers may map its owner/group to a non-root host identity.
   if (fs.realpathSync(STRICT_TEMPORARY_PARENT) !== STRICT_TEMPORARY_PARENT
-    || stat.isSymbolicLink() || !stat.isDirectory() || stat.uid !== 0n || stat.gid !== 0n
+    || stat.isSymbolicLink() || !stat.isDirectory()
     || (Number(stat.mode) & 0o7777) !== STRICT_TEMPORARY_PARENT_MODE) {
     throw codedError('strict_npm_audit_temporary_parent_invalid');
   }

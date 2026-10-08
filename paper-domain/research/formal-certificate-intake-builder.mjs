@@ -71,6 +71,16 @@ export function buildGenericFormalCertificateIntake({
   if (!Array.isArray(sourceRecords) || !sourceRecords.length) {
     blockers.push('formal_certificate_source_records_missing');
   }
+  const sourcePaths = (Array.isArray(sourceRecords) ? sourceRecords : [])
+    .map((source) => String(source?.path || ''));
+  const sourceHashes = (Array.isArray(sourceRecords) ? sourceRecords : [])
+    .map((source) => String(source?.hash || ''));
+  if (new Set(sourcePaths).size !== sourcePaths.length) {
+    blockers.push('formal_certificate_source_path_duplicate');
+  }
+  if (new Set(sourceHashes).size !== sourceHashes.length) {
+    blockers.push('formal_certificate_source_hash_duplicate');
+  }
   for (const [index, source] of sourceRecords.entries()) {
     if (formalCertificateSourceExtension(source?.path)
       !== descriptor?.extension) {
@@ -279,15 +289,17 @@ export function buildGenericFormalCertificateIntake({
     }
     return verification;
   });
-  const executionSourceHashes = [...new Set(
-    (executionReceipt?.sourceHashes || []).map(String),
-  )].sort();
-  const sourceHashes = [...new Set((
-    Array.isArray(sourceRecords) ? sourceRecords : []
-  ).map((item) => String(item?.hash || '')))].sort();
-  if (executionSourceHashes.length !== sourceHashes.length
+  const rawExecutionSourceHashes = Array.isArray(executionReceipt?.sourceHashes)
+    ? executionReceipt.sourceHashes.map(String) : [];
+  const executionSourceHashes = [...new Set(rawExecutionSourceHashes)].sort();
+  if (executionSourceHashes.length !== rawExecutionSourceHashes.length) {
+    blockers.push('formal_execution_source_hash_duplicate');
+  }
+  const sourceHashSet = new Set(sourceHashes);
+  const sourceHashList = [...sourceHashSet].sort();
+  if (executionSourceHashes.length !== sourceHashList.length
     || executionSourceHashes.some(
-      (value, index) => value !== sourceHashes[index],
+      (value, index) => value !== sourceHashList[index],
     )) {
     blockers.push('formal_execution_source_hashes_mismatch');
   }

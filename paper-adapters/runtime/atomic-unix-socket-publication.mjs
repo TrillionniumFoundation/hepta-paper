@@ -42,11 +42,16 @@ function assertTrustedAncestorPermissions(parent, parentStat, owner) {
   let ancestor = path.dirname(parent);
   while (true) {
     const stat = fs.lstatSync(ancestor, { bigint: true });
-    const trustedOwner = owner === null || stat.uid === owner || stat.uid === 0n;
     const otherPrincipalWritable = (stat.mode & 0o022n) !== 0n;
     const stickyProtectsChild = (stat.mode & 0o1000n) !== 0n
       && (owner === null || protectedChild.uid === owner || protectedChild.uid === 0n);
-    if (!trustedOwner || (otherPrincipalWritable && !stickyProtectsChild)) {
+    // A sticky shared ancestor such as a rootless container's `/tmp` may be
+    // owned by a mapped system account rather than the service UID. Its sticky
+    // rule still prevents that account from renaming the service-owned child,
+    // so ownership is not required when the child is protected by the sticky
+    // directory. Non-writable ancestors are safe regardless of mapped owner;
+    // writable ancestors remain rejected unless sticky protection applies.
+    if (otherPrincipalWritable && !stickyProtectsChild) {
       fail('atomic_unix_socket_parent_invalid');
     }
     if (ancestor === path.dirname(ancestor)) return;

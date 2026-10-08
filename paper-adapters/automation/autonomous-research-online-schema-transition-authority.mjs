@@ -76,8 +76,12 @@ export function createAutonomousResearchOnlineSchemaTransitionAuthorityProcessCl
   const invoke = (request) => {
     assertPinnedIdentity(configuration);
     return processOutput(spawnSync(
-      configuration.commandPath,
-      configuration.fixedArguments,
+      // Execute the pinned authority source with the current trusted Node
+      // runtime instead of relying on a mutable `/usr/bin/node` shebang. The
+      // source and configuration remain content-addressed; the interpreter is
+      // the process already running this verified application.
+      process.execPath,
+      [configuration.commandPath, ...configuration.fixedArguments],
       {
         input: `${JSON.stringify(request)}\n`,
         encoding: 'utf8',

@@ -246,8 +246,11 @@ export function createAutonomousResearchOnlineMutationAuthorityProcessClient({
       invalid('autonomous_research_online_mutation_authority_process_identity_changed');
     }
     return processResult(spawnSync(
-      processConfiguration.commandPath,
-      processConfiguration.fixedArguments,
+      // Run the pinned authority source through the trusted application
+      // runtime; an executable source file's `/usr/bin/node` shebang is not a
+      // portable or independently controlled interpreter boundary.
+      process.execPath,
+      [processConfiguration.commandPath, ...processConfiguration.fixedArguments],
       {
         input: `${JSON.stringify(request)}\n`,
         encoding: 'utf8',

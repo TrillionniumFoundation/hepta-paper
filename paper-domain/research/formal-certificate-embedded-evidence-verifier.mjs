@@ -100,6 +100,14 @@ export function embeddedFormalEvidenceBlockers(intake) {
   if (!sourceRecords.length) {
     blockers.push('formal_certificate_intake_embedded_sources_missing');
   }
+  const sourcePaths = sourceRecords.map((source) => String(source?.path || ''));
+  const sourceHashes = sourceRecords.map((source) => String(source?.hash || ''));
+  if (new Set(sourcePaths).size !== sourcePaths.length) {
+    blockers.push('formal_certificate_intake_embedded_source_path_duplicate');
+  }
+  if (new Set(sourceHashes).size !== sourceHashes.length) {
+    blockers.push('formal_certificate_intake_embedded_source_hash_duplicate');
+  }
   for (const [index, source] of sourceRecords.entries()) {
     if (!hasExactObjectKeys(source, SOURCE_RECORD_KEYS)
       || sourceExtension(source?.path) !== descriptor?.extension
@@ -137,11 +145,16 @@ export function embeddedFormalEvidenceBlockers(intake) {
       !== executionContract.isolationPolicyHash) {
     blockers.push('formal_certificate_intake_embedded_execution_contract_invalid');
   }
-  const executionSourceHashes = [...new Set(
-    (executionReceipt?.sourceHashes || []).map(String),
-  )].sort();
-  const embeddedSourceHashes = [...new Set(sourceRecords
-    .map((source) => String(source?.hash || '')))].sort();
+  const rawExecutionSourceHashes = Array.isArray(executionReceipt?.sourceHashes)
+    ? executionReceipt.sourceHashes.map(String) : [];
+  const rawEmbeddedSourceHashes = sourceRecords.map(
+    (source) => String(source?.hash || ''),
+  );
+  const executionSourceHashes = [...new Set(rawExecutionSourceHashes)].sort();
+  const embeddedSourceHashes = [...new Set(rawEmbeddedSourceHashes)].sort();
+  if (executionSourceHashes.length !== rawExecutionSourceHashes.length) {
+    blockers.push('formal_certificate_intake_embedded_execution_source_hash_duplicate');
+  }
   if (executionReceipt?.version !== 1
     || executionReceipt?.kind !== 'FormalVerifierExecutionReceipt'
     || executionReceipt?.status !== 'formal_verifier_execution_verified'

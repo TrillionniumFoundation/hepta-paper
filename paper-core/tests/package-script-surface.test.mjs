@@ -340,6 +340,33 @@ test('unified formal operational runner fails non-zero instead of accepting skip
   }
 });
 
+test('aggregate script DAGs verify capabilities once before checking their release matrix', () => {
+  function capabilitySteps(name, ancestors = []) {
+    assert.equal(ancestors.includes(name), false, `npm script cycle: ${[...ancestors, name].join(' -> ')}`);
+    assert.equal(typeof scripts[name], 'string', `missing npm script: ${name}`);
+    const steps = [];
+    const pattern = /\bnpm run ([A-Za-z0-9:_-]+)|migration\/(?:bin\/verify-capabilities|tests\/capability-matrix-v3)\.mjs/g;
+    for (const match of scripts[name].matchAll(pattern)) {
+      if (match[1]) steps.push(...capabilitySteps(match[1], [...ancestors, name]));
+      else steps.push(match[0]);
+    }
+    return steps;
+  }
+  const verification = 'migration/bin/verify-capabilities.mjs';
+  const matrix = 'migration/tests/capability-matrix-v3.mjs';
+  // Check explicit npm orchestration. Verifier calls inside integration
+  // fixtures deliberately exercise the standalone CLI and are not expanded.
+  for (const name of ['ci:inner', 'test:inner', 'release:inner']) {
+    assert.deepEqual(capabilitySteps(name), [verification, matrix], name);
+  }
+  assert.deepEqual(capabilitySteps('paper:capability-conformance'), [verification]);
+  assert.deepEqual(capabilitySteps('migration:capability-matrix-v3'), [verification, matrix]);
+  assert.match(
+    scripts['migration:capability-matrix-v3'],
+    /verify-capabilities\.mjs && node migration\/tests\/capability-matrix-v3\.mjs --release-profile/,
+  );
+});
+
 test('test:inner expands to a deduplicated test-file DAG', () => {
   const counts = new Map();
   const visiting = [];

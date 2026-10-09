@@ -653,7 +653,7 @@ test('real native worker emits a v2 receipt that passes trusted-ledger verificat
   }
 });
 
-test('independent read-only native workers overlap and formal workers stay out of parallel batches', async () => {
+test('independent read-only native workers run with bounded concurrency', async () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-worker-parallel-'));
   const root = path.join(parent, 'assets');
   const sourceRoot = path.join(root, 'source');
@@ -663,25 +663,27 @@ test('independent read-only native workers overlap and formal workers stay out o
   const input = Buffer.from('parallel native worker input\n');
   fs.writeFileSync(path.join(sourceRoot, 'input.txt'), input);
   const inputSpec = { role: 'evidence', path: 'input.txt', sha256: hashBytes(input) };
+  const workers = Array.from({ length: 8 }, (_, index) => ({
+    id: `worker-${index + 1}`,
+    type: 'artifact_integrity',
+    evidenceClass: 'research_evidence',
+    syntheticInput: false,
+    outcomesPreprogrammed: false,
+    claimIds: [`claim-${index + 1}`],
+    inputs: [inputSpec],
+  }));
   fs.writeFileSync(path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify({
     version: 1,
     kind: 'NativeResearchWorkerPlan',
     paperId: 'paper-native-parallel',
     taskKey: 'paper:paper-native-parallel',
-    workers: ['first', 'second'].map((id) => ({
-      id,
-      type: 'artifact_integrity',
-      evidenceClass: 'research_evidence',
-      syntheticInput: false,
-      outcomesPreprogrammed: false,
-      claimIds: [`claim-${id}`],
-      inputs: [inputSpec],
-    })),
+    workers,
   }, null, 2)}\n`);
 
   let active = 0;
   let maximumActive = 0;
   const executionOrder = [];
+  const writtenReceipts = [];
   try {
     assert.equal(nativeResearchWorkerCanRunInParallel({ type: 'artifact_integrity' }), true);
     assert.equal(nativeResearchWorkerCanRunInParallel({ type: 'formal_verifier_lake' }), false);
@@ -691,20 +693,131 @@ test('independent read-only native workers overlap and formal workers stay out o
       runtimeRoot,
       paperTask: { paperId: 'paper-native-parallel', taskKey: 'paper:paper-native-parallel' },
       execute: true,
-      artifactRepositoryFactory: () => ({ writeJson: async () => ({}) }),
-      executeWorker: async (worker) => {
+      artifactRepositoryFactory: () => ({ writeJson: async (file) => {
         active += 1;
         maximumActive = Math.max(maximumActive, active);
-        executionOrder.push(worker.id);
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (file.endsWith('.receipt.json')) {
+          writtenReceipts.push(path.basename(file, '.receipt.json'));
+          executionOrder.push(path.basename(file, '.receipt.json'));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
         active -= 1;
-        return { status: 'native_research_worker_passed', blockers: [] };
-      },
+        return {};
+      } }),
     });
     assert.equal(report.status, 'native_research_workers_verified');
-    assert.equal(maximumActive, 2);
-    assert.deepEqual(executionOrder.sort(), ['first', 'second']);
-    assert.deepEqual(report.workerReceipts.map((receipt) => receipt.workerId), ['first', 'second']);
+    assert.equal(maximumActive, 4);
+    assert.deepEqual(executionOrder.sort(), workers.map((worker) => worker.id).sort());
+    assert.deepEqual(writtenReceipts.sort(), workers.map((worker) => worker.id).sort());
+    assert.deepEqual(report.workerReceipts.map((receipt) => receipt.workerId), workers.map((worker) => worker.id));
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('a native worker rejection waits for already-started sibling cleanup', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-worker-rejection-'));
+  const root = path.join(parent, 'assets');
+  const sourceRoot = path.join(root, 'source');
+  const runtimeRoot = path.join(parent, 'runtime');
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  const validInput = Buffer.from('valid native worker input\n');
+  const invalidJson = Buffer.from('{ invalid json\n');
+  fs.writeFileSync(path.join(sourceRoot, 'valid.txt'), validInput);
+  fs.writeFileSync(path.join(sourceRoot, 'invalid.json'), invalidJson);
+  const workers = [
+    {
+      id: 'valid',
+      type: 'artifact_integrity',
+      evidenceClass: 'research_evidence',
+      syntheticInput: false,
+      outcomesPreprogrammed: false,
+      claimIds: ['claim-valid'],
+      inputs: [{ role: 'evidence', path: 'valid.txt', sha256: hashBytes(validInput) }],
+    },
+    {
+      id: 'invalid',
+      type: 'json_assertions',
+      evidenceClass: 'research_evidence',
+      syntheticInput: false,
+      outcomesPreprogrammed: false,
+      claimIds: ['claim-invalid'],
+      inputs: [{ role: 'evidence', path: 'invalid.json', sha256: hashBytes(invalidJson) }],
+      parameters: { assertions: [{ path: '$.ok', op: 'equals', value: true }] },
+    },
+  ];
+  fs.writeFileSync(path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'NativeResearchWorkerPlan',
+    paperId: 'paper-native-rejection',
+    taskKey: 'paper:paper-native-rejection',
+    workers,
+  }, null, 2)}\n`);
+  let siblingCleanupFinished = false;
+  try {
+    await assert.rejects(() => runNativeResearchWorkers({
+      root,
+      sourceRoot,
+      runtimeRoot,
+      paperTask: { paperId: 'paper-native-rejection', taskKey: 'paper:paper-native-rejection' },
+      execute: true,
+      artifactRepositoryFactory: () => ({ writeJson: async (file) => {
+        if (!file.endsWith('valid.receipt.json')) return {};
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        siblingCleanupFinished = true;
+        return {};
+      } }),
+    }), /JSON|Expected property/);
+    assert.equal(siblingCleanupFinished, true);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('an over-limit native plan is blocked before any native worker executes', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-worker-limit-'));
+  const root = path.join(parent, 'assets');
+  const sourceRoot = path.join(root, 'source');
+  const runtimeRoot = path.join(parent, 'runtime');
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  const input = Buffer.from('bounded native worker input\n');
+  fs.writeFileSync(path.join(sourceRoot, 'input.txt'), input);
+  const workers = Array.from({ length: 17 }, (_, index) => ({
+    id: `worker-${index + 1}`,
+    type: 'artifact_integrity',
+    evidenceClass: 'research_evidence',
+    syntheticInput: false,
+    outcomesPreprogrammed: false,
+    claimIds: [`claim-${index + 1}`],
+    inputs: [{ role: 'evidence', path: 'input.txt', sha256: hashBytes(input) }],
+  }));
+  fs.writeFileSync(path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'NativeResearchWorkerPlan',
+    paperId: 'paper-native-limit',
+    taskKey: 'paper:paper-native-limit',
+    workers,
+  }, null, 2)}\n`);
+  let written = 0;
+  try {
+    const report = await runNativeResearchWorkers({
+      root,
+      sourceRoot,
+      runtimeRoot,
+      paperTask: { paperId: 'paper-native-limit', taskKey: 'paper:paper-native-limit' },
+      execute: true,
+      artifactRepositoryFactory: () => ({ writeJson: async (file, receipt) => {
+        if (file.endsWith('.receipt.json') && receipt.workerId) written += 1;
+        return {};
+      } }),
+    });
+    assert.equal(report.status, 'native_research_workers_blocked');
+    assert.ok(report.blockers.includes('research_worker_plan_worker_count_invalid'));
+    assert.equal(written, 17);
+    assert.ok(report.workerReceipts.every((receipt) => receipt.blockers.includes('native_research_worker_execution_blocked_by_plan')));
+    assert.ok(report.workerReceipts.every((receipt) => receipt.result.status === 'native_research_worker_blocked'));
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }

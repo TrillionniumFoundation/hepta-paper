@@ -33,11 +33,11 @@ const PARALLEL_SAFE_WORKER_TYPES = new Set([
   'csv_descriptive_statistics',
   'json_assertions',
 ]);
+const MAX_PARALLEL_SAFE_NATIVE_WORKERS = 4;
 const normalizedText = (value) => String(value || '').normalize('NFKC')
   .replace(/\s+/g, ' ').trim();
 const safeWorkerId = (value) => (/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(String(value || ''))
   ? String(value || '') : null);
-
 export function nativeResearchWorkerCanRunInParallel(worker) {
   return PARALLEL_SAFE_WORKER_TYPES.has(String(worker?.type || ''));
 }
@@ -462,7 +462,6 @@ export async function runNativeResearchWorkers({
   trustedFormalSandboxRuntime = null,
   dynamicFormalExecutionAuthority = null,
   dynamicFormalExecutionEnvironment = process.env,
-  executeWorker = executeNativeResearchWorker,
 } = {}) {
   const planPath = sourceRoot ? path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json') : null;
   const plan = planPath ? await readJsonIfExists(planPath) : null;
@@ -538,8 +537,10 @@ export async function runNativeResearchWorkers({
   const artifactRepository = outputDir && artifactRepositoryFactory && !reportBlockers.includes('research_worker_runtime_output_unsafe')
     ? artifactRepositoryFactory(outputDir)
     : null;
+  const executionBlockedByPlan = execute && reportBlockers.length > 0;
   const runWorker = async (worker) => {
     const blockers = [];
+    if (executionBlockedByPlan) blockers.push('native_research_worker_execution_blocked_by_plan');
     const id = safeWorkerId(worker.id);
     if (!id) blockers.push('research_worker_id_invalid');
     if (!WORKER_TYPE_SET.has(worker.type)) blockers.push('native_research_worker_type_not_allowed');
@@ -581,7 +582,7 @@ export async function runNativeResearchWorkers({
         const sourceMerkleHashBefore = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
         const result = blockers.length
           ? { status: 'native_research_worker_blocked', blockers }
-          : await executeWorker(worker, inputValidation.records, {
+          : await executeNativeResearchWorker(worker, inputValidation.records, {
             sourceRoot,
             signal,
             trustedFormalSandboxRuntime,
@@ -687,11 +688,14 @@ export async function runNativeResearchWorkers({
       continue;
     }
     const parallelWorkers = [];
-    while (index < workers.length && nativeResearchWorkerCanRunInParallel(workers[index])) {
-      parallelWorkers.push(workers[index]);
-      index += 1;
+    while (index < workers.length && parallelWorkers.length < MAX_PARALLEL_SAFE_NATIVE_WORKERS
+      && nativeResearchWorkerCanRunInParallel(workers[index])) {
+      parallelWorkers.push(workers[index]); index += 1;
     }
-    receipts.push(...await Promise.all(parallelWorkers.map((worker) => runWorker(worker))));
+    const settled = await Promise.allSettled(parallelWorkers.map((worker) => runWorker(worker)));
+    const rejection = settled.find((entry) => entry.status === 'rejected');
+    if (rejection) throw rejection.reason;
+    receipts.push(...settled.map((entry) => entry.value));
   }
   const verifiedReceipts = receipts.filter((receipt) => (
     receipt.status === 'native_research_worker_execution_verified'

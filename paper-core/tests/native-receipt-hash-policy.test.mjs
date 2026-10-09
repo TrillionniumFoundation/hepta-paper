@@ -7,6 +7,7 @@ import { bootstrapLegacyPaperExecutionContext } from '../../paper-composition/co
 import { composeTrustedReceiptLedgers } from '../../paper-composition/bootstrap/receipt-ledger-composition.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import {
+  nativeResearchWorkerCanRunInParallel,
   runNativeResearchWorkers,
   verifyNativeResearchWorkerExecutionReport,
 } from '../../paper-adapters/research-verify/worker-runtime.mjs';
@@ -648,6 +649,63 @@ test('real native worker emits a v2 receipt that passes trusted-ledger verificat
     assert.equal(context.services.nativeResearchWorkerJobReceiptStore.get('research-worker:paper-native-positive:integrity').status, 'completed');
   } finally {
     context.services.persistenceSession.close();
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('independent read-only native workers overlap and formal workers stay out of parallel batches', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-worker-parallel-'));
+  const root = path.join(parent, 'assets');
+  const sourceRoot = path.join(root, 'source');
+  const runtimeRoot = path.join(parent, 'runtime');
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  const input = Buffer.from('parallel native worker input\n');
+  fs.writeFileSync(path.join(sourceRoot, 'input.txt'), input);
+  const inputSpec = { role: 'evidence', path: 'input.txt', sha256: hashBytes(input) };
+  fs.writeFileSync(path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'NativeResearchWorkerPlan',
+    paperId: 'paper-native-parallel',
+    taskKey: 'paper:paper-native-parallel',
+    workers: ['first', 'second'].map((id) => ({
+      id,
+      type: 'artifact_integrity',
+      evidenceClass: 'research_evidence',
+      syntheticInput: false,
+      outcomesPreprogrammed: false,
+      claimIds: [`claim-${id}`],
+      inputs: [inputSpec],
+    })),
+  }, null, 2)}\n`);
+
+  let active = 0;
+  let maximumActive = 0;
+  const executionOrder = [];
+  try {
+    assert.equal(nativeResearchWorkerCanRunInParallel({ type: 'artifact_integrity' }), true);
+    assert.equal(nativeResearchWorkerCanRunInParallel({ type: 'formal_verifier_lake' }), false);
+    const report = await runNativeResearchWorkers({
+      root,
+      sourceRoot,
+      runtimeRoot,
+      paperTask: { paperId: 'paper-native-parallel', taskKey: 'paper:paper-native-parallel' },
+      execute: true,
+      artifactRepositoryFactory: () => ({ writeJson: async () => ({}) }),
+      executeWorker: async (worker) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        executionOrder.push(worker.id);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+        return { status: 'native_research_worker_passed', blockers: [] };
+      },
+    });
+    assert.equal(report.status, 'native_research_workers_verified');
+    assert.equal(maximumActive, 2);
+    assert.deepEqual(executionOrder.sort(), ['first', 'second']);
+    assert.deepEqual(report.workerReceipts.map((receipt) => receipt.workerId), ['first', 'second']);
+  } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }
 });

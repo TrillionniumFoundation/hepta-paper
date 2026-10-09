@@ -15,7 +15,7 @@ or external authority unless the corresponding independent evidence is present.
 - no unknown fields or duplicate declarations;
 - protocol and state-version range checks;
 - authority/side-effect ceiling checks;
-- owner, reviewer, SLO, and rollback fields present.
+- owner/reviewer responsibility, SLO, and rollback fields present.
 
 ### Planning
 
@@ -82,9 +82,20 @@ test-suite and workload digests
 host/runtime identity where applicable
 result and raw-artifact digests
 authority and non-authority statement
-producer and independent reviewer identity
+producer identity
+independent reviewer identity where explicitly required by the evidence contract
 expiry or revalidation rule
 ```
+
+Apply the [ownership model](MODULE_MODEL.md#10-ownership-model) to owner/reviewer
+fields, including `independentReviewerTeam`. Ordinary source conformance and PR
+integration have no human approval count or staffing quota under the
+[single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md); applicable
+exact-source checks remain required. Independent reviewer identity and separation
+remain mandatory where the applicable contract explicitly requires independent
+scientific or operational evidence. The [external authority contracts](../qualification/EXTERNAL_AUTHORITY.md)
+continue to control host, key, Codex-role, release and other external evidence;
+source conformance and development responsibility assignments cannot replace it.
 
 ## 4. Capability-specific coverage
 

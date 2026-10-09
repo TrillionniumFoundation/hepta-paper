@@ -33,6 +33,10 @@ manifestPath:
 
 State which identity is static source truth and which fields are supplied only by the exact qualified deployment registry. A source document cannot grant activation or authority.
 
+Owner fields and `independentReviewerTeam` record responsibility roles under the
+[ownership model](MODULE_MODEL.md#10-ownership-model). They impose no ordinary
+PR approval count or staffing quota.
+
 ## Mission and non-goals
 
 State the bounded responsibility, capability outcomes, and responsibilities explicitly excluded. Name the authoritative owner for every excluded write or external effect.
@@ -100,7 +104,7 @@ Document startup preflight, readiness, normal operation, backpressure, shutdown,
 
 ## Verification and evidence
 
-List capability evidence-binding IDs, exact tests, workflow contexts, fault cases, performance workloads, required evidence tier, producer/reviewer separation, expiry, and revalidation rule. Source conformance must not be represented as target-host or external-authority proof.
+List capability evidence-binding IDs, exact tests, workflow contexts, fault cases, performance workloads, required evidence tier, expiry, and revalidation rule. Identify producer/reviewer separation wherever the applicable contract explicitly requires independent scientific or operational evidence, following the [evidence binding rules](MODULE_CONFORMANCE.md#3-evidence-binding). Source conformance must not be represented as target-host or external-authority proof.
 
 ## Rollout and rollback
 

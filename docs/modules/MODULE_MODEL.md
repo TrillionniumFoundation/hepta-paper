@@ -174,9 +174,19 @@ These are responsibility and escalation roles, not a requirement for distinct
 people or staffed GitHub teams. Under the current
 [single-maintainer policy](../governance/OWNERSHIP_AND_REVIEW.md), one maintainer
 may perform these development roles and use authorized implementation tools.
+`independentReviewerTeam` identifies verification responsibility; it sets no
+ordinary PR approval count or staffing quota. Independent reviewer evidence is
+required only where the applicable contract explicitly requires independent
+scientific or operational evidence. That contract continues to determine the
+required producer/reviewer and service-principal separation.
+
 Production admission still requires the module's actual runtime principals,
 authority, single-writer, recovery and external-effect evidence. Human staffing
 neither substitutes for that evidence nor adds another development approval gate.
+The [external authority contracts](../qualification/EXTERNAL_AUTHORITY.md) retain
+`GAP-HOST-001`, `GAP-HOST-002`, `GAP-KEY-001`, `GAP-CODEX-001`, and `GAP-REL-001`;
+development role assignments cannot satisfy or waive those independently
+controlled requirements.
 
 ## 11. Public/private boundary
 
@@ -206,7 +216,7 @@ resource and SLO profile
 secret/redaction tests
 compatibility policy
 rollout and rollback version
-owner and reviewer assignments
+owner and reviewer responsibility assignments under the ownership model
 non-authority statement
 ```
 

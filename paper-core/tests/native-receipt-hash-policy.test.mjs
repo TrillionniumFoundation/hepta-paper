@@ -270,14 +270,10 @@ test('native worker dry-run rejects hostile plans, invalid inputs, and empty typ
     'research_worker_preprogrammed_outcomes_not_eligible',
     'research_worker_claim_ids_missing',
     '../outside.txt:research_worker_input_outside_source_workspace',
-    '../outside.txt:research_worker_input_missing',
     '../outside.txt:research_worker_input_hash_missing',
-    'missing.txt:research_worker_input_missing',
-    'input.txt:research_worker_input_hash_mismatch',
-    'native_research_worker_execution_receipt_missing',
   ]) assert.ok(hostile.blockers.includes(blocker), blocker);
-  assert.equal(hostile.workerReceipts[0].academicEvidenceEligible, false);
-  assert.equal(hostile.workerReceipts[0].status, 'native_research_worker_execution_verification_blocked');
+  assert.deepEqual(hostile.workerReceipts, []);
+  assert.equal(hostile.executedResearchWorkerCount, 0);
 
   writePlan({
     version: 1,
@@ -298,7 +294,7 @@ test('native worker dry-run rejects hostile plans, invalid inputs, and empty typ
     root, sourceRoot, runtimeRoot, paperTask, execute: false,
   });
   assert.ok(missingInputs.blockers.includes('research_worker_inputs_missing'));
-  assert.ok(missingInputs.blockers.includes('native_research_worker_execution_receipt_missing'));
+  assert.deepEqual(missingInputs.workerReceipts, []);
 
   const invalidFilter = await runNativeResearchWorkers({
     root, sourceRoot, runtimeRoot, paperTask, execute: false, workerTypes: ['caller_worker'],
@@ -775,7 +771,7 @@ test('a native worker rejection waits for already-started sibling cleanup', asyn
   }
 });
 
-test('an over-limit native plan is blocked before any native worker executes', async () => {
+test('an invalid native plan is blocked before per-worker work in both modes', async () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-worker-limit-'));
   const root = path.join(parent, 'assets');
   const sourceRoot = path.join(root, 'source');
@@ -800,24 +796,162 @@ test('an over-limit native plan is blocked before any native worker executes', a
     taskKey: 'paper:paper-native-limit',
     workers,
   }, null, 2)}\n`);
-  let written = 0;
+  let repositoryFactoryCalls = 0;
+  let leaseCalls = 0;
+  try {
+    const run = (execute) => runNativeResearchWorkers({
+      root,
+      sourceRoot,
+      runtimeRoot,
+      paperTask: { paperId: 'paper-native-limit', taskKey: 'paper:paper-native-limit' },
+      execute,
+      jobReceiptStore: {
+        createJob: () => { leaseCalls += 1; },
+        acquireLease: () => { leaseCalls += 1; return { leaseGeneration: 1 }; },
+        recordAttempt: () => { leaseCalls += 1; return { attemptId: 'unexpected', leaseGeneration: 1 }; },
+      },
+      artifactRepositoryFactory: () => {
+        repositoryFactoryCalls += 1;
+        return { writeJson: async () => ({}) };
+      },
+    });
+    for (const execute of [false, true]) {
+      const report = await run(execute);
+      assert.equal(report.status, 'native_research_workers_blocked');
+      assert.ok(report.blockers.includes('research_worker_plan_worker_count_invalid'));
+      assert.deepEqual(report.workerReceipts, []);
+      assert.equal(report.executedResearchWorkerCount, 0);
+      assert.equal(report.blockers.some((blocker) => blocker.includes('research_worker_input')), false);
+    }
+    assert.equal(repositoryFactoryCalls, 0);
+    assert.equal(leaseCalls, 0);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('formal workers remain a serial barrier between safe worker batches', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-worker-barrier-'));
+  const root = path.join(parent, 'assets');
+  const sourceRoot = path.join(root, 'source');
+  const runtimeRoot = path.join(parent, 'runtime');
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  const firstInput = Buffer.from('first barrier input\n');
+  const formalInput = Buffer.from('formal barrier input\n');
+  const secondInput = Buffer.from('second barrier input\n');
+  fs.writeFileSync(path.join(sourceRoot, 'first.txt'), firstInput);
+  fs.writeFileSync(path.join(sourceRoot, 'formal.txt'), formalInput);
+  fs.writeFileSync(path.join(sourceRoot, 'second.txt'), secondInput);
+  const worker = (id, type, inputPath, input) => ({
+    id,
+    type,
+    evidenceClass: 'research_evidence',
+    syntheticInput: false,
+    outcomesPreprogrammed: false,
+    claimIds: [`claim-${id}`],
+    inputs: [{ role: 'evidence', path: inputPath, sha256: hashBytes(input) }],
+  });
+  const workers = [
+    worker('safe-first', 'artifact_integrity', 'first.txt', firstInput),
+    worker('formal-middle', 'formal_verifier_lean', 'formal.txt', formalInput),
+    worker('safe-second', 'artifact_integrity', 'second.txt', secondInput),
+  ];
+  fs.writeFileSync(path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'NativeResearchWorkerPlan',
+    paperId: 'paper-native-barrier',
+    taskKey: 'paper:paper-native-barrier',
+    workers,
+  }, null, 2)}\n`);
+  const events = [];
   try {
     const report = await runNativeResearchWorkers({
       root,
       sourceRoot,
       runtimeRoot,
-      paperTask: { paperId: 'paper-native-limit', taskKey: 'paper:paper-native-limit' },
+      paperTask: { paperId: 'paper-native-barrier', taskKey: 'paper:paper-native-barrier' },
       execute: true,
-      artifactRepositoryFactory: () => ({ writeJson: async (file, receipt) => {
-        if (file.endsWith('.receipt.json') && receipt.workerId) written += 1;
+      artifactRepositoryFactory: () => ({ writeJson: async (file) => {
+        const id = path.basename(file).replace(/\.receipt\.json$/, '');
+        events.push(`start:${id}`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        events.push(`end:${id}`);
         return {};
       } }),
     });
     assert.equal(report.status, 'native_research_workers_blocked');
-    assert.ok(report.blockers.includes('research_worker_plan_worker_count_invalid'));
-    assert.equal(written, 17);
-    assert.ok(report.workerReceipts.every((receipt) => receipt.blockers.includes('native_research_worker_execution_blocked_by_plan')));
-    assert.ok(report.workerReceipts.every((receipt) => receipt.result.status === 'native_research_worker_blocked'));
+    assert.deepEqual(report.workerReceipts.map((receipt) => receipt.workerId), [
+      'safe-first', 'formal-middle', 'safe-second',
+    ]);
+    assert.ok(report.workerReceipts[1].blockers.length > 0);
+    assert.ok(events.indexOf('end:safe-first') < events.indexOf('start:formal-middle'));
+    assert.ok(events.indexOf('end:formal-middle') < events.indexOf('start:safe-second'));
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('a failed safe batch does not start later safe batches', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-worker-stop-'));
+  const root = path.join(parent, 'assets');
+  const sourceRoot = path.join(root, 'source');
+  const runtimeRoot = path.join(parent, 'runtime');
+  fs.mkdirSync(sourceRoot, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  const invalidJson = Buffer.from('{ invalid\n');
+  const validInput = Buffer.from('valid stop input\n');
+  fs.writeFileSync(path.join(sourceRoot, 'invalid.json'), invalidJson);
+  fs.writeFileSync(path.join(sourceRoot, 'valid.txt'), validInput);
+  const validWorker = (id) => ({
+    id,
+    type: 'artifact_integrity',
+    evidenceClass: 'research_evidence',
+    syntheticInput: false,
+    outcomesPreprogrammed: false,
+    claimIds: [`claim-${id}`],
+    inputs: [{ role: 'evidence', path: 'valid.txt', sha256: hashBytes(validInput) }],
+  });
+  const workers = [
+    {
+      id: 'invalid-json',
+      type: 'json_assertions',
+      evidenceClass: 'research_evidence',
+      syntheticInput: false,
+      outcomesPreprogrammed: false,
+      claimIds: ['claim-invalid-json'],
+      inputs: [{ role: 'evidence', path: 'invalid.json', sha256: hashBytes(invalidJson) }],
+      parameters: { assertions: [{ path: '$.ok', op: 'equals', value: true }] },
+    },
+    validWorker('safe-1'),
+    validWorker('safe-2'),
+    validWorker('safe-3'),
+    validWorker('later-1'),
+    validWorker('later-2'),
+  ];
+  fs.writeFileSync(path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'NativeResearchWorkerPlan',
+    paperId: 'paper-native-stop',
+    taskKey: 'paper:paper-native-stop',
+    workers,
+  }, null, 2)}\n`);
+  const written = [];
+  try {
+    await assert.rejects(() => runNativeResearchWorkers({
+      root,
+      sourceRoot,
+      runtimeRoot,
+      paperTask: { paperId: 'paper-native-stop', taskKey: 'paper:paper-native-stop' },
+      execute: true,
+      artifactRepositoryFactory: () => ({ writeJson: async (file) => {
+        const id = path.basename(file).replace(/\.receipt\.json$/, '');
+        if (id !== 'RESEARCH_WORKER_EXECUTION_REPORT') written.push(id);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {};
+      } }),
+    }), /JSON|Expected property/);
+    assert.deepEqual(written.sort(), ['safe-1', 'safe-2', 'safe-3']);
   } finally {
     fs.rmSync(parent, { recursive: true, force: true });
   }

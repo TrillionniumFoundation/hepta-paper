@@ -25,6 +25,7 @@ import {
 import {
   verifyFormalExecutionSnapshotReceipt,
 } from './formal-proof-search-workspace-repository.mjs';
+import { buildNativeResearchWorkerExecutionReport } from './native-research-worker-report.mjs';
 export { NATIVE_RESEARCH_WORKER_TYPES };
 export { formalAcademicPromotionBlockers } from './formal-academic-promotion-policy.mjs';
 const WORKER_TYPE_SET = new Set(NATIVE_RESEARCH_WORKER_TYPES);
@@ -474,9 +475,6 @@ export async function runNativeResearchWorkers({
   if (plan && plan.paperId !== paperTask?.paperId) reportBlockers.push('research_worker_plan_paper_id_mismatch');
   if (plan && plan.taskKey !== paperTask?.taskKey) reportBlockers.push('research_worker_plan_task_key_mismatch');
   const planRecord = planPath && plan ? await fileRecord(root, planPath, 'native_research_worker_plan') : null;
-  const canonicalClaimRegistry = plan
-    ? canonicalClaimsFromWorkerPlan({ sourceRoot, paperTask, plan })
-    : null;
   const declaredWorkers = Array.isArray(plan?.workers) ? plan.workers : [];
   const selectedWorkerTypes = workerTypes === null
     ? null
@@ -487,30 +485,32 @@ export async function runNativeResearchWorkers({
   const selectedWorkers = selectedWorkerTypes
     ? declaredWorkers.filter((worker) => selectedWorkerTypes.has(String(worker?.type || '')))
     : declaredWorkers;
-  const bound = bindFormalReviewsToWorkers({
-    workers: selectedWorkers,
-    formalReviewEnvelope,
-    theoremSpecification,
-    paperId: paperTask?.paperId || null,
-    canonicalClaimRegistry,
-    workerPlanHash: planRecord?.hash || null,
-  });
-  const workers = bound.workers;
-  if (workers.some((worker) => worker.type === 'formal_verifier_lake')) {
-    reportBlockers.push(...(canonicalClaimRegistry?.blockers || ['canonical_claim_registry_required']), ...bound.blockers);
-  }
-  if (dynamicFormalExecutionAuthority
-    && !verifyDynamicFormalExecutionAuthority(dynamicFormalExecutionAuthority)) {
-    reportBlockers.push('native_research_worker_dynamic_formal_authority_invalid');
+  for (const worker of selectedWorkers) {
+    if (!worker || !WORKER_TYPE_SET.has(worker.type)) reportBlockers.push('native_research_worker_type_not_allowed');
+    if (worker?.evidenceClass !== 'research_evidence') reportBlockers.push('research_worker_evidence_class_invalid');
+    if (worker?.syntheticInput !== false) reportBlockers.push('research_worker_synthetic_input_not_eligible');
+    if (worker?.outcomesPreprogrammed !== false) reportBlockers.push('research_worker_preprogrammed_outcomes_not_eligible');
+    if (!Array.isArray(worker?.claimIds) || !worker.claimIds.length) reportBlockers.push('research_worker_claim_ids_missing');
+    if (!Array.isArray(worker?.inputs) || !worker.inputs.length) reportBlockers.push('research_worker_inputs_missing');
+    for (const input of Array.isArray(worker?.inputs) ? worker.inputs : []) {
+      const relative = String(input?.path || '');
+      if (!relative) reportBlockers.push('research_worker_input_path_missing');
+      else if (!pathWithin(sourceRoot, path.resolve(sourceRoot, relative))) {
+        reportBlockers.push(`${relative}:research_worker_input_outside_source_workspace`);
+      }
+      if (!input?.sha256) reportBlockers.push(`${relative || 'unknown'}:research_worker_input_hash_missing`);
+    }
   }
   if (plan && (!declaredWorkers.length || declaredWorkers.length > 16)) reportBlockers.push('research_worker_plan_worker_count_invalid');
-  if (selectedWorkerTypes && !workers.length) reportBlockers.push('native_research_worker_type_filter_empty');
-  const workerIds = declaredWorkers.map((worker) => safeWorkerId(worker.id));
+  if (selectedWorkerTypes && !selectedWorkers.length) reportBlockers.push('native_research_worker_type_filter_empty');
+  let workers = selectedWorkers;
+  const workerIds = declaredWorkers.map((worker) => safeWorkerId(worker?.id));
   if (workerIds.some((id) => !id)) reportBlockers.push('research_worker_id_invalid');
   if (new Set(workerIds.filter(Boolean)).size !== workerIds.filter(Boolean).length) reportBlockers.push('research_worker_id_duplicate');
   const engineFiles = [
     fileURLToPath(import.meta.url),
     fileURLToPath(new URL('./native-research-worker-execution.mjs', import.meta.url)),
+    fileURLToPath(new URL('./native-research-worker-report.mjs', import.meta.url)),
     fileURLToPath(new URL('./formal-verifier.mjs', import.meta.url)),
     fileURLToPath(new URL('./lake-formal-verifier.mjs', import.meta.url)),
     fileURLToPath(new URL('../runtime/os-sandboxed-worker-runner.mjs', import.meta.url)),
@@ -519,11 +519,48 @@ export async function runNativeResearchWorkers({
     files: await Promise.all(engineFiles.map(async (file) => ({ file: path.basename(file), hash: await sha256File(file) }))),
     workerTypes: NATIVE_RESEARCH_WORKER_TYPES,
   });
-  const outputDir = runtimeRoot && paperTask?.paperId
+  let outputDir = runtimeRoot && paperTask?.paperId
     ? path.join(runtimeRoot, 'research-workers', paperTask.paperId)
     : null;
+  let artifactRepository = null;
   if (!outputDir || !pathWithin(runtimeRoot, outputDir)) reportBlockers.push('research_worker_runtime_output_invalid');
   if (execute && !artifactRepositoryFactory) reportBlockers.push('artifact_repository_factory_not_injected');
+
+  const buildReport = (receipts) => buildNativeResearchWorkerExecutionReport({
+    receipts,
+    reportBlockers,
+    workers,
+    paperTask,
+    planRecord,
+    theoremSpecification,
+    dynamicFormalExecutionAuthority,
+    engineHash,
+    selectedWorkerTypes,
+    execute,
+    outputDir,
+    artifactRepository,
+  });
+  if (reportBlockers.length) return buildReport([]);
+  const canonicalClaimRegistry = plan
+    ? canonicalClaimsFromWorkerPlan({ sourceRoot, paperTask, plan })
+    : null;
+  const bound = bindFormalReviewsToWorkers({
+    workers: selectedWorkers,
+    formalReviewEnvelope,
+    theoremSpecification,
+    paperId: paperTask?.paperId || null,
+    canonicalClaimRegistry,
+    workerPlanHash: planRecord?.hash || null,
+  });
+  workers = bound.workers;
+  if (workers.some((worker) => worker.type === 'formal_verifier_lake')) {
+    reportBlockers.push(...(canonicalClaimRegistry?.blockers || ['canonical_claim_registry_required']), ...bound.blockers);
+  }
+  if (dynamicFormalExecutionAuthority
+    && !verifyDynamicFormalExecutionAuthority(dynamicFormalExecutionAuthority)) {
+    reportBlockers.push('native_research_worker_dynamic_formal_authority_invalid');
+  }
+  if (reportBlockers.length) return buildReport([]);
   if (execute && outputDir) {
     const prospective = inspectScopedWriteTargetSync({ scopeRoot: runtimeRoot, candidate: path.join(outputDir, '.scope-check') });
     if (prospective.status !== 'scoped_write_target_verified') {
@@ -534,13 +571,12 @@ export async function runNativeResearchWorkers({
       if (outputIdentity.status !== 'scoped_file_identity_verified') reportBlockers.push('research_worker_runtime_output_unsafe', ...outputIdentity.blockers);
     }
   }
-  const artifactRepository = outputDir && artifactRepositoryFactory && !reportBlockers.includes('research_worker_runtime_output_unsafe')
+  artifactRepository = outputDir && artifactRepositoryFactory && !reportBlockers.includes('research_worker_runtime_output_unsafe')
     ? artifactRepositoryFactory(outputDir)
     : null;
-  const executionBlockedByPlan = execute && reportBlockers.length > 0;
+  if (reportBlockers.length) return buildReport([]);
   const runWorker = async (worker) => {
     const blockers = [];
-    if (executionBlockedByPlan) blockers.push('native_research_worker_execution_blocked_by_plan');
     const id = safeWorkerId(worker.id);
     if (!id) blockers.push('research_worker_id_invalid');
     if (!WORKER_TYPE_SET.has(worker.type)) blockers.push('native_research_worker_type_not_allowed');
@@ -697,54 +733,5 @@ export async function runNativeResearchWorkers({
     if (rejection) throw rejection.reason;
     receipts.push(...settled.map((entry) => entry.value));
   }
-  const verifiedReceipts = receipts.filter((receipt) => (
-    receipt.status === 'native_research_worker_execution_verified'
-    && receipt.academicEvidenceEligible === true
-  ));
-  const report = {
-    version: 1,
-    kind: 'NativeResearchWorkerExecutionReport',
-    paperId: paperTask?.paperId || null,
-    taskKey: paperTask?.taskKey || null,
-    status: reportBlockers.length || verifiedReceipts.length !== workers.length
-      ? 'native_research_workers_blocked'
-      : 'native_research_workers_verified',
-    executeRequested: Boolean(execute),
-    planPath: planRecord?.path || null,
-    planHash: planRecord?.hash || null,
-    theoremSpecificationHash: theoremSpecification?.theoremSpecificationHash || null,
-    theoremSpecificationClaimHashes: Object.freeze((theoremSpecification?.claims || [])
-      .map((claim) => claim.theoremSpecificationClaimHash)),
-    dynamicFormalExecutionAuthority,
-    engineHash,
-    workerTypeFilter: selectedWorkerTypes ? [...selectedWorkerTypes].sort() : null,
-    plannedResearchWorkerCount: workers.length,
-    executedResearchWorkerCount: verifiedReceipts.length,
-    verifiedAcademicEvidenceWorkerCount: verifiedReceipts.length,
-    workerReceipts: receipts,
-    workerReceiptHashes: verifiedReceipts.map((receipt) => receipt.nativeResearchWorkerExecutionReceiptHash),
-    blockers: [...new Set([
-      ...reportBlockers,
-      ...receipts.flatMap((receipt) => receipt.blockers || []),
-    ])],
-    safety: {
-      allowlistedWorkerTypes: [...NATIVE_RESEARCH_WORKER_TYPES],
-      networkAccess: false,
-      subprocessExecution: workers.some((worker) => ['formal_verifier_lean', 'formal_verifier_lake'].includes(worker.type)),
-      subprocessBoundedByWorkerRunnerPort: true,
-      sourceMutation: receipts.some((receipt) => receipt.sourceMutationDetected === true),
-      writesRuntimeOnly: Boolean(execute),
-      externalActionPerformed: false,
-    },
-  };
-  const hashed = {
-    ...report,
-    nativeResearchWorkerExecutionReportHash: hashPaperRecord('NativeResearchWorkerExecutionReport', report),
-  };
-  if (execute && outputDir && artifactRepository) {
-    await artifactRepository.writeJson(path.join(outputDir, 'RESEARCH_WORKER_EXECUTION_REPORT.json'), hashed, {
-      role: 'native_research_worker_execution_report',
-    });
-  }
-  return hashed;
+  return buildReport(receipts);
 }

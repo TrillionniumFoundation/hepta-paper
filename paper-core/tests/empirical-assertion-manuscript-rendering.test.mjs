@@ -31,6 +31,9 @@ import {
   inspectAutonomousManuscriptSubstantiveAgentProse,
 } from '../../paper-adapters/automation/autonomous-manuscript-ir-materialization.mjs';
 import {
+  TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE,
+} from '../../paper-domain/automation/trusted-autonomous-manuscript-prose.mjs';
+import {
   verifyTrustedAutonomousManuscriptRenderReceipt,
 } from '../../paper-domain/automation/trusted-autonomous-manuscript-render-contract.mjs';
 import {
@@ -81,6 +84,49 @@ import {
   productionExperimentClosureFixture,
 } from './support/production-experiment-closure-fixture.mjs';
 
+test('manuscript title fallback uses the canonical default and preserves trusted IR titles', () => {
+  const trusted = authority();
+  const release = genericManuscriptReleaseFixture({
+    paperId: 'title-fallback-paper',
+    campaignId: 'title-fallback-campaign',
+    includeProof: true,
+    includeResearchReport: true,
+  });
+  const title = release.manuscriptIr.title;
+  const source = [
+    '\\documentclass[11pt]{article}',
+    '\\usepackage{amsmath,amssymb,amsthm}',
+    '\\newtheorem{theorem}{Theorem}',
+    `\\title{${title}}`,
+    '\\author{}',
+    '\\date{}',
+    '\\begin{document}',
+    '\\maketitle',
+    '\\section{Results}',
+    ...trusted.entries.map((entry) => block(entry)),
+    '\\end{document}',
+  ].join('\n');
+  const defaultUniverse = readEmpiricalAssertionUniverse({
+    sourceRoot: workspace(source.replace(`\\title{${title}}`,
+      `\\title{${TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE}}`)),
+  });
+  assert.equal(defaultUniverse.status, 'empirical_assertion_universe_verified', defaultUniverse.blockers.join('\n'));
+  const trustedUniverse = readEmpiricalAssertionUniverse({
+    sourceRoot: workspace(source),
+    trustedManuscriptIr: release.manuscriptIr,
+  });
+  assert.equal(trustedUniverse.blockers.some((item) => (
+    item.startsWith('empirical_assertion_untyped_result_prose:')
+  )), false, trustedUniverse.blockers.join('\n'));
+  const staleTitleUniverse = readEmpiricalAssertionUniverse({
+    sourceRoot: workspace(source.replace(`\\title{${title}}`,
+      `\\title{${TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE}}`)),
+    trustedManuscriptIr: release.manuscriptIr,
+  });
+  assert.ok(staleTitleUniverse.blockers.some((item) => (
+    item.startsWith('empirical_assertion_untyped_result_prose:')
+  )));
+});
 test('autonomous manuscript accepts only registry-bound claims, canonical assertions, formal surfaces, and fixed neutral prose', () => {
   const trusted = authority();
   const paperId = 'formal-surface-fixture';

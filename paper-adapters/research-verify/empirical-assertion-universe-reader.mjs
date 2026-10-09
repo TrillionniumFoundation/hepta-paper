@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { verifyAutonomousFormalSupportSurfaceAuthority } from '../../paper-domain/automation/autonomous-formal-support-registry.mjs';
 import {
+  TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE,
   TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE,
   TRUSTED_AUTONOMOUS_MANUSCRIPT_SECTIONS,
 } from '../../paper-domain/automation/trusted-autonomous-manuscript-prose.mjs';
@@ -292,7 +293,7 @@ function safeSection(title, trustedManuscriptIr) {
 function safeDocumentMetadata(line, trustedManuscriptIr) {
   if (SAFE_EMPTY_DOCUMENT_METADATA.test(line)) return true;
   if (!trustedManuscriptIr?.title) {
-    return line.trim() === '\\title{Autonomous bounded research report}';
+    return line.trim() === `\\title{${TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE}}`;
   }
   return line.trim() === `\\title{${latexEscapeEvidenceBoundText(trustedManuscriptIr.title)}}`;
 }

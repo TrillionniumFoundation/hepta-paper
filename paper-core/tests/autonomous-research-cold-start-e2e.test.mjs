@@ -43,6 +43,9 @@ import {
   materializeAutonomousResearchWorkspace,
 } from '../../paper-adapters/automation/autonomous-research-workspace-materializer.mjs';
 import {
+  TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE,
+} from '../../paper-domain/automation/trusted-autonomous-manuscript-prose.mjs';
+import {
   createFullResearchQualificationReceiptPointerRepository,
 } from '../../paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
@@ -176,6 +179,9 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
         loopPreparation: prepared,
         datasetMounts: intake.datasetMounts,
       });
+      assert.ok(fs.readFileSync(materialization.mainTex, 'utf8').includes(
+        `\\title{${TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE}}`,
+      ));
       return enqueuePreparedAutonomousResearchCampaign({
         readinessReport: prepared,
         campaignId: intake.campaignId,

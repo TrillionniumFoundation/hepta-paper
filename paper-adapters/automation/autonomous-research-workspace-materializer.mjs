@@ -4,6 +4,9 @@ import {
   AUTONOMOUS_FORMAL_MANUSCRIPT_PROOF,
   verifyMachineProposedScientificClaimSet,
 } from '../../paper-domain/automation/autonomous-research-proposal-contract.mjs';
+import {
+  TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE,
+} from '../../paper-domain/automation/trusted-autonomous-manuscript-prose.mjs';
 import { verifyAutonomousResearchPolicyAuthorization } from '../../paper-domain/automation/autonomous-research-policy-contract.mjs';
 import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import {
@@ -50,7 +53,7 @@ function manuscriptSkeleton({ proposal, empiricalMaterialization }) {
     '\\documentclass[11pt]{article}',
     '\\usepackage{amsmath,amssymb,amsthm}',
     '\\newtheorem{theorem}{Theorem}',
-    '\\title{Autonomous bounded research report}',
+    `\\title{${TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE}}`,
     '\\author{}',
     '\\date{}',
     '\\begin{document}',

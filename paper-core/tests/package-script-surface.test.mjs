@@ -340,6 +340,18 @@ test('unified formal operational runner fails non-zero instead of accepting skip
   }
 });
 
+test('capability verification runs once in aggregate CI and test commands', () => {
+  for (const name of ['ci:inner', 'test:inner']) {
+    const command = scripts[name];
+    assert.equal((command.match(/paper:capability-conformance/g) || []).length, 0, name);
+    assert.equal((command.match(/migration:capability-matrix-v3/g) || []).length, 1, name);
+  }
+  assert.match(
+    scripts['migration:capability-matrix-v3'],
+    /node migration\/bin\/verify-capabilities\.mjs && node migration\/tests\/capability-matrix-v3\.mjs --release-profile/,
+  );
+});
+
 test('test:inner expands to a deduplicated test-file DAG', () => {
   const counts = new Map();
   const visiting = [];

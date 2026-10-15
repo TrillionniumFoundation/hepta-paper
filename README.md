@@ -14,7 +14,11 @@ Superseded plans, dated status snapshots, trigger notes, and remediation diaries
 
 ## Current authority boundary
 
-The existing Node control plane remains authoritative under its current gates until capability-by-capability cutover is independently accepted. The Rust control-plane work is an additive source candidate and is not a production writer.
+The existing Node control plane remains authoritative for the distribution and
+multi-capability campaign lane until capability-by-capability cutover is
+independently accepted. The Rust control-plane work is an additive source
+candidate for that lane; a private single-user installation has the separate
+profile-scoped readiness result below.
 
 Repository source or hosted CI does not authorize:
 

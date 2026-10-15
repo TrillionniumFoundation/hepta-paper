@@ -9,10 +9,13 @@ history and are not current development authority.
 
 ## Current role
 
-The Node control plane remains the active campaign and automation authority under
-its existing repository, runtime, evidence, and external-action gates. The Rust
-work is additive and disabled for production authority until capability-specific
-cutover is accepted.
+The Node control plane remains the active campaign and automation authority for
+the distribution and multi-capability lane under its existing repository,
+runtime, evidence, and external-action gates. The Rust work is additive and
+disabled for that lane until capability-specific cutover is accepted. A private
+single-user installation is evaluated by Rust's separate
+`personal-self-hosted-v1` profile; this Node status remains the differential
+oracle and does not make distribution claims for that profile.
 
 ## Current architecture
 
@@ -105,7 +108,7 @@ percentage. Current next steps are:
 7. transfer writer/external authority atomically and retire the matching Node
    path only after rollback and independent evidence.
 
-## External blockers
+## External blockers — distribution lane
 
 The following remain outside repository-local proof:
 
@@ -115,6 +118,11 @@ The following remain outside repository-local proof:
 - independent capability-key lifecycle;
 - real separated Codex author/reviewer credential canaries;
 - KMS/HSM, immutable-storage, release, portal, and submission receipts.
+
+These are not blockers for Rust's `personal-self-hosted-v1` local result. That
+profile disables external actions and distribution, while retaining its own
+local provenance, database/WAL, recovery, anti-rollback, and scientific replay
+controls.
 
 ## Current validation surface
 

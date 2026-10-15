@@ -7,6 +7,9 @@ import { defaultPaperRuntimeRoot, HEPTA_WORKSPACE_ROOT } from '../src/workspace-
 import {
   inspectPersonalSelfHostedLocalEvidence,
 } from '../verification/personal-self-hosted-local-observation.mjs';
+import {
+  PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING,
+} from '../../paper-domain/operations/personal-self-hosted-production-profile-contract.mjs';
 
 export function parsePersonalSelfHostedReadinessArguments(argv) {
   return parseStrictCliArguments(argv, {
@@ -25,6 +28,7 @@ function usage() {
     usage: 'personal-self-hosted-readiness [--root CODE_WORKSPACE] [--runtime-root PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready]',
     profile: 'personal-self-hosted-v1',
     scope: 'single-user-private-local-only',
+    localOperationMapping: PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING,
     effects: 'read-only; runs immutable local DB inspection, source scan, and reads canonical scientific/formal receipts; never mints authority or performs external actions',
     localEvidenceInputs: Object.freeze({
       root: 'code workspace used for exact commit/provenance and tracked-source scan (defaults to HEPTA_WORKSPACE_ROOT or process.cwd())',

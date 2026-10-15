@@ -75,7 +75,12 @@ once, and withdraws a recorded selection when any current successor changes.
 Its absorb/supersede/reference/reject results concern mapped source content;
 runtime parity, whole-branch merge and installation acceptance remain separate.
 
-## Static source state
+## Static source state — distribution lane
+
+The table below is the global Rust migration projection for the distribution
+and multi-capability control-plane lane. It intentionally keeps external and
+host qualification rows conservative. A private single-user installation uses
+the separate profile-scoped result described in the next section.
 
 | Plane | Current status | Effective evidence rule | Authority granted |
 |---|---|---|---|
@@ -90,10 +95,10 @@ runtime parity, whole-branch merge and installation acceptance remain separate.
 | Scientific evidence orchestration | `source_implemented` | eligible for exact-head workflow promotion | no assurance elevation |
 | Cutover/retirement contracts | `source_implemented` | durable journal, epoch, process-crash/concurrency and data-preserving local rollback tests await exact-head qualification | local drill only; production requires separate signed authorization |
 | Protected main merge boundary | `retired` | obsolete human approval package retired; live machine checks remain | none |
-| Trusted legacy matrix replay | `blocked_external` | private archive exists; retained hosted replay receipt/index remains absent | verification only |
-| Production target host | `blocked_external` | repository and hosted runners cannot establish target-host facts | none |
-| Real Codex credentials/provider | `blocked_external` | real credential custody and live role canaries remain absent | none |
-| Release/KMS/WORM/submission | `blocked_external` | real external authority receipts remain absent | none |
+| Trusted legacy matrix replay | `blocked_external` | private archive exists; retained hosted replay receipt/index remains absent | distribution verification only |
+| Production target host | `blocked_external` | repository and hosted runners cannot establish target-host facts | distribution lane only |
+| Real Codex credentials/provider | `blocked_external` | real credential custody and live role canaries remain absent | distribution lane only |
+| Release/KMS/WORM/submission | `blocked_external` | real external authority receipts remain absent | distribution lane only |
 
 The static table preserves the declared component projection. The separate
 `module.rust-control-plane-service` registry entry is `source_implemented`:
@@ -101,7 +106,8 @@ local/shadow execution exists, while qualified production composition, adapters,
 capability parity and host acceptance remain open. A successful,
 artifact-retained exact-head run may derive `source_qualified` for eligible
 repository-local rows without editing this file. External rows never
-auto-promote.
+auto-promote. Those statements describe distribution readiness; they do not
+invalidate a successful `personal-self-hosted-v1` local result.
 
 ## Personal self-hosted lane
 
@@ -128,6 +134,19 @@ unsupported Node routes. The personal report is a separate
 `personal_self_hosted_production_ready` result and does not claim distribution,
 external authority, portal submission, or multi-operator production
 qualification.
+
+The profile also publishes an explicit local operation mapping so that
+distribution terminology cannot silently become a private claim:
+
+| Distribution operation | Personal profile operation | Required local controls |
+|---|---|---|
+| target-host | local deterministic controls | credential/runtime boundary; database inventory/schema |
+| installation | local source-bound install | credential/runtime boundary; exact code provenance |
+| canary | local deterministic replay | enabled scientific oracles; zero-skipped operational receipt |
+| rollback | local restore and anti-rollback | database restore drill; online anti-rollback |
+
+This mapping does not provide a portable installer, live-provider canary, or
+Node authority cutover.
 
 ## Qualification Subject V3 source and remaining evidence closure
 
@@ -196,7 +215,7 @@ into a synthetic completion percentage.
 None of these source contracts grants target-host, credential, key-custody,
 release, portal or submission authority.
 
-## Remaining external blockers
+## Remaining external blockers — distribution lane
 
 | Gap | Status | Evidence collector | Required real owner |
 |---|---|---|---|
@@ -211,6 +230,11 @@ release, portal or submission authority.
 | Blocker | Status | Evidence collector | Required real owner |
 |---|---|---|---|
 | `LEGACY-REPLAY-001` | `blocked_external` | issue #28 | private companion operator plus independent archive/replay reviewer |
+
+The profile-scoped disposition for these rows is authoritative for a private
+single-user run: `GAP-HOST-001`, `GAP-HOST-002`, and `LEGACY-REPLAY-001` are
+`scoped_out`; `GAP-KEY-001`, `GAP-CODEX-001`, and `GAP-REL-001` are
+`not_applicable`. This does not close or weaken the distribution-lane rows.
 
 The owner retired `GAP-GOV-003` as a human repository-approval prerequisite.
 Live branch settings still enforce required checks and safe references. Historical
@@ -256,9 +280,12 @@ authority.
 - `blocked_external` — the repository cannot manufacture the required fact;
 - `retired` — behavior is intentionally absent with migration evidence.
 
-“Done”, “production ready”, or unqualified “qualified” are prohibited.
+“Done”, “production ready”, or unqualified “qualified” are prohibited as
+unscoped claims. The machine result
+`personal_self_hosted_production_ready` is the allowed, profile-scoped local
+readiness claim when the Rust evaluator returns it with zero blockers.
 
-## Closure order
+## Closure order — distribution lane
 
 1. Run every required Rust, Node, workflow, supply-chain, program-truth,
    qualification and impacted-test producer on the exact RC head.
@@ -283,6 +310,12 @@ authority.
     after all production prerequisites, complete capability/state translation and
     reverse compatibility are accepted perform production canary, rollback, writer
     cutover and Node-authority retirement.
+
+For `personal-self-hosted-v1`, closure stops at the seven required local
+controls plus the enabled CPU/GPU scientific receipts. The profile does not
+load provider credentials, perform release/submission actions, or enable the
+broker/listener and unsupported legacy routes, so the distribution closure
+steps above are out of scope for that result.
 
 ## Canonical document set
 

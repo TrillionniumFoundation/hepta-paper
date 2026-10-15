@@ -1,9 +1,11 @@
 # hepta-paper Rust control plane
 
 This workspace is the additive, compatibility-preserving Rust replacement for
-first-party `hepta-paper` control-plane authority. It is a release-candidate
-source implementation, not a production writer. Real provider credentials and
-all production authority remain forbidden until their independent gates close.
+first-party `hepta-paper` control-plane authority. For the distribution and
+multi-capability campaign lane it remains a release-candidate source
+implementation, not a production writer. A private single-user installation
+uses the explicit `personal-self-hosted-v1` readiness result below; that local
+result does not grant distribution or external-action authority.
 
 Canonical plan and truth:
 

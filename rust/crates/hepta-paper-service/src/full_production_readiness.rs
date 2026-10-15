@@ -16,7 +16,8 @@ mod composition_tests;
 
 use crate::deployment_environment::load_readiness_deployment_environment_v1;
 use crate::personal_self_hosted_readiness::{
-    PersonalSelfHostedReadinessOptions, inspect_personal_self_hosted_readiness_v1,
+    PersonalSelfHostedReadinessOptions, canonical_observed_at_v1,
+    inspect_personal_self_hosted_readiness_v1,
 };
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
@@ -35,7 +36,7 @@ const SHA256_PREFIX: &str = "sha256:";
 pub const FULL_PRODUCTION_READINESS_USAGE: &str = r#"{
   "version": 1,
   "kind": "FullProductionReadinessUsage",
-  "usage": "full-production-readiness --profile personal-self-hosted-v1 [--root CODE_WORKSPACE] [--runtime-root PRIVATE_RUNTIME] [--require-ready] | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+  "usage": "full-production-readiness --profile personal-self-hosted-v1 [--root CODE_WORKSPACE] [--runtime-root PRIVATE_RUNTIME] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--now ISO|UNIX_MILLIS] [--require-ready] | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
   "localObservationEffects": "none",
   "externalAction": "never",
   "semanticNotReadyExitCode": 2,
@@ -54,6 +55,10 @@ pub struct FullProductionReadinessOptions {
     pub live_provider_canary: bool,
     pub live_release_attestor: bool,
     pub require_full_production: bool,
+    pub cpu_receipt: Option<PathBuf>,
+    pub gpu_receipt: Option<PathBuf>,
+    pub gpu_enabled: bool,
+    pub observed_at: Option<String>,
     pub deployment_environment_file: Option<PathBuf>,
     pub owner_acceptance_document: Option<PathBuf>,
     pub owner_acceptance_document_sha256: Option<String>,
@@ -104,6 +109,27 @@ pub fn parse_full_production_readiness_arguments(
                 options.personal_self_hosted = true;
             }
             "--require-ready" => options.require_ready = true,
+            "--cpu-receipt" => {
+                options.cpu_receipt = Some(PathBuf::from(option_value(
+                    args,
+                    &mut index,
+                    "cpu_receipt",
+                )?));
+                continue;
+            }
+            "--gpu-receipt" => {
+                options.gpu_receipt = Some(PathBuf::from(option_value(
+                    args,
+                    &mut index,
+                    "gpu_receipt",
+                )?));
+                continue;
+            }
+            "--gpu-enabled" => options.gpu_enabled = true,
+            "--now" => {
+                options.observed_at = Some(option_value(args, &mut index, "now")?);
+                continue;
+            }
             "--live-provider-canary" => options.live_provider_canary = true,
             "--live-release-attestor" => options.live_release_attestor = true,
             "--require-full-production" => options.require_full_production = true,
@@ -212,12 +238,21 @@ pub fn parse_full_production_readiness_arguments(
         for (name, path) in [
             ("root", options.root.as_ref()),
             ("runtime_root", options.runtime_root.as_ref()),
+            ("cpu_receipt", options.cpu_receipt.as_ref()),
+            ("gpu_receipt", options.gpu_receipt.as_ref()),
         ] {
             if path.is_some_and(|path| !path.is_absolute()) {
                 return Err(format!("full_production_readiness_{name}_must_be_absolute"));
             }
         }
         return Ok(options);
+    }
+    if options.cpu_receipt.is_some()
+        || options.gpu_receipt.is_some()
+        || options.gpu_enabled
+        || options.observed_at.is_some()
+    {
+        return Err("full_production_readiness_personal_flags_require_personal_profile".to_owned());
     }
     if options.require_ready {
         return Err("full_production_readiness_require_ready_requires_personal_profile".to_owned());
@@ -438,7 +473,7 @@ pub fn full_production_readiness_help_json_v1() -> Value {
     json!({
         "version": 1,
         "kind": "FullProductionReadinessUsage",
-        "usage": "full-production-readiness --profile personal-self-hosted-v1 [--root CODE_WORKSPACE] [--runtime-root PRIVATE_RUNTIME] [--require-ready] | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+        "usage": "full-production-readiness --profile personal-self-hosted-v1 [--root CODE_WORKSPACE] [--runtime-root PRIVATE_RUNTIME] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--now ISO|UNIX_MILLIS] [--require-ready] | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
         "profiles": {
             "personal-self-hosted-v1": {
                 "scope": "single-user-private-local-only",
@@ -535,7 +570,7 @@ fn inspect_with_owner_references(
             })
             .map(resolve_path_from_process)
             .unwrap_or_else(|| default_runtime_root(&personal_workspace));
-        let environment = deployment_environment
+        let mut environment = deployment_environment
             .environment
             .as_object()
             .map(|values| {
@@ -547,21 +582,52 @@ fn inspect_with_owner_references(
                     .collect()
             })
             .unwrap_or_default();
-        let observed_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
-            .as_millis();
-        let observed_at = i64::try_from(observed_at)
-            .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
-        let observed_at = crate::external_authority_intake::unix_millis_to_iso_v1(observed_at)
-            .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+        if let Some(path) = options.cpu_receipt.as_ref() {
+            environment.insert(
+                "HEPTA_PERSONAL_CPU_RECEIPT".to_owned(),
+                resolve_path_from_process(path.clone())
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        if let Some(path) = options.gpu_receipt.as_ref() {
+            environment.insert(
+                "HEPTA_PERSONAL_GPU_RECEIPT".to_owned(),
+                resolve_path_from_process(path.clone())
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        if options.gpu_enabled {
+            environment.insert("HEPTA_PERSONAL_GPU_ENABLED".to_owned(), "true".to_owned());
+        }
+        let observed_at = if let Some(value) = options.observed_at.as_deref() {
+            canonical_observed_at_v1(value)
+                .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
+        } else {
+            let observed_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
+                .as_millis();
+            let observed_at = i64::try_from(observed_at)
+                .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+            crate::external_authority_intake::unix_millis_to_iso_v1(observed_at)
+                .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
+        };
+        // Keep the profile wrapper equivalent to the dedicated personal
+        // readiness command: an explicit GPU opt-in is a local capability
+        // selection, so it must be carried through instead of being silently
+        // downgraded to CPU-only inspection.
         let personal =
             inspect_personal_self_hosted_readiness_v1(&PersonalSelfHostedReadinessOptions {
                 workspace_root: personal_workspace.clone(),
                 runtime_root: personal_runtime.clone(),
                 cpu_receipt: None,
                 gpu_receipt: None,
-                gpu_enabled: false,
+                gpu_enabled: options.gpu_enabled
+                    || environment
+                        .get("HEPTA_PERSONAL_GPU_ENABLED")
+                        .is_some_and(|value| value == "true"),
                 observed_at,
                 environment,
             })
@@ -941,6 +1007,30 @@ mod tests {
     }
 
     #[test]
+    fn personal_profile_preserves_explicit_gpu_environment_opt_in() {
+        let report = inspect_full_production_readiness_v1(
+            &FullProductionReadinessOptions {
+                personal_self_hosted: true,
+                root: Some(PathBuf::from("/tmp")),
+                runtime_root: Some(PathBuf::from("/tmp/hepta-personal-profile-gpu-runtime")),
+                environment: json!({"HEPTA_PERSONAL_GPU_ENABLED": "true"}),
+                ..Default::default()
+            },
+            Path::new("/tmp"),
+        )
+        .unwrap();
+        assert_eq!(report["scientificCapabilities"]["gpu"]["enabled"], true);
+        assert_eq!(report["scientificCapabilities"]["gpu"]["status"], "blocked");
+        assert!(
+            report["blockers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|blocker| blocker == "personal_self_hosted_gpu_oracle_not_ready")
+        );
+    }
+
+    #[test]
     fn inspection_is_always_blocked_and_never_claims_external_action() {
         let options = FullProductionReadinessOptions {
             root: Some(PathBuf::from("/tmp/root")),
@@ -952,6 +1042,42 @@ mod tests {
         assert_eq!(report["fullProductionReady"], false);
         assert_eq!(report["externalActionPerformed"], false);
         assert!(report["blockers"].as_array().unwrap().len() >= 5);
+    }
+
+    #[test]
+    fn personal_profile_forwards_local_receipts_and_observation_time() {
+        let options = parse_full_production_readiness_arguments(&[
+            "--profile".into(),
+            "personal-self-hosted-v1".into(),
+            "--cpu-receipt".into(),
+            "/tmp/cpu-receipt.json".into(),
+            "--gpu-enabled".into(),
+            "--gpu-receipt".into(),
+            "/tmp/gpu-receipt.json".into(),
+            "--now".into(),
+            "2026-09-20T00:00:00.000Z".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options.cpu_receipt,
+            Some(PathBuf::from("/tmp/cpu-receipt.json"))
+        );
+        assert_eq!(
+            options.gpu_receipt,
+            Some(PathBuf::from("/tmp/gpu-receipt.json"))
+        );
+        assert!(options.gpu_enabled);
+        assert_eq!(
+            options.observed_at.as_deref(),
+            Some("2026-09-20T00:00:00.000Z")
+        );
+        assert!(
+            parse_full_production_readiness_arguments(&[
+                "--cpu-receipt".into(),
+                "/tmp/cpu-receipt.json".into(),
+            ])
+            .is_err()
+        );
     }
 
     #[test]

@@ -31,6 +31,10 @@ jobs:
           rustc --version --verbose
           cargo --version --verbose
 
+      - name: Prepare Rust native build host
+        shell: bash
+        run: bash .github/scripts/prepare-rust-build-host.sh
+
       - name: Build installed qualification targets
         shell: bash
         run: |

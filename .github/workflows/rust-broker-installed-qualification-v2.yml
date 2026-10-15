@@ -23,6 +23,7 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal
           rustup default 1.98.0
+          bash .github/scripts/prepare-rust-build-host.sh
           cargo build --manifest-path rust/Cargo.toml \
             -p hepta-codex-broker --bin hepta-trust-bundle-preflight \
             --release --locked

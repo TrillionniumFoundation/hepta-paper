@@ -33,6 +33,7 @@ jobs:
           set -euo pipefail
           rustup toolchain install 1.98.0 --profile minimal --component rustfmt
           rustup default 1.98.0
+          bash .github/scripts/prepare-rust-build-host.sh
       - name: Bind immutable source before execution
         id: subject
         shell: bash

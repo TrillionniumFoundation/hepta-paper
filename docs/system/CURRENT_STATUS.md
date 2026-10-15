@@ -28,6 +28,12 @@ and maintainer integration; the historical provenance cannot qualify this tree.
 
 ## Current authority ceiling
 
+The status below describes the **distribution and multi-capability control-plane
+lane**. The repository also exposes a narrower, executable
+`personal-self-hosted-v1` lane for one operator on one private host; its
+profile-scoped readiness result is documented below and does not inherit the
+distribution lane's external-authority requirements.
+
 ```text
 current campaign/control authority    existing Node control plane under its current gates
 Rust local/shadow service             executable source candidate
@@ -39,7 +45,9 @@ portal/submission authority            absent from repository and control plane
 ```
 
 No development document, source implementation, hosted workflow, fixture key,
-or repository administrator prose changes this ceiling.
+or repository administrator prose changes the distribution ceiling. A
+`personal_self_hosted_production_ready` result is a local operational result,
+not an elevation of the distribution ceiling.
 
 ## Current source and qualification disposition
 
@@ -90,12 +98,12 @@ backlog and machine projection rather than becoming a second global status sourc
 | Area | Static implementation | Effective qualification | Activation |
 |---|---|---|---|
 | current Node campaign and automation control | source implemented | existing scoped gates | authoritative |
-| Rust broker/runtime/workspace/writer components | source implemented | fresh exact-subject requalification required | disabled |
+| Rust broker/runtime/workspace/writer components | source implemented | fresh exact-subject requalification required | disabled for distribution lane |
 | global machine truth and documentation controls | source implemented | fresh exact-subject qualification required | disabled as governance authority |
 | module protocol, registry, SDK and conformance | typed policy-owned registry and prepared-effect source slice implemented; full SDK/conformance pending | fresh exact-subject qualification required | disabled |
-| Rust central composition root | runnable local/shadow CLI and durable plan-to-commit composition; module is `source_implemented`; qualified production composition absent | fresh exact-subject and host/capability qualification required | disabled |
+| Rust central composition root | runnable local/shadow CLI and durable plan-to-commit composition; module is `source_implemented`; qualified distribution composition absent | fresh exact-subject and host/capability qualification required | disabled for distribution lane |
 | global scheduler/optimizer | bounded exact selection, deterministic fallback and replayable certificate source implemented; full optimizer port/calibration pending | fresh exact-subject qualification required | disabled |
-| hierarchical DRF/aging/reservation model | current Node governor plus Rust weighted dominant-share, aging and exact reservation/accounting source slice | full canonical workload qualification pending | disabled for Rust control |
+| hierarchical DRF/aging/reservation model | current Node governor plus Rust weighted dominant-share, aging and exact reservation/accounting source slice | full canonical workload qualification pending | disabled for Rust distribution control |
 | performance qualification | source implemented; exact-host baseline absent | no exact-host baseline | disabled |
 | optional team-scale ownership | design mapping only | no staffing prerequisite | single-maintainer policy; required approvals = 0 |
 | release/submission verification ports | source implemented | external packages absent | external actions disabled |
@@ -127,9 +135,11 @@ are described in the runtime implementation document. This remains source
 implementation, not accepted production composition; local commands do not load
 real credentials or authorize external actions, and keep
 `automatic_activation=false` and `production_activation=false`. G2 through G6
-remain open for their unimplemented work items and exact-subject qualification.
+remain open for their unimplemented work items and exact-subject qualification
+in the distribution lane; the private profile uses only its explicitly enabled
+local capabilities.
 
-## External blockers
+## Distribution-lane external blockers
 
 | ID | Missing independently controlled fact |
 |---|---|
@@ -139,6 +149,11 @@ remain open for their unimplemented work items and exact-subject qualification.
 | `GAP-KEY-001` | independent key lifecycle, revocation, rollback, and compromise drills |
 | `GAP-CODEX-001` | separated authenticated Codex author/reviewer canaries under real credential custody |
 | `GAP-REL-001` | real KMS/HSM, immutable-storage, release, portal, and submission receipts |
+
+These rows remain blockers only for the distribution, external-action, and
+multi-operator control-plane claim. They are intentionally not prerequisites
+for the private profile below; the profile records the disposition of every
+row in `paper-core/config/personal-self-hosted-production-profile.v1.json`.
 
 ## Personal self-hosted readiness
 
@@ -156,8 +171,10 @@ SQLite/WAL integrity, crash/kill recovery, backup/restore, anti-rollback and
 deterministic replay evidence for explicitly enabled local capabilities remain
 required. This is local replay of enabled capabilities, not the full hosted
 263-file Node replay, and the profile makes no claim for unsupported Node
-routes. A
-personal-ready result never claims distribution or external authority.
+routes. A personal-ready result never claims distribution or external
+authority. When the evaluator returns `personal_self_hosted_production_ready`,
+that scoped result is the production boundary for a private single-user
+installation; the distribution lane remains independently open.
 
 ## Documentation convergence state
 
@@ -177,7 +194,7 @@ The candidate working tree now has:
 These are source changes only. G1 remains open until the resulting exact tree
 passes its required workflows before maintainer integration.
 
-## Next closure order
+## Next closure order — distribution lane
 
 1. Commit the runtime/documentation candidate on its dedicated branch and obtain its
    fresh exact base/head/merge identity.
@@ -193,6 +210,11 @@ passes its required workflows before maintainer integration.
 7. Complete G7 exact-host performance evidence; team-scale ownership remains optional.
 8. Complete G8 external packages, then G9 shadow/canary/rollback and G10 atomic
    authority transfer/Node retirement.
+
+The private single-user lane has a separate closure order: run the Rust profile,
+provide the seven required local control receipts and enabled-scientific-oracle
+receipts, and keep all external-action and distribution capabilities disabled.
+G8 through G10 are not dependencies of that profile result.
 
 ## Local validation entry points
 

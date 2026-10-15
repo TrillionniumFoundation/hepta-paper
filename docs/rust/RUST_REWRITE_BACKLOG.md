@@ -6,9 +6,12 @@ mandatory Code Owner team provisioning (`MOD-007`) are retired, not externally
 qualified. Logical staffing work is optional; real source, runtime and recovery
 checks remain required. Historical references do not restore an approval gate.
 
-This is the canonical human **static implementation backlog**. Stable IDs do
-not change. Status tokens are machine-compared with
-`current-status.v1.json`; drift is a CI failure.
+This is the canonical human **static implementation backlog** for the
+distribution and multi-capability control-plane lane. Stable IDs do not change.
+Status tokens are machine-compared with `current-status.v1.json`; drift is a CI
+failure. The single-user `personal-self-hosted-v1` profile is a narrower
+runtime claim: distribution-only rows remain present here for auditability but
+are scoped out or not applicable in that profile.
 
 Plan v4 deliberately keeps repository-authored rows at `source_implemented`.
 Only an exact-head workflow artifact may derive `source_qualified` for one
@@ -129,7 +132,7 @@ These rows are source contracts and deterministic simulations. The real 72-hour 
 | RUST-DB-008 | P0 | source_implemented | Writer backup/restore | integrity-bound backup and restore source drill |
 | RUST-DB-009 | P0 | source_implemented | Scale/soak source harness | 10k deterministic simulation and bounded soak contract; real 72h run is issue #12 |
 
-## External qualification ledger
+## External qualification ledger — distribution lane
 
 | Gap | Status | Issue | Closure authority |
 |---|---|---:|---|
@@ -144,6 +147,19 @@ These rows are source contracts and deterministic simulations. The real 72-hour 
 | Blocker | Status | Issue | Closure authority |
 |---|---|---:|---|
 | LEGACY-REPLAY-001 | blocked_external | #28 | private companion operator plus independent archive/replay reviewer |
+
+For the private profile, the machine-bound disposition is:
+
+| Personal profile gap | Disposition | Reason |
+|---|---|---|
+| `personal:GAP-HOST-001` | `scoped_out` | broker listener is disabled |
+| `personal:GAP-HOST-002` | `scoped_out` | destructive host soak is disabled |
+| `personal:GAP-KEY-001` | `not_applicable` | no external action or distributed signing |
+| `personal:GAP-CODEX-001` | `not_applicable` | no live provider or broker action |
+| `personal:GAP-REL-001` | `not_applicable` | no release, portal, submission or distribution |
+| `personal:LEGACY-REPLAY-001` | `scoped_out` | unsupported routes are disabled |
+
+This profile disposition changes the claim scope, not the distribution ledger.
 
 ## Evidence, release and cutover
 
@@ -169,7 +185,7 @@ the resulting artifact binds workflow/run/head/tree
 
 The artifact cannot promote `blocked_external` rows.
 
-## Definition of done for every item
+## Definition of done for every distribution item
 
 An item is eligible for effective qualification only when all applicable fields
 exist:
@@ -186,3 +202,9 @@ rollback plan
 named owner/reviewer
 remaining non-authority statement
 ```
+
+Personal profile readiness has its own definition of done: the seven required
+local controls, all enabled CPU/GPU scientific receipts, and zero evaluator
+blockers. It does not require external owners, hosted private replay, target
+host drills, or release/submission evidence because those capabilities are
+disabled by the profile.

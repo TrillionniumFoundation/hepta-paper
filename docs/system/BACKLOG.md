@@ -7,9 +7,11 @@ qualified. Logical staffing work is optional; real source, runtime and recovery
 checks remain required. Historical references do not restore an approval gate.
 
 The machine work graph is `docs/system/truth/work-items.v2.json`. This projection
-summarizes current closure order; scoped Rust implementation items remain in
-`docs/rust/RUST_REWRITE_BACKLOG.md` to avoid a second copy of the same detailed
-status.
+summarizes the distribution and multi-capability closure order; scoped Rust
+implementation items remain in `docs/rust/RUST_REWRITE_BACKLOG.md` to avoid a
+second copy of the same detailed status. The separate
+`personal-self-hosted-v1` profile has a narrower local closure order and does
+not inherit distribution-only external gates.
 
 ## Gate order
 
@@ -23,9 +25,9 @@ status.
 | G5 | MIG/NODE/domain module items: capability inventory, adapters, shadow and cutover | current Node modules registered; migration implementation pending |
 | G6 | SCH-001…007: deterministic scheduler, optimizer certificate, fallback and calibration | bounded exact/fallback source implemented; Pareto reduction, optimizer port and calibration pending |
 | G7 | PERF/OBS/ORG: canonical workloads, SLOs, ownership and affected CI | design ready |
-| G8 | host, storage, key, Codex, release and legacy replay packages | blocked external |
-| G9 | production-shaped shadow, canary and rollback | not started |
-| G10 | atomic Rust authority transfer and Node retirement | not started |
+| G8 | distribution-lane host, storage, key, Codex, release and legacy replay packages | blocked external |
+| G9 | distribution-lane production-shaped shadow, canary and rollback | not started |
+| G10 | distribution-lane atomic Rust authority transfer and Node retirement | not started |
 
 ## Status meanings
 
@@ -40,6 +42,11 @@ retired           intentionally removed with migration evidence
 No gate closes because a source file exists. Closure requires the milestone's
 exact evidence package, dependency closure, maintainer integration decision, and current
 rollback/recovery disposition.
+
+For a private single-user installation, the profile closure is evaluated by
+`personal-self-hosted-readiness`: seven local controls, enabled scientific
+replay receipts, and zero blockers. G8 through G10 are out of scope while
+external-action and distribution capabilities remain disabled.
 
 ## Definition of done
 

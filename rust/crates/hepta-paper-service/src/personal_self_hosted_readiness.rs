@@ -28,7 +28,7 @@ use std::{
 use thiserror::Error;
 
 const PROFILE_HASH: &str =
-    "sha256:66271113b19698040d3280cf46d5a01f646306ece5a8e882b0672b55e5b5fbe4";
+    "sha256:2be3c2639037a21953e3340d2d24e5b486420e1c91fae04856ad8f28521c8098";
 const MAX_RECEIPT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_EVIDENCE_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 const MIN_SCHEMA_VERSION: i64 = 25;
@@ -101,6 +101,56 @@ const CONTROL_IDS: [&str; 7] = [
     "formal-operational-zero-skipped",
     "online-anti-rollback",
 ];
+
+const LOCAL_OPERATION_MAPPING: [(&str, &str, &[&str], &str); 4] = [
+    (
+        "targetHost",
+        "replaced_by_local_deterministic_controls",
+        &[
+            "credential-and-runtime-boundary",
+            "database-inventory-and-schema",
+        ],
+        "private-profile-has-no-broker-listener-or-destructive-host-soak",
+    ),
+    (
+        "installation",
+        "local_source_bound",
+        &["credential-and-runtime-boundary", "exact-code-provenance"],
+        "workspace-and-runtime-ownership-are-the-private-install-boundary",
+    ),
+    (
+        "canary",
+        "local_deterministic_replay",
+        &[
+            "enabled-scientific-oracles",
+            "formal-operational-zero-skipped",
+        ],
+        "formal-and-enabled-capability-replay-cover-local-behavior",
+    ),
+    (
+        "rollback",
+        "local_restore_and_anti_rollback",
+        &["database-restore-drill", "online-anti-rollback"],
+        "local-restore-and-monotonic-ledger-cover-local-recovery",
+    ),
+];
+
+fn local_operation_mapping_json() -> Value {
+    LOCAL_OPERATION_MAPPING
+        .iter()
+        .map(|(operation, disposition, controls, reason)| {
+            (
+                (*operation).to_owned(),
+                json!({
+                    "disposition": disposition,
+                    "controlIds": controls,
+                    "reason": reason,
+                }),
+            )
+        })
+        .collect::<Map<_, _>>()
+        .into()
+}
 
 #[derive(Debug, Error)]
 pub enum PersonalSelfHostedReadinessError {
@@ -1437,6 +1487,7 @@ pub fn personal_self_hosted_readiness_help_json_v1() -> Value {
         "usage":"personal-self-hosted-readiness [--root CODE_WORKSPACE] [--runtime-root PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready]",
         "profile":"personal-self-hosted-v1",
         "scope":"single-user-private-local-only",
+        "localOperationMapping":local_operation_mapping_json(),
         "effects":"read-only; runs immutable local DB inspection, source scan, and reads canonical scientific/formal receipts; never mints authority or performs external actions",
         "localEvidenceInputs":{
             "root":"code workspace used for exact commit/provenance and tracked-source scan (defaults to HEPTA_WORKSPACE_ROOT or process.cwd())",
@@ -1658,7 +1709,7 @@ fn inspect_personal_readiness_inner(
         "version":1,"kind":"PersonalSelfHostedProductionReadiness","profileId":"personal-self-hosted-v1","profileHash":PROFILE_HASH,
         "status":if blockers.is_empty() {"personal_self_hosted_production_ready"} else {"personal_self_hosted_production_blocked"},
         "personalSelfHostedProductionReady":blockers.is_empty(),"productionScope":"single-user-private-local-only","distributionReady":false,"externalQualificationRequired":false,"externalActionsPerformed":false,"observedAt":options.observed_at,
-        "notApplicableControls":not_applicable,"externalBlockerDisposition":external_blocker_disposition,"controlResults":Value::Object(control_results),"optionalDiagnostics":{"local-slo-alert-policy":{"status":if runtime_owner_only && db_ready {"locally_observed"} else {"attention"},"blocking":false,"automatic":true,"runtimeOwnerOnly":runtime_owner_only,"databaseReady":db_ready,"missingDataAlertsExercised":false,"note":"Optional local health diagnostic; no hand-authored receipt is required."}},"scientificCapabilities":scientific,"blockers":blockers,
+        "notApplicableControls":not_applicable,"externalBlockerDisposition":external_blocker_disposition,"localOperationMapping":local_operation_mapping_json(),"controlResults":Value::Object(control_results),"optionalDiagnostics":{"local-slo-alert-policy":{"status":if runtime_owner_only && db_ready {"locally_observed"} else {"attention"},"blocking":false,"automatic":true,"runtimeOwnerOnly":runtime_owner_only,"databaseReady":db_ready,"missingDataAlertsExercised":false,"note":"Optional local health diagnostic; no hand-authored receipt is required."}},"scientificCapabilities":scientific,"blockers":blockers,
     });
     checkpoint(control)?;
     let mut report = payload.clone();

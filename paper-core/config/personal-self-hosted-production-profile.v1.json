@@ -34,6 +34,40 @@
       "reason": "unsupported-routes-not-enabled-in-personal-profile"
     }
   },
+  "localOperationMapping": {
+    "targetHost": {
+      "disposition": "replaced_by_local_deterministic_controls",
+      "controlIds": [
+        "credential-and-runtime-boundary",
+        "database-inventory-and-schema"
+      ],
+      "reason": "private-profile-has-no-broker-listener-or-destructive-host-soak"
+    },
+    "installation": {
+      "disposition": "local_source_bound",
+      "controlIds": [
+        "credential-and-runtime-boundary",
+        "exact-code-provenance"
+      ],
+      "reason": "workspace-and-runtime-ownership-are-the-private-install-boundary"
+    },
+    "canary": {
+      "disposition": "local_deterministic_replay",
+      "controlIds": [
+        "enabled-scientific-oracles",
+        "formal-operational-zero-skipped"
+      ],
+      "reason": "formal-and-enabled-capability-replay-cover-local-behavior"
+    },
+    "rollback": {
+      "disposition": "local_restore_and_anti_rollback",
+      "controlIds": [
+        "database-restore-drill",
+        "online-anti-rollback"
+      ],
+      "reason": "local-restore-and-monotonic-ledger-cover-local-recovery"
+    }
+  },
   "notApplicableControls": [
     {
       "controlId": "hardware-kms-hsm",
@@ -134,5 +168,5 @@
     "multi-operator-release",
     "distribution-from-personal-profile"
   ],
-  "profileHash": "sha256:66271113b19698040d3280cf46d5a01f646306ece5a8e882b0672b55e5b5fbe4"
+  "profileHash": "sha256:2be3c2639037a21953e3340d2d24e5b486420e1c91fae04856ad8f28521c8098"
 }

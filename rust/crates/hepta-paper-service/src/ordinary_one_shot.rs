@@ -210,8 +210,22 @@ fn run_with_serializer(
         );
     }
     if action == "execute" {
+        // Preserve the incumbent's early dataset-file refusal semantics, then
+        // run the complete retained preflight.  The preflight is deliberately
+        // fail-closed on the provider/runtime and reviewer-authority facts, so
+        // this path cannot create a journal reservation or invoke a provider;
+        // it still emits the same typed report as plan/preflight instead of
+        // exposing an unstructured `not_implemented` error.
         preflight::load_dataset_mounts(&base, mount_file, &control)?;
-        return Err("native_one_shot_ordinary_execute_not_implemented".into());
+        return preflight::run(
+            &base,
+            &runtime,
+            &selected_control,
+            mount_file,
+            action,
+            &control,
+            serialize,
+        );
     }
     let attempt = attempt.ok_or("autonomous_research_one_shot_attempt_id_required")?;
     let stdout =

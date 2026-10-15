@@ -570,7 +570,7 @@ fn inspect_with_owner_references(
             })
             .map(resolve_path_from_process)
             .unwrap_or_else(|| default_runtime_root(&personal_workspace));
-        let mut environment = deployment_environment
+        let mut environment: std::collections::BTreeMap<String, String> = deployment_environment
             .environment
             .as_object()
             .map(|values| {

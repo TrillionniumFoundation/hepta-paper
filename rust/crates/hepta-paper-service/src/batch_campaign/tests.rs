@@ -41,6 +41,8 @@ fn native_batch_command_and_complete_local_graph_match_actual_node_whole_values(
     cases.push(json!({"mode":"full-campaign","qualityProfile":null,"maxRounds":2,"venue":"Venue-F2","languages":["latex"],"stateEvidence":true,"applyManuscript":true}));
     cases.push(json!({"mode":"full-campaign","qualityProfile":"formal_theorem_or_proof","maxRounds":1,"venue":"Venue-G","languages":["latex"],"stateEvidence":false}));
     cases.push(json!({"mode":"full-campaign","qualityProfile":"formal_theorem_or_proof","maxRounds":1,"venue":"Venue-H","languages":["lean","latex"],"stateEvidence":false}));
+    cases.push(json!({"mode":"empirical-analysis","qualityProfile":null,"maxRounds":1,"venue":"Venue-I","languages":["python","latex"],"stateEvidence":false,"benchmarkId":"unknown-without-a-dataset"}));
+    cases.push(json!({"mode":"empirical-analysis","qualityProfile":null,"maxRounds":1,"venue":"Venue-J","languages":["python","latex"],"stateEvidence":false,"datasetRoot":"/datasets/unchecked"}));
     for profile in ["empirical_or_experiment", "unknown_profile"] {
         cases.push(json!({"mode":"local-dry-run","qualityProfile":profile,"maxRounds":1,"venue":"Venue-A","languages":["python","latex"],"stateEvidence":false}));
     }
@@ -57,12 +59,14 @@ const rows=readBoundedReplayInput('referee').cases.map(({name,args})=>{
  const c=args[0]; const argv=['batch-run','--mode',c.mode,'--max-rounds',String(c.maxRounds),'--target',c.venue,'--languages',c.languages.join(',')];
  if(c.qualityProfile)argv.push('--quality-profile',c.qualityProfile);
  if(c.applyManuscript)argv.push('--apply-manuscript');
+ if(c.benchmarkId)argv.push('--benchmark-id',c.benchmarkId);
+ if(c.datasetRoot)argv.push('--dataset-root',c.datasetRoot);
  const options=buildPaperBatchCliOptions(parsePaperProductionArgs(argv),{defaultRoot:'/actual/root',defaultRuntimeRoot:'/actual/runtime'});
  const paperTask=createPaperTask({paperId:'ordinary-paper',title:'Actual task',status:'draft',venueTarget:'Origin-Venue',paperType:'research',canonicalDir:'drafts/ordinary-paper',sourceWorkspace:'drafts/ordinary-paper',mainTex:'drafts/ordinary-paper/main.tex',registry:{inventorySource:'hepta_sqlite'},evidenceRefs:[{path:'evidence/local.json',hash:'sha256:'+'a'.repeat(64)}],createdAt:'2026-10-02T00:00:00.000Z'});
  const paperState=c.stateEvidence?{evidenceRefs:[{ref:'evidence/b.json',path:'evidence/b.json',hash:'sha256:'+'b'.repeat(64),sizeBytes:3},{ref:'evidence/a.json',sizeBytes:null}]}:null;
  const targetScopeReceipt=buildTargetScopeReceipt({mode:c.mode,requestedPaperIds:['ordinary-paper'],selectedTasks:[paperTask],inventorySource:'hepta_sqlite',inventoryFallback:null,execute:false});
  const input={version:1,paperTask,paperState,sourceWorkspace:'/actual/root/drafts/ordinary-paper',options,targetScopeReceipt};
- let result; try{result={ok:true,value:buildBatchCampaignCommand({paperTask,paperState,sourceWorkspace:input.sourceWorkspace,mode:options.mode,maxRounds:options.maxRounds,targetScopeReceipt,venueTarget:options.targetOverride,qualityProfile:options.qualityProfile,languages:options.languages,applyManuscript:options.applyManuscript})};}catch(e){result={ok:false,error:e.message};}
+ let result; try{result={ok:true,value:buildBatchCampaignCommand({paperTask,paperState,sourceWorkspace:input.sourceWorkspace,mode:options.mode,maxRounds:options.maxRounds,targetScopeReceipt,venueTarget:options.targetOverride,qualityProfile:options.qualityProfile,languages:options.languages,applyManuscript:options.applyManuscript,benchmarkId:options.benchmarkId,datasetRoot:options.datasetRoot})};}catch(e){result={ok:false,error:e.message};}
  return {input,result};
 });process.stdout.write(JSON.stringify({profile:{node:process.version,icu:process.versions.icu,cldr:process.versions.cldr},rows}));
 "#

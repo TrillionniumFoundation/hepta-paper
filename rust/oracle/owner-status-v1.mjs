@@ -41,7 +41,7 @@ if(mode==='same_numeric_subject' || mode==='same_object_subject') {
 if(mode==='signature_unpadded') document.signatures[0].value=document.signatures[0].value.replace(/=+$/,'');
 if(mode==='signature_whitespace') document.signatures[0].value=document.signatures[0].value.match(/.{1,16}/g).join(' \n');
 if(mode==='signature_urlsafe') document.signatures[0].value=document.signatures[0].value.replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
-if(mode==='invalid_pem_unicode_whitespace') trust.keys[0].publicKeyPem=trust.keys[0].publicKeyPem.replace('\n','\n\u00A0');
+if(mode==='invalid_pem_unicode_whitespace') trust.keys[0].publicKeyPem=trust.keys[0].publicKeyPem.replaceAll('\n','\n\u00A0');
 if(mode==='tamper') document.acceptedAt='2026-09-15T00:00:00.000Z';
 if(mode==='bad_signature') document.signatures[0].value=Buffer.alloc(64).toString('base64');
 if(mode==='duplicate_key') trust.keys.push({...trust.keys[0]});

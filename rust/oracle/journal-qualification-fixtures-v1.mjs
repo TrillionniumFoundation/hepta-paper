@@ -88,7 +88,7 @@ export function qualificationFixtures(now = Date.now()) {
   mutate('role-denied', f => { f.trust.keys[0].roles = []; });
   mutate('trust-algorithm-mismatch', f => { f.trust.keys[0].algorithm = 'rsa'; });
   mutate('invalid-public-key', f => { f.trust.keys[0].publicKeyPem = 'invalid'; });
-  mutate('invalid-pem-base64', f => { f.trust.keys[0].publicKeyPem = f.trust.keys[0].publicKeyPem.replace('\n', '\n!'); });
+  mutate('invalid-pem-base64', f => { f.trust.keys[0].publicKeyPem = f.trust.keys[0].publicKeyPem.replaceAll('\n', '\n!'); });
   mutate('private-material', f => { f.trust.keys[0].privateKeyPem = 'TEST_ONLY_PRIVATE_KEY_FORBIDDEN'; });
   mutate('duplicate-trust-id', f => { f.trust.keys.push(f.trust.keys[0]); });
   mutate('organization-alias', f => { f.trust.keys[1].organization = ` ${f.trust.keys[0].organization.toUpperCase()} `; });

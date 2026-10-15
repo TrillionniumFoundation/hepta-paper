@@ -851,16 +851,15 @@ test('held empty gitlink reference rejects actual named replacement during direc
 });
 
 test('actual owner child receives producer pinned Node and strips spoofed oracle and secret environment', (t) => {
-  const expectedNode = fs.realpathSync(process.execPath);
   const fixture = createFixture((evidence, root) => {
     write(root, 'test/feature.test.mjs', [
       "import assert from 'node:assert/strict';",
       "import fs from 'node:fs';",
       "import test from 'node:test';",
       "import { spawnSync } from 'node:child_process';",
-      `test('feature_test', () => { assert.equal(process.env.HEPTA_TEST_NODE, ${JSON.stringify(expectedNode)});`,
+      "test('feature_test', () => { assert.equal(process.env.HEPTA_TEST_NODE, fs.realpathSync(process.execPath));",
       "for (const key of ['OPENAI_API_KEY', 'HEPTA_AUTHORITY_PRIVATE_KEY', 'NODE_OPTIONS']) assert.equal(process.env[key], undefined);",
-      `const child=spawnSync(process.env.HEPTA_TEST_NODE,['--version'],{encoding:'utf8',env:{}}); assert.equal(child.status,0); assert.equal(child.stdout.trim(),${JSON.stringify(process.version)}); });`,
+      "const child=spawnSync(process.env.HEPTA_TEST_NODE,['--version'],{encoding:'utf8',env:{}}); assert.equal(child.status,0); assert.equal(child.stdout.trim(),process.version); });",
       '',
     ].join('\n'));
     evidence.bundles['example-source'].files[1].gitBlob = command(root, 'git', 'hash-object', 'test/feature.test.mjs');

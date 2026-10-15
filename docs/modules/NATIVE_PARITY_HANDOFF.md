@@ -408,9 +408,13 @@ create-only campaign admission and the native-store single-writer fence at every
 side-effect boundary. The future checked worker binding must also match the
 consumer's expected attempt and action phase; same-journal ownership plus a
 current marker alone is insufficient. There is no callback dispatch API or Node fallback here.
-The ordinary `--action execute` route still returns
-`native_one_shot_ordinary_execute_not_implemented`; it is not marked ported,
-qualified, production-enabled, or eligible for Node retirement.
+The ordinary `--action execute` route now performs the same retained,
+typed preflight as `plan`/`preflight` after preserving the incumbent's early
+dataset-file refusal. It remains fail-closed because provider runtime,
+reviewer independence, and external execution authority are not proven; it
+creates no reservation, journal write, provider call, network access, or
+production effect, and is not qualified, production-enabled, or eligible for
+Node retirement.
 
 The source comparator is the actual pinned Node repository's
 `assertExternalActionSideEffectPermit`/`assertExternalActionMarkerCurrent`, using

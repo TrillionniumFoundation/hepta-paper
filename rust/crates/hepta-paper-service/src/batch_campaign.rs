@@ -111,15 +111,22 @@ fn validate(input: &NativeBatchCampaignCommandInputV1) -> Result<(), String> {
     local_submission_value_budget(input.paper_state.as_ref().unwrap_or(&Value::Null))?;
     local_submission_value_budget(&input.target_scope_receipt)?;
     let bytes = serde_json::to_vec(&input.options).map_err(|_| refusal())?;
-    if bytes.len() > 1024 * 1024
-        || bytes.contains(&0)
-        || input.options.dataset_root.is_some()
-        || input.options.benchmark_id.is_some()
-        || (input.options.apply_manuscript
-            && !matches!(
-                input.options.mode.as_str(),
-                "empirical-analysis" | "full-campaign"
-            ))
+    if bytes.len() > 1024 * 1024 || bytes.contains(&0) {
+        return Err("native_batch_campaign_empirical_input_domain_v1_not_implemented".into());
+    }
+    if input.options.dataset_root.is_some() {
+        return Err("campaign_dataset_root_requires_verified_mount".into());
+    }
+    if let Some(benchmark) = &input.options.benchmark_id {
+        return Err(format!(
+            "campaign_benchmark_selector_unsupported:{benchmark}"
+        ));
+    }
+    if input.options.apply_manuscript
+        && !matches!(
+            input.options.mode.as_str(),
+            "empirical-analysis" | "full-campaign"
+        )
     {
         return Err("native_batch_campaign_empirical_input_domain_v1_not_implemented".into());
     }

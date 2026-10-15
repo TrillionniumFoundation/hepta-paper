@@ -118,6 +118,42 @@ fn actual_node_live_and_copied_closed_wal_read_match_and_shm_creation_is_observe
     assert_report(&closed, &closed_reader);
     closed_reader.verify_unchanged().unwrap();
 }
+
+#[test]
+fn missing_cold_wal_shm_is_preallocated_to_one_sqlite_region_with_source_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new();
+    let source = fixture.database();
+    let writer = fixture_writer(&source, true);
+    writer
+        .execute_batch("CREATE TABLE arbitrary(pk INTEGER PRIMARY KEY,value TEXT);INSERT INTO arbitrary VALUES(1,'in-real-wal')")
+        .unwrap();
+    let cold = fixture.root.join("cold.sqlite");
+    fs::copy(&source, &cold).unwrap();
+    fs::copy(sidecar(&source, "-wal"), sidecar(&cold, "-wal")).unwrap();
+    drop(writer);
+
+    fs::set_permissions(&cold, fs::Permissions::from_mode(0o400)).unwrap();
+    fs::set_permissions(sidecar(&cold, "-wal"), fs::Permissions::from_mode(0o400)).unwrap();
+    let main_before = fs::read(&cold).unwrap();
+    let wal_before = fs::read(sidecar(&cold, "-wal")).unwrap();
+
+    let reader = OrdinaryReadOnlyStoreV1::open(&cold).unwrap();
+    assert_report(&cold, &reader);
+    let shm = sidecar(&cold, "-shm");
+    let shm_metadata = fs::metadata(&shm).unwrap();
+    assert_eq!(shm_metadata.len(), SQLITE_SHM_REGION_BYTES);
+    assert_eq!(shm_metadata.mode() & 0o777, 0o400);
+    assert_eq!(fs::read(&cold).unwrap(), main_before);
+    assert_eq!(fs::read(sidecar(&cold, "-wal")).unwrap(), wal_before);
+    assert!(
+        reader
+            .coordination_observation()
+            .shm_created_by_coordination_preparation
+    );
+}
+
 #[test]
 fn ordinary_rejects_replaced_files_symlinks_new_wal_and_changed_bytes_then_reopens_current_snapshot()
  {

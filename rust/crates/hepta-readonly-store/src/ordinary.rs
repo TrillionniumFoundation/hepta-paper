@@ -397,6 +397,8 @@ fn optional(
         Err(e) => Err(ReadOnlyStoreError::Filesystem("ordinary_sidecar", e.kind())),
     }
 }
+const SQLITE_SHM_REGION_BYTES: u64 = 32 * 1024;
+
 fn create_coordination_leaf(
     parent: &HeldDirectory,
     path: &Path,
@@ -404,8 +406,12 @@ fn create_coordination_leaf(
     control: &ReadControl,
 ) -> Result<HeldFile, ReadOnlyStoreError> {
     control.check()?;
-    // A zero coordination leaf is prepared only with atomic NoReplace. It is
-    // never removed on error: another SQLite reader may already be using it.
+    // Coordination leaves are prepared only with atomic NoReplace. SQLite's
+    // first SHM region is 32 KiB; preallocating it while the newly-created
+    // descriptor is held preserves the Node cold-WAL behavior even when the
+    // source mode is 0400 and SQLite cannot extend the file itself. The leaf
+    // is never removed on error: another SQLite reader may already use it.
+    let is_shm = path.as_os_str().as_bytes().ends_with(b"-shm");
     let fd = openat(
         &parent.file,
         Path::new(
@@ -422,12 +428,17 @@ fn create_coordination_leaf(
     )
     .map_err(|_| ReadOnlyStoreError::DatabasePathInvalid)?;
     let created = File::from(fd);
+    if is_shm {
+        created
+            .set_len(SQLITE_SHM_REGION_BYTES)
+            .map_err(|_| ReadOnlyStoreError::DatabaseChanged)?;
+    }
     let metadata = created
         .metadata()
         .map_err(|_| ReadOnlyStoreError::DatabaseChanged)?;
     if !metadata.is_file()
         || metadata.nlink() != 1
-        || metadata.size() != 0
+        || metadata.size() != if is_shm { SQLITE_SHM_REGION_BYTES } else { 0 }
         || metadata.uid() != nix::unistd::geteuid().as_raw()
     {
         return Err(ReadOnlyStoreError::DatabaseChanged);

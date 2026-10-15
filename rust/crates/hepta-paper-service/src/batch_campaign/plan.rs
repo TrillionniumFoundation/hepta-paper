@@ -286,28 +286,36 @@ fn graph(
             ));
         }
         "local-review-loop" => {
-            if formal {
-                return Err(
-                    "native_batch_campaign_formal_review_loop_domain_v1_not_implemented".into(),
-                );
-            }
             let compile = node(id, "compile", vec![], (0, 50), None, Some("latex"), intent);
             let mut previous = node_id(&compile)?;
+            let mut latest_formal_verify: Option<String> = None;
             nodes.push(compile);
             for round in 1..=rounds {
                 let reviews = referees(id, vec![previous], round, 60, intent);
+                let mut revise_dependencies =
+                    reviews.iter().map(node_id).collect::<Result<Vec<_>, _>>()?;
+                if let Some(formal_verify) = &latest_formal_verify {
+                    revise_dependencies.push(formal_verify.clone());
+                }
                 let revise = node(
                     id,
                     "revise",
-                    reviews.iter().map(node_id).collect::<Result<_, _>>()?,
+                    revise_dependencies,
                     (round, 70),
                     Some("reviser"),
                     None,
                     intent,
                 );
-                let deps = vec![node_id(&revise)?];
+                let mut deps = vec![node_id(&revise)?];
                 nodes.extend(reviews);
                 nodes.push(revise);
+                if formal {
+                    let chain = formal_chain(id, deps, round, 74, intent, false)?;
+                    let formal_verify = node_id(chain.last().ok_or_else(refusal)?)?;
+                    latest_formal_verify = Some(formal_verify.clone());
+                    deps = vec![formal_verify];
+                    nodes.extend(chain);
+                }
                 let validations = [
                     ("revalidate-compile", Some("latex")),
                     ("revalidate-citations", Some("latex")),

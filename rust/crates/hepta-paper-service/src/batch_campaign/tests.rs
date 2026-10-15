@@ -30,11 +30,6 @@ fn native_batch_command_and_complete_local_graph_match_actual_node_whole_values(
             Some("theorem_or_proof"),
             Some("formal_theorem_or_proof"),
         ] {
-            if matches!(mode, "local-review-loop" | "referee-autopilot")
-                && profile == Some("formal_theorem_or_proof")
-            {
-                continue;
-            }
             cases.push(json!({"mode":mode,"qualityProfile":profile,"maxRounds":2,"venue":"Venue-A","languages":["python","latex"],"stateEvidence":false}));
         }
     }

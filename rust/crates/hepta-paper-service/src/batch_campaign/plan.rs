@@ -366,6 +366,7 @@ fn graph(
     rounds: u64,
     formal: bool,
     languages: &[String],
+    apply_manuscript: bool,
     intent: &Value,
 ) -> Result<Vec<Value>, String> {
     let mut nodes = Vec::new();
@@ -452,6 +453,28 @@ fn graph(
                 empirical["requiresGpu"] = json!(requires_gpu);
                 previous = node_id(&reproduce)?;
                 nodes.extend([coder, empirical, reproduce]);
+            }
+            if apply_manuscript {
+                let integrate = node(
+                    id,
+                    "manuscript-integrate",
+                    vec![previous.clone()],
+                    (0, 40),
+                    Some("writer"),
+                    None,
+                    intent,
+                );
+                let integrate_id = node_id(&integrate)?;
+                nodes.push(integrate);
+                nodes.push(node(
+                    id,
+                    "final-compile",
+                    vec![integrate_id],
+                    (0, 50),
+                    None,
+                    Some("latex"),
+                    intent,
+                ));
             }
         }
         "referee-review" => nodes.extend(referees(id, vec![], 1, 10, intent)),
@@ -697,8 +720,16 @@ pub(super) fn build(
         "full-campaign" | "local-package" | "research-verify" | "local-dry-run" | "reviewed-submit"
     );
     let quality_requirements = json!({"formalVerificationRequired":formal,"empiricalVerificationRequired":false,"researchVerificationRequired":research_required});
-    let intent = json!({"version":2,"kind":"PaperCampaignModeIntent","requestedMode":mode,"effectiveMode":mode,"requestedMaxRounds":requested_rounds,"effectiveMaxRounds":rounds,"venueTarget":venue,"datasetRoot":null,"datasetMountNames":[],"benchmarkId":null,"benchmarkSelectorHash":null,"applyManuscript":false,"paperQualityProfile":profiles.first(),"paperQualityProfiles":profiles,"paperQualityRequirements":quality_requirements,"formalVerificationRequired":formal,"empiricalVerificationRequired":false});
-    let nodes = graph(id, mode, rounds, formal, &languages, &intent)?;
+    let intent = json!({"version":2,"kind":"PaperCampaignModeIntent","requestedMode":mode,"effectiveMode":mode,"requestedMaxRounds":requested_rounds,"effectiveMaxRounds":rounds,"venueTarget":venue,"datasetRoot":null,"datasetMountNames":[],"benchmarkId":null,"benchmarkSelectorHash":null,"applyManuscript":input.options.apply_manuscript,"paperQualityProfile":profiles.first(),"paperQualityProfiles":profiles,"paperQualityRequirements":quality_requirements,"formalVerificationRequired":formal,"empiricalVerificationRequired":false});
+    let nodes = graph(
+        id,
+        mode,
+        rounds,
+        formal,
+        &languages,
+        input.options.apply_manuscript,
+        &intent,
+    )?;
     let planned_calls: u64 = nodes
         .iter()
         .map(|n| {
@@ -717,7 +748,7 @@ pub(super) fn build(
             }
         })
         .sum();
-    let mut payload = json!({"version":4,"kind":"PaperCampaignPlan","campaignId":id,"terminalSiblingSettlementPolicyVersion":1,"parentCampaignId":null,"supersedesCampaignId":null,"recoveryOfCampaignId":null,"paperId":input.paper_task["paperId"],"sourceWorkspace":input.source_workspace,"requestedMode":mode,"mode":mode,"executionIntent":intent,"requestedMaxRounds":requested_rounds,"maxRounds":rounds,"refereeCount":3,"languages":languages,"requiresGpu":false,"paperQualityProfile":profiles.first(),"paperQualityProfiles":profiles,"paperQualityRequirements":quality_requirements,"researchVerificationRequired":research_required,"convergenceThresholds":{"minimumRoundIndex":1},"sourceVenue":optional(&input.paper_task["venueTarget"]),"venueTarget":venue,"datasetRoot":null,"benchmarkId":null,"benchmarkSelector":null,"applyManuscript":false,"datasetMounts":[],"metricSchema":{"version":1,"minimumMetricCount":1,"absoluteTolerance":1e-9,"relativeTolerance":1e-6,"metrics":[]},"budgets":{"maxWallTimeMs":21_600_000,"maxAgentCalls":planned_calls.max(30),"maxCpuJobs":32,"maxGpuJobs":8,"maxTokenCount":500_000,"maxCostUsd":100,"maxMemoryMiB":8192},"commandBinding":binding,"nodes":nodes,"externalSubmissionEnabled":false,"releaseHandoffRequired":mode=="reviewed-submit"});
+    let mut payload = json!({"version":4,"kind":"PaperCampaignPlan","campaignId":id,"terminalSiblingSettlementPolicyVersion":1,"parentCampaignId":null,"supersedesCampaignId":null,"recoveryOfCampaignId":null,"paperId":input.paper_task["paperId"],"sourceWorkspace":input.source_workspace,"requestedMode":mode,"mode":mode,"executionIntent":intent,"requestedMaxRounds":requested_rounds,"maxRounds":rounds,"refereeCount":3,"languages":languages,"requiresGpu":false,"paperQualityProfile":profiles.first(),"paperQualityProfiles":profiles,"paperQualityRequirements":quality_requirements,"researchVerificationRequired":research_required,"convergenceThresholds":{"minimumRoundIndex":1},"sourceVenue":optional(&input.paper_task["venueTarget"]),"venueTarget":venue,"datasetRoot":null,"benchmarkId":null,"benchmarkSelector":null,"applyManuscript":input.options.apply_manuscript,"datasetMounts":[],"metricSchema":{"version":1,"minimumMetricCount":1,"absoluteTolerance":1e-9,"relativeTolerance":1e-6,"metrics":[]},"budgets":{"maxWallTimeMs":21_600_000,"maxAgentCalls":planned_calls.max(30),"maxCpuJobs":32,"maxGpuJobs":8,"maxTokenCount":500_000,"maxCostUsd":100,"maxMemoryMiB":8192},"commandBinding":binding,"nodes":nodes,"externalSubmissionEnabled":false,"releaseHandoffRequired":mode=="reviewed-submit"});
     if research_required || formal {
         payload["researchVerificationInput"] = research_input::build(input, &profiles)?;
     }

@@ -91,7 +91,7 @@ documents its typed clock, exact native bounds, actual Node differential tests
 and the remaining ordinary `automation-status` composition gap. This diagnostic
 is not an automation-readiness report or a complete command implementation.
 
-The shipping `hepta-paper-rust verify store -- DB` normal entry resolves database and runtime defaults from its actual frontend, emits the raw report directly, exits one for a blocked report, and closes SQLite before output or signal termination. The ordinary Node/native process owner in `paper-core/tests/native-store-integrity-normal.test.mjs` executes default/relative paths, raw receipts, actual SIGTERM/SIGKILL and same-input retry, including the explicitly different cold 0400 SHM effects. These tests bind source behavior; complete route and live host acceptance remain separate.
+The shipping `hepta-paper-rust verify store -- DB` normal entry resolves database and runtime defaults from its actual frontend, emits the raw report directly, exits one for a blocked report, and closes SQLite before output or signal termination. The ordinary Node/native process owner in `paper-core/tests/native-store-integrity-normal.test.mjs` executes default/relative paths, raw receipts, actual SIGTERM/SIGKILL and same-input retry, including cold 0400 SHM mode/size parity. These tests bind source behavior; complete route and live host acceptance remain separate.
 
 The focused ordinary tests run the actual `hepta-paper verify store -- DB` Node
 wrapper for arbitrary schemas, SQL values, live/closed WAL and explicit cap

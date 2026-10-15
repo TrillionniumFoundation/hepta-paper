@@ -36,6 +36,9 @@ fn native_batch_command_and_complete_local_graph_match_actual_node_whole_values(
     cases.push(json!({"mode":"local-dry-run","qualityProfile":null,"maxRounds":9007199254740991_u64,"venue":"Venue-B","languages":["latex"],"stateEvidence":true}));
     cases.push(json!({"mode":"research-verify","qualityProfile":"theorem_or_proof","maxRounds":3,"venue":"Venue-C","languages":["lean","latex"],"stateEvidence":true}));
     cases.push(json!({"mode":"empirical-analysis","qualityProfile":null,"maxRounds":2,"venue":"Venue-E","languages":["python","latex"],"stateEvidence":false}));
+    cases.push(json!({"mode":"full-campaign","qualityProfile":null,"maxRounds":2,"venue":"Venue-F","languages":["latex"],"stateEvidence":true}));
+    cases.push(json!({"mode":"full-campaign","qualityProfile":"formal_theorem_or_proof","maxRounds":1,"venue":"Venue-G","languages":["latex"],"stateEvidence":false}));
+    cases.push(json!({"mode":"full-campaign","qualityProfile":"formal_theorem_or_proof","maxRounds":1,"venue":"Venue-H","languages":["lean","latex"],"stateEvidence":false}));
     for profile in ["empirical_or_experiment", "unknown_profile"] {
         cases.push(json!({"mode":"local-dry-run","qualityProfile":profile,"maxRounds":1,"venue":"Venue-A","languages":["python","latex"],"stateEvidence":false}));
     }

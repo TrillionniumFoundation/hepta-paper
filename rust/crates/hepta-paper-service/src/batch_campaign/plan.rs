@@ -66,11 +66,29 @@ fn referees(id: &str, deps: Vec<String>, round: u64, priority: u64, intent: &Val
         })
         .collect()
 }
+fn empirical_profiles(languages: &[String]) -> Vec<(String, String, bool)> {
+    languages
+        .iter()
+        .filter(|language| language.as_str() != "latex")
+        .map(|label| {
+            (
+                label.clone(),
+                if label == "gpu" {
+                    "python".to_owned()
+                } else {
+                    label.clone()
+                },
+                label == "gpu",
+            )
+        })
+        .collect()
+}
 fn graph(
     id: &str,
     mode: &str,
     rounds: u64,
     formal: bool,
+    languages: &[String],
     intent: &Value,
 ) -> Result<Vec<Value>, String> {
     let mut nodes = Vec::new();
@@ -98,6 +116,63 @@ fn graph(
                 None,
                 intent,
             ));
+        }
+        "empirical-analysis" => {
+            let profiles = empirical_profiles(languages);
+            if profiles.is_empty() {
+                return Err("campaign_empirical_mode_requires_non_latex_language".into());
+            }
+            let research = node(id, "research-plan", vec![], (0, 10), None, None, intent);
+            nodes.push(research);
+            let single = profiles.len() == 1;
+            let mut previous = node_id(nodes.last().ok_or_else(refusal)?)?;
+            for (label, language, requires_gpu) in profiles {
+                let suffix = if single {
+                    String::new()
+                } else {
+                    format!("-{label}")
+                };
+                let coder_kind = format!("coder{suffix}");
+                let empirical_kind = format!("empirical{suffix}");
+                let reproduce_kind = format!("empirical-reproduce{suffix}");
+                let coder = node(
+                    id,
+                    &coder_kind,
+                    vec![previous.clone()],
+                    (0, 20),
+                    Some(&format!("coder-{label}")),
+                    Some(&language),
+                    intent,
+                );
+                let coder_id = node_id(&coder)?;
+                let empirical = node(
+                    id,
+                    &empirical_kind,
+                    vec![coder_id],
+                    (0, 30),
+                    None,
+                    Some(&language),
+                    intent,
+                );
+                let empirical_id = node_id(&empirical)?;
+                let mut reproduce = node(
+                    id,
+                    &reproduce_kind,
+                    vec![empirical_id],
+                    (0, 35),
+                    None,
+                    Some(&language),
+                    intent,
+                );
+                reproduce["requiresGpu"] = json!(requires_gpu);
+                reproduce["sourceMutationPolicy"] = json!("forbid");
+                let mut coder = coder;
+                coder["requiresGpu"] = json!(requires_gpu);
+                let mut empirical = empirical;
+                empirical["requiresGpu"] = json!(requires_gpu);
+                previous = node_id(&reproduce)?;
+                nodes.extend([coder, empirical, reproduce]);
+            }
         }
         "referee-review" => nodes.extend(referees(id, vec![], 1, 10, intent)),
         "local-package" | "reviewed-submit" | "local-dry-run" => {
@@ -335,7 +410,7 @@ pub(super) fn build(
     );
     let quality_requirements = json!({"formalVerificationRequired":formal,"empiricalVerificationRequired":false,"researchVerificationRequired":research_required});
     let intent = json!({"version":2,"kind":"PaperCampaignModeIntent","requestedMode":mode,"effectiveMode":mode,"requestedMaxRounds":requested_rounds,"effectiveMaxRounds":rounds,"venueTarget":venue,"datasetRoot":null,"datasetMountNames":[],"benchmarkId":null,"benchmarkSelectorHash":null,"applyManuscript":false,"paperQualityProfile":profiles.first(),"paperQualityProfiles":profiles,"paperQualityRequirements":quality_requirements,"formalVerificationRequired":formal,"empiricalVerificationRequired":false});
-    let nodes = graph(id, mode, rounds, formal, &intent)?;
+    let nodes = graph(id, mode, rounds, formal, &languages, &intent)?;
     let planned_calls: u64 = nodes
         .iter()
         .map(|n| {

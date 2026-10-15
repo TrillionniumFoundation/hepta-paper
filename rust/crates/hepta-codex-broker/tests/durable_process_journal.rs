@@ -183,6 +183,7 @@ fn admitted(
         campaign_revision: 0,
         role: AgentRole::Author,
         task_kind: TaskKind::Draft,
+        one_shot_canary: None,
         codex_runtime_identity_hash: runtime_hash.clone(),
         model_selector: "qualified-model".into(),
         transport: Transport::ExecJsonlV1,

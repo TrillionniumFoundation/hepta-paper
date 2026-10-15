@@ -17,6 +17,11 @@ use std::os::fd::AsFd;
 pub struct ProductCodexOperationPublisherV1 {
     pub version: u16,
     pub role: AgentRole,
+    #[serde(
+        default,
+        skip_serializing_if = "ProductCodexOperationPurposeV1::is_business"
+    )]
+    pub purpose: ProductCodexOperationPurposeV1,
     pub operation_directory: PathBuf,
     pub authority_uid: u32,
     pub broker_uid: u32,
@@ -33,6 +38,7 @@ impl ProductCodexOperationPublisherV1 {
     /// installed directory, input owners, schema and current workspace inventory.
     pub fn validate(&self) -> Result<(), ProductCodexError> {
         if self.version != 1
+            || !self.purpose.permits_role(self.role)
             || self.authority_uid == self.broker_uid
             || self.broker_uid == 0
             || [
@@ -52,8 +58,12 @@ impl ProductCodexOperationPublisherV1 {
                     })
             })
             || self.mutation_policy.version != 1
-            || self.mutation_policy.read_only
-                != matches!(self.role, AgentRole::Reviewer | AgentRole::FormalReviewer)
+            || if self.purpose == ProductCodexOperationPurposeV1::OneShotReadOnlyCanary {
+                self.mutation_policy != MutationPolicyV1::reviewer_read_only()
+            } else {
+                self.mutation_policy.read_only
+                    != matches!(self.role, AgentRole::Reviewer | AgentRole::FormalReviewer)
+            }
             || mutation_policy_hash_v1(&self.mutation_policy).is_err()
         {
             return Err(ProductCodexError::Configuration);
@@ -153,7 +163,8 @@ fn validate_source(
     source: &ProductCodexOperationPublisherV1,
     operation: &ProductCodexOperationV1,
 ) -> Result<(), ProductCodexError> {
-    if operation.role != source.role
+    if !source.purpose.permits_task(operation.task_kind)
+        || operation.role != source.role
         || operation.workspace_path != source.workspace_path
         || operation.output_schema_path != source.output_schema_path
         || operation.output_schema_hash != source.output_schema_hash
@@ -426,10 +437,13 @@ pub fn publish_product_codex_operation_v1(
     manifest: &serde_json::Value,
     now: u64,
 ) -> Result<(), ProductCodexError> {
-    let identity = source.capture()?;
     request
         .validate()
         .map_err(|_| ProductCodexError::Configuration)?;
+    if !source.purpose.permits_task(request.task_kind) || request.role != source.role {
+        return Err(ProductCodexError::Configuration);
+    }
+    let identity = source.capture()?;
     let descriptor = operation_descriptor_path(&source.operation_directory, &request.operation_id)?;
     let directory = OpenOptions::new()
         .read(true)
@@ -491,6 +505,7 @@ pub fn publish_product_codex_operation_v1(
         campaign_revision: request.campaign_revision,
         role: request.role,
         task_kind: request.task_kind,
+        one_shot_canary: request.one_shot_canary.clone(),
         valid_from_unix_ms: request.request_capability.issued_at_unix_ms,
         expires_at_unix_ms: request.absolute_deadline_unix_ms,
         workspace_path: source.workspace_path.clone(),
@@ -671,6 +686,7 @@ mod tests {
             let source = ProductCodexOperationPublisherV1 {
                 version: 1,
                 role: AgentRole::Author,
+                purpose: ProductCodexOperationPurposeV1::Business,
                 operation_directory: operations,
                 authority_uid: nix::unistd::geteuid().as_raw(),
                 broker_uid: nix::unistd::geteuid().as_raw().checked_add(1).unwrap(),
@@ -860,5 +876,42 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
         assert!(fixture.retain(&path, b"original").is_err());
         assert_eq!(fs::read(&path).unwrap(), b"old torn final");
+    }
+    #[test]
+    fn canary_publisher_purpose_is_opt_in_and_never_widens_business_defaults() {
+        let fixture = Fixture::new();
+        let original = serde_json::to_vec(&fixture.source).unwrap();
+        let value = serde_json::to_value(&fixture.source).unwrap();
+        assert!(value.get("purpose").is_none());
+        let roundtrip: ProductCodexOperationPublisherV1 = serde_json::from_value(value).unwrap();
+        assert_eq!(serde_json::to_vec(&roundtrip).unwrap(), original);
+        fixture.source.validate().unwrap();
+        let mut canary = fixture.source.clone();
+        canary.mutation_policy = MutationPolicyV1::reviewer_read_only();
+        assert!(
+            canary.validate().is_err(),
+            "legacy author remains writable-only"
+        );
+        canary.purpose = ProductCodexOperationPurposeV1::OneShotReadOnlyCanary;
+        canary.validate().unwrap();
+        assert!(!canary.purpose.permits_task(TaskKind::Draft));
+        assert!(canary.purpose.permits_task(TaskKind::ReadOnlyCanary));
+        assert!(
+            !fixture
+                .source
+                .purpose
+                .permits_task(TaskKind::ReadOnlyCanary)
+        );
+        for role in [AgentRole::Reviewer, AgentRole::Repairer] {
+            canary.role = role;
+            assert!(canary.validate().is_err());
+        }
+        canary.role = AgentRole::FormalReviewer;
+        canary.validate().unwrap();
+        canary
+            .mutation_policy
+            .allowed_path_prefixes
+            .push("unexpected".into());
+        assert!(canary.validate().is_err());
     }
 }

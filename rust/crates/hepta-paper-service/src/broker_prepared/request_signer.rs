@@ -177,6 +177,7 @@ pub(super) fn ensure_signed_request(
         campaign_revision: context.campaign_revision,
         role: source.role,
         task_kind: input.task_kind,
+        one_shot_canary: None,
         codex_runtime_identity_hash: source.runtime_identity_hash.clone(),
         model_selector: signer.model_selector.clone(),
         transport: Transport::ExecJsonlV1,

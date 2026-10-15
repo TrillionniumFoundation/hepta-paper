@@ -23,7 +23,7 @@ fn digest() -> Sha256Digest {
     Sha256Digest::from_str(&format!("sha256:{}", "1".repeat(64))).unwrap()
 }
 
-fn configuration() -> ProductCodexBrokerConfigurationV1 {
+pub(super) fn configuration() -> ProductCodexBrokerConfigurationV1 {
     ProductCodexBrokerConfigurationV1 {
         version: 1,
         configuration_authority_uid: 0,
@@ -31,6 +31,7 @@ fn configuration() -> ProductCodexBrokerConfigurationV1 {
         broker_uid: 1001,
         broker_gid: 1002,
         role: AgentRole::Author,
+        purpose: crate::ProductCodexOperationPurposeV1::Business,
         operation_authority_uid: 1003,
         operation_directory: PathBuf::from("/etc/hepta/operations"),
         trust_bundle_path: PathBuf::from("/etc/hepta/trust/bundle.json"),
@@ -308,4 +309,32 @@ fn commit_acknowledgement_key_decoder_is_canonical_and_preserves_denials() {
             CommitBoundAcknowledgementError::WeakSignerKey(_)
         ))
     ));
+}
+
+#[test]
+fn canary_daemon_profile_is_explicit_and_closed_to_the_two_fixed_roles() {
+    let original = configuration();
+    assert!(
+        serde_json::to_value(&original)
+            .unwrap()
+            .get("purpose")
+            .is_none()
+    );
+    let decoded: ProductCodexBrokerConfigurationV1 =
+        serde_json::from_slice(&serde_json::to_vec(&original).unwrap()).unwrap();
+    assert_eq!(decoded, original);
+    for role in [
+        AgentRole::Author,
+        AgentRole::FormalReviewer,
+        AgentRole::Reviewer,
+        AgentRole::Repairer,
+    ] {
+        let mut selected = original.clone();
+        selected.role = role;
+        selected.purpose = crate::ProductCodexOperationPurposeV1::OneShotReadOnlyCanary;
+        assert_eq!(
+            super::config::validate_configuration_shape(&selected).is_ok(),
+            matches!(role, AgentRole::Author | AgentRole::FormalReviewer)
+        );
+    }
 }

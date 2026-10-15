@@ -11,8 +11,8 @@ mod execution;
 pub use digest::{DigestParseError, Sha256Digest};
 pub use execution::{
     AgentRole, ApprovalPolicy, CodexExecutionReceiptV1, CodexExecutionRequestV1,
-    CostClassification, MutationValidationStatus, NetworkPolicy, OutcomeCertainty,
-    OutputSchemaValidationStatus, ProtocolValidationError, RequestCapabilityV1, RetryDisposition,
-    SandboxPolicy, SessionPolicy, TaskKind, TerminalEventKind, TokenUsage, Transport,
-    UsageClassification,
+    CostClassification, MutationValidationStatus, NetworkPolicy, OneShotProviderCanaryPhaseV1,
+    OneShotProviderCanarySubjectV1, OutcomeCertainty, OutputSchemaValidationStatus,
+    ProtocolValidationError, RequestCapabilityV1, RetryDisposition, SandboxPolicy, SessionPolicy,
+    TaskKind, TerminalEventKind, TokenUsage, Transport, UsageClassification,
 };

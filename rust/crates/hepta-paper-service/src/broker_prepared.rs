@@ -829,6 +829,11 @@ pub(crate) fn consume(
     record_started: impl FnOnce() -> Result<(), ServiceError>,
     refresh_current_time: &mut dyn FnMut() -> Result<(), ServiceError>,
 ) -> Result<BrokerConsumedResultV1, ServiceError> {
+    // The canary profile additionally needs a retained one-shot marker/runtime
+    // composition. Serialized jobs and an ordinary broker source cannot supply it.
+    if input.task_kind == hepta_codex_protocol::TaskKind::ReadOnlyCanary {
+        return Err(ServiceError::Configuration);
+    }
     if cancelled.load(Ordering::Acquire) {
         return Err(ServiceError::Execution);
     }
@@ -1325,3 +1330,6 @@ mod interruption_tests {
         assert!(!called.get());
     }
 }
+
+#[cfg(test)]
+mod canary_tests;

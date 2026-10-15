@@ -2,6 +2,7 @@
 //! This API does not admit provider/campaign execution. Its records and commit
 //! acknowledgments are not scientific, launch, release or submission permits.
 mod contract;
+mod marker;
 mod path;
 mod record;
 mod reopen_continuity;
@@ -12,6 +13,7 @@ use crate::automation_runtime_reconciliation::ordinary::ReconciliationReadContro
 use crate::runtime_source_cas::observation::SourceObservation;
 use crate::state_recoverability::publication::Directory;
 use hepta_legacy_compatibility::ProductionJsonValue as Json;
+pub use marker::OneShotExternalActionMarkerV1;
 use std::{
     fs::{File, Metadata},
     path::Path,
@@ -40,12 +42,15 @@ pub struct OneShotFinalizeRequestV1<'a> {
     pub expected_sequence: u8,
     pub expected_phase: &'a str,
 }
-/// A local commit observation. No public field/callback can turn it into an
-/// external action permission, including when an identical request is replayed.
+/// A local commit observation. Only the original newly committed marker may
+/// yield a one-use journal ownership claim. That claim is not worker admission,
+/// provider authority, an execution-binding fence, or a launch permission.
 pub struct OneShotJournalMutationV1 {
     inspection: Json,
     newly_appended: bool,
     commit_acknowledged: bool,
+    owner: Arc<()>,
+    marker: Option<marker::CommittedMarkerV1>,
 }
 impl OneShotJournalMutationV1 {
     pub fn inspection(&self) -> &Json {
@@ -69,6 +74,7 @@ pub struct OneShotJournalV1<'a> {
     epoch: Metadata,
     control: ReconciliationReadControlV1,
     poisoned: std::cell::Cell<bool>,
+    owner: Arc<()>,
     #[cfg(test)]
     failure: std::cell::Cell<Option<repository::FailurePoint>>,
     #[cfg(test)]
@@ -115,6 +121,7 @@ impl<'a> OneShotJournalV1<'a> {
             epoch,
             control,
             poisoned: std::cell::Cell::new(false),
+            owner: Arc::new(()),
             #[cfg(test)]
             failure: std::cell::Cell::new(None),
             #[cfg(test)]

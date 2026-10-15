@@ -90,6 +90,7 @@ impl Fixture {
             campaign_revision: 11,
             role: AgentRole::Author,
             task_kind: TaskKind::Draft,
+            one_shot_canary: None,
             valid_from_unix_ms: 1_000,
             expires_at_unix_ms: 20_000,
             workspace_path: self.workspace.clone(),
@@ -130,6 +131,7 @@ impl Fixture {
             campaign_revision: operation.campaign_revision,
             role: operation.role,
             task_kind: operation.task_kind,
+            one_shot_canary: operation.one_shot_canary.clone(),
             codex_runtime_identity_hash: hash_test(b"runtime"),
             model_selector: "qualified-model".into(),
             transport: Transport::ExecJsonlV1,
@@ -433,4 +435,307 @@ fn reviewer_descriptor_must_be_read_only_and_authority_separated() {
         ),
         Err(ProductCodexError::AuthoritySeparation)
     ));
+}
+
+#[test]
+fn one_shot_canary_descriptor_is_read_only_empty_and_exact_subject_bound() {
+    use hepta_codex_protocol::{OneShotProviderCanaryPhaseV1, OneShotProviderCanarySubjectV1};
+    let fixture = Fixture::new();
+    let mut operation = fixture.operation();
+    operation.task_kind = TaskKind::ReadOnlyCanary;
+    operation.one_shot_canary = Some(Box::new(OneShotProviderCanarySubjectV1 {
+        version: 1,
+        attempt_id: "one-shot-attempt".into(),
+        phase: OneShotProviderCanaryPhaseV1::ProviderStarted,
+        reservation_hash: hash_test(b"reservation"),
+        marker_event_hash: hash_test(b"provider-started"),
+    }));
+    operation.mutation_policy = MutationPolicyV1::reviewer_read_only();
+    let mut request = fixture.request(&operation);
+    request.sandbox_policy = SandboxPolicy::ReadOnly;
+    let check = |operation: &ProductCodexOperationV1, request: &CodexExecutionRequestV1| {
+        validate_operation_against_request(
+            operation,
+            request,
+            operation.role,
+            fixture.authority_uid,
+            Some(10_000),
+            true,
+        )
+    };
+    assert!(
+        check(&operation, &request).is_err(),
+        "canary workspace must be empty"
+    );
+    fs::remove_file(fixture.workspace.join("input.txt")).unwrap();
+    operation.workspace_initial_inventory_hash =
+        WorkspaceRootV1::open(&fixture.workspace, fixture.authority_uid)
+            .unwrap()
+            .inventory()
+            .unwrap()
+            .inventory_hash;
+    request = fixture.request(&operation);
+    request.sandbox_policy = SandboxPolicy::ReadOnly;
+    check(&operation, &request).unwrap();
+    for case in 0..5 {
+        let mut op = operation.clone();
+        let mut req = request.clone();
+        match case {
+            0 => op
+                .one_shot_canary
+                .as_mut()
+                .unwrap()
+                .attempt_id
+                .push_str("-other"),
+            1 => {
+                op.one_shot_canary.as_mut().unwrap().marker_event_hash = hash_test(b"other-marker")
+            }
+            2 => op.mutation_policy.read_only = false,
+            3 => req.sandbox_policy = SandboxPolicy::WorkspaceWrite,
+            _ => req.lease_generation += 1,
+        }
+        assert!(check(&op, &req).is_err(), "case {case}");
+    }
+    operation.role = AgentRole::FormalReviewer;
+    request.role = AgentRole::FormalReviewer;
+    check(&operation, &request).unwrap();
+    assert!(
+        validate_operation_against_request(
+            &operation,
+            &request,
+            operation.role,
+            fixture.authority_uid,
+            Some(20_000),
+            true
+        )
+        .is_err()
+    );
+    fs::write(fixture.workspace.join("unexpected"), b"changed source").unwrap();
+    assert!(check(&operation, &request).is_err());
+}
+
+fn inspected_dispatcher_configuration(fixture: &Fixture) -> ProductCodexDispatcherConfigurationV1 {
+    use hepta_codex_runtime::{codex_parent_environment_policy_v1, inspect_codex_runtime_identity};
+    let executable = fixture.root.join("inspected-only-codex");
+    fs::write(&executable, b"#!/bin/sh\nexit 9\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let home = fixture.root.join("home");
+    fs::create_dir(&home).unwrap();
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(home.join("config.toml"), b"model = 'qualified-model'\n").unwrap();
+    fs::set_permissions(home.join("config.toml"), fs::Permissions::from_mode(0o600)).unwrap();
+    let parent_environment = codex_parent_environment_policy_v1()
+        .build(
+            [
+                (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+                (OsString::from("HOME"), home.clone().into_os_string()),
+                (OsString::from("CODEX_HOME"), home.clone().into_os_string()),
+                (
+                    OsString::from("TMPDIR"),
+                    fixture.root.clone().into_os_string(),
+                ),
+            ],
+            &BTreeMap::new(),
+        )
+        .unwrap();
+    let runtime_identity_policy =
+        RuntimeIdentityPolicyV1::strict(fixture.authority_uid, fixture.authority_uid);
+    let runtime = inspect_codex_runtime_identity(
+        executable.as_os_str(),
+        &home,
+        "qualified-model",
+        parent_environment.policy_hash.clone(),
+        hash_test(b"transport"),
+        &BTreeMap::new(),
+        &runtime_identity_policy,
+    )
+    .unwrap();
+    ProductCodexDispatcherConfigurationV1 {
+        role: AgentRole::Author,
+        purpose: ProductCodexOperationPurposeV1::Business,
+        broker_uid: fixture.broker_uid,
+        broker_gid: fixture.authority_gid,
+        operation_authority_uid: fixture.authority_uid,
+        operation_directory: fixture.operations.clone(),
+        runtime,
+        runtime_identity_policy,
+        parent_environment,
+        model_child_environment_base: BTreeMap::new(),
+        invocation_policy: CodexInvocationPolicyV1::separate_schema_authority(
+            fixture.broker_uid,
+            fixture.authority_gid,
+            fixture.authority_uid,
+        ),
+        process_limits: ProcessLimitsV1::default(),
+        gate_policy: DurableGatePolicyV1::separate_gate_authority(
+            fixture.root.join("unused-gate"),
+            fixture.root.join("unused-state"),
+            fixture.broker_uid,
+            fixture.authority_uid,
+        ),
+        cgroup_policy: CgroupV2PolicyV1::production(
+            fixture.root.join("unused-cgroup"),
+            fixture.broker_uid,
+        ),
+        clock: Arc::new(crate::SystemBrokerClockV1),
+    }
+}
+
+#[test]
+fn raw_canary_constructor_refuses_before_filesystem_while_business_stays_available() {
+    let fixture = Fixture::new();
+    let configuration = inspected_dispatcher_configuration(&fixture);
+    ProductCodexDispatcherV1::new(configuration.clone())
+        .unwrap()
+        .assert_current_authority()
+        .unwrap();
+    let mut canary = configuration;
+    canary.purpose = ProductCodexOperationPurposeV1::OneShotReadOnlyCanary;
+    canary.operation_directory = fixture.root.join("must-not-be-opened");
+    assert!(matches!(
+        ProductCodexDispatcherV1::new(canary),
+        Err(ProductCodexError::InstalledCanaryConfigurationRequired)
+    ));
+    assert!(!fixture.root.join("must-not-be-opened").exists());
+}
+
+#[test]
+fn revoked_configuration_denies_each_actual_authority_boundary_before_source_reads() {
+    use hepta_codex_runtime::{CodexInvocationRequestV1, build_codex_invocation};
+    let fixture = Fixture::new();
+    let configuration = inspected_dispatcher_configuration(&fixture);
+    let operation = fixture.operation();
+    let request = fixture.request(&operation);
+    fixture.write_operation(&operation);
+    let loaded = load_product_operation(
+        &fixture.operations,
+        "operation-1",
+        fixture.authority_uid,
+        fixture.broker_uid,
+        fixture.authority_gid,
+    )
+    .unwrap();
+    let schema = fixture.root.join("local-fixture-schema.json");
+    fs::write(&schema, b"{\"type\":\"object\"}").unwrap();
+    fs::set_permissions(&schema, fs::Permissions::from_mode(0o400)).unwrap();
+    let output = fixture.root.join("local-fixture-output.json");
+    fs::write(&output, b"").unwrap();
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o600)).unwrap();
+    let child = model_child_environment_policy_v1()
+        .build(
+            [
+                (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+                (
+                    OsString::from("HOME"),
+                    fixture.workspace.clone().into_os_string(),
+                ),
+                (
+                    OsString::from("TMPDIR"),
+                    fixture.workspace.clone().into_os_string(),
+                ),
+            ],
+            &BTreeMap::new(),
+        )
+        .unwrap();
+    let invocation = build_codex_invocation(CodexInvocationRequestV1 {
+        runtime: &configuration.runtime,
+        workspace: &fixture.workspace,
+        sandbox_policy: SandboxPolicy::ReadOnly,
+        output_schema_path: &schema,
+        expected_output_schema_hash: &hash_test(&fs::read(&schema).unwrap()),
+        output_last_message_path: &output,
+        parent_environment: configuration.parent_environment.clone(),
+        model_child_environment: &child,
+        prompt: b"denial fixture only".to_vec(),
+        policy: CodexInvocationPolicyV1::local_fixture(fixture.authority_uid),
+    })
+    .unwrap();
+    let binding = crate::product_daemon::InstalledCanaryDispatcherBindingV1::revoked_for_test(
+        configuration.clone(),
+        &fixture.root,
+    );
+    let authority = ProductOperationAuthorityV1 {
+        installed_canary: Some(binding),
+        loaded,
+        expected_role: AgentRole::Author,
+        runtime_identity_hash: configuration.runtime.identity_hash.clone(),
+        broker_uid: fixture.broker_uid,
+        broker_gid: fixture.authority_gid,
+        operation_authority_uid: fixture.authority_uid,
+        maximum_output_schema_bytes: 1024 * 1024,
+    };
+    // If the binding check is omitted, missing descriptor I/O produces a different
+    // error. No fixture can create a successful installed binding or release.
+    fs::remove_file(fixture.operations.join("operation-1.json")).unwrap();
+    for point in [
+        CodexDispatchAuthorizationPointV1::Preflight,
+        CodexDispatchAuthorizationPointV1::PhysicalRelease,
+        CodexDispatchAuthorizationPointV1::Postflight,
+    ] {
+        assert!(
+            matches!(
+                authority.authorize(&request, &configuration.runtime, &invocation, point, 12_000),
+                Err(CodexDispatchError::Product(
+                    ProductCodexError::ConfigurationChanged
+                ))
+            ),
+            "{point:?}"
+        );
+    }
+}
+
+#[test]
+fn revoked_configuration_denies_delivery_and_empty_recovery_after_containment_scan() {
+    let fixture = Fixture::new();
+    let mut configuration = inspected_dispatcher_configuration(&fixture);
+    configuration.purpose = ProductCodexOperationPurposeV1::OneShotReadOnlyCanary;
+    configuration.broker_uid = fixture.authority_uid;
+    configuration.cgroup_policy.owner_uid = fixture.authority_uid;
+    let state = configuration.gate_policy.state_directory.clone();
+    fs::create_dir(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    let binding = crate::product_daemon::InstalledCanaryDispatcherBindingV1::revoked_for_test(
+        configuration.clone(),
+        &fixture.root,
+    );
+    // Direct private construction is confined to this denial fixture; its binding
+    // is already permanently revoked and cannot admit any provider operation.
+    let dispatcher = ProductCodexDispatcherV1 {
+        configuration,
+        operation_directory_identity: capture_operation_directory_identity(
+            &fixture.operations,
+            fixture.authority_uid,
+            fixture.authority_gid,
+        )
+        .unwrap(),
+        installed_canary: Some(binding),
+    };
+    assert!(matches!(
+        dispatcher.assert_current_authority(),
+        Err(CodexDispatchError::Product(
+            ProductCodexError::ConfigurationChanged
+        ))
+    ));
+    let mut journal = BrokerJournalStoreV1::open(
+        fixture.root.join("journal.sqlite"),
+        crate::BrokerJournalPolicyV1::strict(fixture.authority_uid),
+    )
+    .unwrap();
+    assert!(matches!(
+        dispatcher.prepared_delivery(&journal, "no-such-operation"),
+        Err(CodexDispatchError::Product(
+            ProductCodexError::ConfigurationChanged
+        ))
+    ));
+    assert!(matches!(
+        dispatcher.recover_before_ready(&mut journal),
+        Err(CodexDispatchError::Product(
+            ProductCodexError::ConfigurationChanged
+        ))
+    ));
+    assert!(
+        state.join("codex-dispatch.lock").is_file(),
+        "real no-op containment scan ran first"
+    );
+    assert!(journal.list_operation_journals(1).unwrap().is_empty());
 }

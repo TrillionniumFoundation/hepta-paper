@@ -35,6 +35,7 @@ fn request(now: u64) -> CodexExecutionRequestV1 {
         campaign_revision: 2,
         role: AgentRole::Author,
         task_kind: TaskKind::Draft,
+        one_shot_canary: None,
         codex_runtime_identity_hash: digest(2),
         model_selector: "qualified-model".into(),
         transport: Transport::ExecJsonlV1,

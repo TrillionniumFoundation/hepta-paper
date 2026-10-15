@@ -213,10 +213,20 @@ impl OneShotJournalV1<'_> {
         self.accept_own_mutation()?;
         // Even a durable independently verified uncertain commit has no
         // acknowledgment for a new external action. Reopening loses this call.
+        let marker = if matches!(intent.kind, RequestedRecord::Event)
+            && intent.newly_appended
+            && acknowledged
+        {
+            marker::CommittedMarkerV1::from_committed_event(&intent.record)?
+        } else {
+            None
+        };
         Ok(OneShotJournalMutationV1 {
             inspection: report,
             newly_appended: intent.newly_appended,
             commit_acknowledged: acknowledged,
+            owner: Arc::clone(&self.owner),
+            marker,
         })
     }
     pub(super) fn reserve_inner(

@@ -128,6 +128,14 @@ pub trait BrokerOperationDispatcherV1: Send + Sync {
         cancelled: &AtomicBool,
     ) -> Result<(), crate::CodexDispatchError>;
 
+    /// Rechecks the trusted composition's retained authority without dispatching,
+    /// acknowledging, refreshing ownership or changing the journal. Invoked before
+    /// listener readiness and before every bounded result-transfer write/flush.
+    /// Compositions without a retained authority preserve their existing behavior.
+    fn assert_current_authority(&self) -> Result<(), crate::CodexDispatchError> {
+        Ok(())
+    }
+
     /// Loads immutable output from the existing prepared journal, never dispatches.
     /// Reservation-only/custom dispatchers deny unless they supply the real source.
     fn prepared_delivery(
@@ -236,20 +244,14 @@ impl BrokerServerV1 {
         let now = self.clock.now_unix_ms()?;
         let (_, _, startup_bundle_hash) = self.trust_manager.snapshot(now)?;
         let startup_peer_policy_hash = self.peer_policy.policy_hash()?;
-        let mut journal_probe =
-            BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
-        journal_probe.validate_integrity()?;
-        if let Some(dispatcher) = &self.dispatcher {
-            dispatcher.recover_before_ready(&mut journal_probe)?;
-        }
-        let reconciled_processes = reconcile_before_listener_ready(
-            &mut journal_probe,
+        let journal_probe = BrokerJournalStoreV1::open(&self.journal_path, self.journal_policy)?;
+        let reconciled_processes = recover_and_check_before_listener_ready(
+            journal_probe,
+            self.dispatcher.as_deref(),
             now,
             self.server_policy.startup_process_limits,
         )?;
         self.telemetry.reconciled(reconciled_processes);
-        journal_probe.validate_integrity()?;
-        drop(journal_probe);
         let qualification = self.listener.mark_ready()?;
         if startup_bundle_hash != qualification.trust_bundle_hash {
             return Err(BrokerServerError::TrustBundleBindingMismatch);
@@ -432,6 +434,27 @@ impl Drop for WorkerExitGuard {
             self.shutdown.store(true, Ordering::Release);
         }
     }
+}
+
+// Own the probe so all cleanup, integrity I/O and closing complete before the
+// final trusted-currentness check. A failure never refreshes the retained owner.
+fn recover_and_check_before_listener_ready(
+    mut journal: BrokerJournalStoreV1,
+    dispatcher: Option<&dyn BrokerOperationDispatcherV1>,
+    now: u64,
+    process_limits: ProcessLimitsV1,
+) -> Result<u64, BrokerServerError> {
+    journal.validate_integrity()?;
+    if let Some(dispatcher) = dispatcher {
+        dispatcher.recover_before_ready(&mut journal)?;
+    }
+    let reconciled = reconcile_before_listener_ready(&mut journal, now, process_limits)?;
+    journal.validate_integrity()?;
+    drop(journal);
+    if let Some(dispatcher) = dispatcher {
+        dispatcher.assert_current_authority()?;
+    }
+    Ok(reconciled)
 }
 
 fn reconcile_before_listener_ready(

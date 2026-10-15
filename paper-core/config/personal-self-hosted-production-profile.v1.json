@@ -8,6 +8,32 @@
     "commercialDistribution": false,
     "externalActions": false
   },
+  "externalBlockerDisposition": {
+    "GAP-HOST-001": {
+      "disposition": "scoped_out",
+      "reason": "broker-listener-not-enabled-in-personal-profile"
+    },
+    "GAP-HOST-002": {
+      "disposition": "scoped_out",
+      "reason": "destructive-host-soak-not-enabled-in-personal-profile"
+    },
+    "GAP-KEY-001": {
+      "disposition": "not_applicable",
+      "reason": "no-external-actions-or-distributed-signing"
+    },
+    "GAP-CODEX-001": {
+      "disposition": "not_applicable",
+      "reason": "no-live-provider-or-external-broker-actions"
+    },
+    "GAP-REL-001": {
+      "disposition": "not_applicable",
+      "reason": "no-release-portal-submission-or-distribution"
+    },
+    "LEGACY-REPLAY-001": {
+      "disposition": "scoped_out",
+      "reason": "unsupported-routes-not-enabled-in-personal-profile"
+    }
+  },
   "notApplicableControls": [
     {
       "controlId": "hardware-kms-hsm",
@@ -108,5 +134,5 @@
     "multi-operator-release",
     "distribution-from-personal-profile"
   ],
-  "profileHash": "sha256:c98b607a8efa30dac3d7fa9206c7af4d3a0eac5fcc5eaddc7bb82ba008196eab"
+  "profileHash": "sha256:66271113b19698040d3280cf46d5a01f646306ece5a8e882b0672b55e5b5fbe4"
 }

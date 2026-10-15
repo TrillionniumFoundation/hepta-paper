@@ -28,7 +28,7 @@ use std::{
 use thiserror::Error;
 
 const PROFILE_HASH: &str =
-    "sha256:c98b607a8efa30dac3d7fa9206c7af4d3a0eac5fcc5eaddc7bb82ba008196eab";
+    "sha256:66271113b19698040d3280cf46d5a01f646306ece5a8e882b0672b55e5b5fbe4";
 const MAX_RECEIPT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_EVIDENCE_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 const MIN_SCHEMA_VERSION: i64 = 25;
@@ -58,6 +58,38 @@ const NOT_APPLICABLE: [(&str, &str); 7] = [
     (
         "venue-portal-live-submission",
         "no-external-submission-or-publishing-action",
+    ),
+];
+const EXTERNAL_BLOCKER_DISPOSITION: [(&str, &str, &str); 6] = [
+    (
+        "GAP-HOST-001",
+        "scoped_out",
+        "broker-listener-not-enabled-in-personal-profile",
+    ),
+    (
+        "GAP-HOST-002",
+        "scoped_out",
+        "destructive-host-soak-not-enabled-in-personal-profile",
+    ),
+    (
+        "GAP-KEY-001",
+        "not_applicable",
+        "no-external-actions-or-distributed-signing",
+    ),
+    (
+        "GAP-CODEX-001",
+        "not_applicable",
+        "no-live-provider-or-external-broker-actions",
+    ),
+    (
+        "GAP-REL-001",
+        "not_applicable",
+        "no-release-portal-submission-or-distribution",
+    ),
+    (
+        "LEGACY-REPLAY-001",
+        "scoped_out",
+        "unsupported-routes-not-enabled-in-personal-profile",
     ),
 ];
 const CONTROL_IDS: [&str; 7] = [
@@ -1613,11 +1645,20 @@ fn inspect_personal_readiness_inner(
         .iter()
         .map(|(control_id, reason)| json!({"controlId":control_id,"reason":reason}))
         .collect::<Vec<_>>();
+    let external_blocker_disposition = EXTERNAL_BLOCKER_DISPOSITION
+        .iter()
+        .map(|(gap, disposition, reason)| {
+            (
+                (*gap).to_owned(),
+                json!({"disposition":disposition,"reason":reason}),
+            )
+        })
+        .collect::<Map<_, _>>();
     let payload = json!({
         "version":1,"kind":"PersonalSelfHostedProductionReadiness","profileId":"personal-self-hosted-v1","profileHash":PROFILE_HASH,
         "status":if blockers.is_empty() {"personal_self_hosted_production_ready"} else {"personal_self_hosted_production_blocked"},
         "personalSelfHostedProductionReady":blockers.is_empty(),"productionScope":"single-user-private-local-only","distributionReady":false,"externalQualificationRequired":false,"externalActionsPerformed":false,"observedAt":options.observed_at,
-        "notApplicableControls":not_applicable,"controlResults":Value::Object(control_results),"optionalDiagnostics":{"local-slo-alert-policy":{"status":if runtime_owner_only && db_ready {"locally_observed"} else {"attention"},"blocking":false,"automatic":true,"runtimeOwnerOnly":runtime_owner_only,"databaseReady":db_ready,"missingDataAlertsExercised":false,"note":"Optional local health diagnostic; no hand-authored receipt is required."}},"scientificCapabilities":scientific,"blockers":blockers,
+        "notApplicableControls":not_applicable,"externalBlockerDisposition":external_blocker_disposition,"controlResults":Value::Object(control_results),"optionalDiagnostics":{"local-slo-alert-policy":{"status":if runtime_owner_only && db_ready {"locally_observed"} else {"attention"},"blocking":false,"automatic":true,"runtimeOwnerOnly":runtime_owner_only,"databaseReady":db_ready,"missingDataAlertsExercised":false,"note":"Optional local health diagnostic; no hand-authored receipt is required."}},"scientificCapabilities":scientific,"blockers":blockers,
     });
     checkpoint(control)?;
     let mut report = payload.clone();

@@ -28,6 +28,22 @@ portal credentials or submission actions
 
 Those effects remain behind separately controlled target-host and external-authority evidence.
 
+For a single-user private installation, use the scoped `personal-self-hosted-v1`
+lane instead of the distribution qualification lane:
+
+```bash
+cargo run --locked -p hepta-paper-service -- personal-self-hosted-readiness --require-ready
+```
+
+The Node command `npm run personal:readiness -- --require-ready` remains the
+differential oracle. The Rust profile removes distribution-only external gates
+while keeping local provenance, owner-only runtime permissions, database/WAL
+integrity, crash/restore recovery, anti-rollback and deterministic replay for
+enabled local capabilities. This replay covers enabled local capabilities, not
+the full hosted 263-file Node matrix, and the profile does not claim unsupported
+Node routes. Its result does not authorize external actions,
+publication, submission or distribution.
+
 ## Capability coverage boundary
 
 The current operator-facing Node capability catalog has source-bound conformance coverage of **16/16**. Independently controlled production operational proof remains **0/16** until the mapped external capability owners and operational observers provide accepted evidence. These counts describe capability coverage, not production activation.

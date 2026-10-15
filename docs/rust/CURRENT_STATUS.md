@@ -103,6 +103,32 @@ artifact-retained exact-head run may derive `source_qualified` for eligible
 repository-local rows without editing this file. External rows never
 auto-promote.
 
+## Personal self-hosted lane
+
+For the actual single-user private-host deployment, use the existing
+`personal-self-hosted-v1` profile and run:
+
+```sh
+cargo run --locked -p hepta-paper-service -- personal-self-hosted-readiness --require-ready
+```
+
+The Node command `npm run personal:readiness -- --require-ready` remains the
+differential oracle for the Rust command.
+
+This lane removes distribution-only gates from the readiness claim. Independent
+reviewers, external key owners, KMS/HSM, WORM custody, portal/submission
+authority, OCI/Kubernetes attestation, live Codex/provider canaries, target-host
+listener qualification, destructive host soak, and the private hosted replay
+are out of scope because the profile disables those capabilities. Local
+provenance, owner-only runtime permissions, SQLite/WAL integrity, backup/restore,
+anti-rollback, and deterministic replay for any explicitly enabled local
+capability remain required. This is local replay of enabled capabilities, not
+the full hosted 263-file Node replay, and the profile makes no claim for
+unsupported Node routes. The personal report is a separate
+`personal_self_hosted_production_ready` result and does not claim distribution,
+external authority, portal submission, or multi-operator production
+qualification.
+
 ## Qualification Subject V3 source and remaining evidence closure
 
 The current source contains these concrete contracts and executables:

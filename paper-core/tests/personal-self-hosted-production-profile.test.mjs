@@ -10,6 +10,7 @@ import {
 } from '../../paper-domain/research/personal-gpu-operational-gate-contract.mjs';
 import {
   evaluatePersonalSelfHostedProductionReadiness,
+  PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION,
   PERSONAL_SELF_HOSTED_NOT_APPLICABLE_CONTROL_IDS,
   PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE,
   PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS,
@@ -106,6 +107,14 @@ test('personal profile is explicit, hash-bound, and distinct from distribution r
   assert.equal(PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE.scope.distributionMode, 'private-local-only');
   assert.equal(PERSONAL_SELF_HOSTED_PRODUCTION_PROFILE.scope.externalActions, false);
   assert.equal(PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS.length, 7);
+  assert.equal(
+    PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION['GAP-REL-001'].disposition,
+    'not_applicable',
+  );
+  assert.equal(
+    PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION['GAP-HOST-001'].disposition,
+    'scoped_out',
+  );
   assert.equal(PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS.includes(
     'local-author-review-session-separation',
   ), false);
@@ -118,6 +127,7 @@ test('personal profile reaches ready only with real local evidence and explicit 
   assert.equal(report.fullProductionReady, undefined);
   assert.equal(report.distributionReady, false);
   assert.equal(report.externalQualificationRequired, false);
+  assert.deepEqual(report.externalBlockerDisposition, PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION);
   assert.equal(report.optionalDiagnostics['local-slo-alert-policy'].blocking, false);
   assert.deepEqual(report.blockers, []);
 });

@@ -57,6 +57,23 @@ submit a paper
 
 Hosted CI evidence is not target-host or external-authority evidence.
 
+For a single-user private host, use the separate `personal-self-hosted-v1`
+profile instead of the distribution/release qualification lane:
+
+```bash
+cargo run --locked -p hepta-paper-service -- personal-self-hosted-readiness --require-ready
+```
+
+The Node command `npm run personal:readiness -- --require-ready` remains the
+differential oracle. That profile treats external reviewers, KMS/HSM/WORM
+custody, portal and submission authority, live provider canaries,
+target-host/destructive soak, private hosted replay, and OCI/Kubernetes
+attestations as out of scope. It still requires local provenance, owner-only
+runtime permissions, database/WAL integrity, crash and restore recovery,
+anti-rollback, and deterministic replay evidence for enabled capabilities; this
+is local enabled-capability replay, not the full hosted 263-file Node matrix,
+and it does not claim unsupported Node routes.
+
 ## Local validation
 
 The toolchain is pinned in `rust/rust-toolchain.toml` and the lockfile is

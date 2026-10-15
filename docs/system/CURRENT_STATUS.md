@@ -140,6 +140,25 @@ remain open for their unimplemented work items and exact-subject qualification.
 | `GAP-CODEX-001` | separated authenticated Codex author/reviewer canaries under real credential custody |
 | `GAP-REL-001` | real KMS/HSM, immutable-storage, release, portal, and submission receipts |
 
+## Personal self-hosted readiness
+
+The repository also ships a separate `personal-self-hosted-v1` lane for the
+single-user, private-local-only deployment. Run `cargo run --locked -p
+hepta-paper-service -- personal-self-hosted-readiness --require-ready` to
+evaluate that lane; `npm run personal:readiness -- --require-ready` remains its
+Node differential oracle. The external blocker rows above are
+not gates for this profile: independent reviewers, external key custody,
+KMS/HSM, WORM, portal/submission, OCI/Kubernetes attestation, live
+Codex/provider canaries, target-host qualification, destructive host soak, and
+the private hosted replay are out of scope because external actions and
+distribution are disabled. Local provenance, owner-only runtime permissions,
+SQLite/WAL integrity, crash/kill recovery, backup/restore, anti-rollback and
+deterministic replay evidence for explicitly enabled local capabilities remain
+required. This is local replay of enabled capabilities, not the full hosted
+263-file Node replay, and the profile makes no claim for unsupported Node
+routes. A
+personal-ready result never claims distribution or external authority.
+
 ## Documentation convergence state
 
 The candidate working tree now has:

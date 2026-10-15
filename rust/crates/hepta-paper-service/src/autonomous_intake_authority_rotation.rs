@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -19,6 +20,21 @@ use std::{
 const MAX_REFERENCE_BYTES: u64 = 16 * 1024 * 1024;
 const SHA256_PREFIX: &str = "sha256:";
 const AUTHORITY_ROTATION_ROOT: &str = "/etc/hepta-paper/authority-rotation";
+
+const RUNTIME_STATE_RELATIVE_PATHS: &[(&str, &str)] = &[
+    (
+        "machine",
+        "autonomous-research/machine-intake/machine-intake.sqlite",
+    ),
+    (
+        "supervisor",
+        "autonomous-research/supervisor/resident-instance.sqlite",
+    ),
+    (
+        "topic",
+        "autonomous-research/topic-producer/topic-producer.sqlite",
+    ),
+];
 
 fn absolute_path(path: PathBuf) -> PathBuf {
     let candidate = if path.is_absolute() {
@@ -244,6 +260,67 @@ fn inspect_directory(path: &Path) -> Value {
     })
 }
 
+/// Read-only inspection of the three SQLite state databases used by the Node
+/// rotation route.  This deliberately reports observations only: opening with
+/// SQLITE_OPEN_READ_ONLY and running integrity pragmas cannot create or mutate
+/// a database.  Detailed schema/lease validation remains a future adapter.
+fn inspect_runtime_state(runtime_root: &Path) -> Value {
+    let mut databases = serde_json::Map::new();
+    let mut valid = true;
+    for (role, relative) in RUNTIME_STATE_RELATIVE_PATHS {
+        let path = runtime_root.join(relative);
+        let path_text = path.to_string_lossy().into_owned();
+        let metadata = fs::symlink_metadata(&path).ok();
+        let identity_valid = metadata.as_ref().is_some_and(|m| {
+            m.is_file() && !m.file_type().is_symlink() && m.nlink() == 1 && (m.mode() & 0o022) == 0
+        });
+        let mut quick_check = Value::Null;
+        let mut foreign_key_violations = Value::Null;
+        let mut opened = false;
+        if identity_valid {
+            let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+            if let Ok(connection) = Connection::open_with_flags(&path, flags) {
+                opened = true;
+                quick_check = connection
+                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                    .map_or(Value::Null, Value::String);
+                foreign_key_violations = connection
+                    .prepare("PRAGMA foreign_key_check")
+                    .and_then(|mut statement| {
+                        let mut rows = statement.query([])?;
+                        let mut count = 0_u64;
+                        loop {
+                            match rows.next() {
+                                Ok(Some(_)) => count = count.saturating_add(1),
+                                Ok(None) => return Ok(count),
+                                Err(error) => return Err(error),
+                            }
+                        }
+                    })
+                    .map_or(Value::Null, Value::from);
+            }
+        }
+        let database_valid = identity_valid
+            && opened
+            && quick_check == json!("ok")
+            && foreign_key_violations == json!(0);
+        valid &= database_valid;
+        databases.insert(
+            role.to_string(),
+            json!({
+                "path": path_text,
+                "exists": metadata.is_some(),
+                "identityValid": identity_valid,
+                "openedReadOnly": opened,
+                "quickCheck": quick_check,
+                "foreignKeyViolations": foreign_key_violations,
+                "valid": database_valid,
+            }),
+        );
+    }
+    json!({"valid": valid, "databases": Value::Object(databases)})
+}
+
 fn read_reference(path: Option<&Path>) -> Value {
     let Some(path) = path else {
         return json!({"path": Value::Null, "valid": false, "reason": "not_supplied", "observedSha256": Value::Null});
@@ -347,17 +424,22 @@ fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions, apply: bool) 
     let profile = read_reference(options.topic_producer_profile.as_deref());
     let authority_root = inspect_directory(Path::new(AUTHORITY_ROTATION_ROOT));
     let runtime_identity = inspect_directory(&runtime_root);
+    let runtime_state = inspect_runtime_state(&runtime_root);
     let config_v2 = config["declaredVersion"] == 2 && config["machineAppendEnabled"] == true;
     let profile_hash_matches = config["machineProducerProfileHash"].is_string()
         && config["machineProducerProfileHash"] == profile["declaredProducerProfileHash"];
     let mut blockers = vec![
-        "autonomous_intake_authority_rotation_runtime_state_inspection_not_ported".to_owned(),
         "autonomous_intake_authority_rotation_external_governance_required".to_owned(),
         "autonomous_intake_authority_rotation_native_mutation_adapter_not_implemented".to_owned(),
     ];
     if runtime_identity["valid"] != true {
         blockers
             .push("autonomous_intake_authority_rotation_runtime_root_identity_invalid".to_owned());
+    }
+    if runtime_state["valid"] != true {
+        blockers.push(
+            "autonomous_intake_authority_rotation_runtime_state_inspection_invalid".to_owned(),
+        );
     }
     if config["valid"] != true {
         blockers.push(
@@ -379,6 +461,7 @@ fn plan_report(options: &AutonomousIntakeAuthorityRotationOptions, apply: bool) 
         "expectedAuthorityGeneration": 1,
         "nextAuthorityGeneration": 2,
         "runtimeRoot": runtime_identity,
+        "runtimeState": runtime_state,
         "authorityRotationRoot": authority_root,
         "nextMachineIntakeConfig": config,
         "topicProducerProfile": profile,
@@ -502,5 +585,41 @@ mod tests {
                 "autonomous_intake_authority_rotation_topic_producer_profile_invalid"
             )));
         }
+    }
+
+    #[test]
+    fn runtime_state_inspection_is_read_only_and_requires_all_three_databases() {
+        let root =
+            std::env::temp_dir().join(format!("hepta-intake-runtime-state-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (_, relative) in RUNTIME_STATE_RELATIVE_PATHS {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys = ON; CREATE TABLE fixture (id INTEGER PRIMARY KEY);",
+                )
+                .unwrap();
+        }
+        let before: Vec<_> = RUNTIME_STATE_RELATIVE_PATHS
+            .iter()
+            .map(|(_, relative)| {
+                let path = root.join(relative);
+                (path.clone(), fs::metadata(path).unwrap().len())
+            })
+            .collect();
+        let report = inspect_runtime_state(&root);
+        assert_eq!(report["valid"], true);
+        for (role, _) in RUNTIME_STATE_RELATIVE_PATHS {
+            assert_eq!(report["databases"][*role]["openedReadOnly"], true);
+            assert_eq!(report["databases"][*role]["quickCheck"], "ok");
+            assert_eq!(report["databases"][*role]["foreignKeyViolations"], 0);
+            assert_eq!(report["databases"][*role]["valid"], true);
+        }
+        for (path, length) in before {
+            assert_eq!(fs::metadata(path).unwrap().len(), length);
+        }
+        let _ = fs::remove_dir_all(root);
     }
 }

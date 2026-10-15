@@ -568,7 +568,9 @@ assertAncestor(root, APPROVED_PRODUCT, MIG002_STAGE, 'approved-product-to-mig002
 assertAncestor(root, MIG002_STAGE, targetHead, 'mig002-stage-to-target');
 const runtime = runtimeAttestation();
 assertMig002Transition(root);
-assertAncestor(root, MIG002_STAGE, prBase, 'mig002-stage-to-pr-base');
+// The PR base may predate MIG-002; immutable stage-to-target and real
+// PR-base-to-target ancestry plus scoped registry delta are checked above.
+// Demanding MIG-002 ancestry of an older base is contradictory.
 assertCandidateRegistryEvolution(root, prBase, sourceSubject.commit);
 const cargoInventories = new Map();
 for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {

@@ -21,6 +21,11 @@ const CAPABILITIES = 'docs/system/truth/capabilities.v1.json';
 const MAIN_BASE = '7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2';
 const APPROVED_PRODUCT = '38ccd556d4c741c5b0e25bd0941f419857ea314f';
 const MIG002_STAGE = 'c9a19ff74fa88eb335df7c2205bd9e2fc096ca40';
+// The current PR targets the original Node-only main, which has no Rust
+// machine registries. This immutable earlier Rust head is an actual ancestor
+// with a complete registry; source deltas are checked against it, not against
+// the Node-only GitHub PR base. Both ancestries are proved below.
+const RUST_REGISTRY_BASE = '2d96ec31f1aab490ff83042a4727be6acc34b5f5';
 const MIG002_IMPL = 'rust/crates/hepta-module-platform/src/legacy_adapter.rs';
 
 function fail(code, detail = '') {
@@ -568,10 +573,12 @@ assertAncestor(root, APPROVED_PRODUCT, MIG002_STAGE, 'approved-product-to-mig002
 assertAncestor(root, MIG002_STAGE, targetHead, 'mig002-stage-to-target');
 const runtime = runtimeAttestation();
 assertMig002Transition(root);
-// The PR base may predate MIG-002; immutable stage-to-target and real
-// PR-base-to-target ancestry plus scoped registry delta are checked above.
-// Demanding MIG-002 ancestry of an older base is contradictory.
-assertCandidateRegistryEvolution(root, prBase, sourceSubject.commit);
+// Keep the true PR-base-to-head ancestry check, but compare machine-truth
+// evolution from an immutable ancestor that actually contains those registries.
+// The historical source promotions are already present at that ancestor; they
+// must not be replayed as a fresh promotion against Node-only main.
+assertAncestor(root, RUST_REGISTRY_BASE, targetHead, 'rust-registry-base-to-target');
+assertCandidateRegistryEvolution(root, RUST_REGISTRY_BASE, sourceSubject.commit);
 const cargoInventories = new Map();
 for (const manifestPath of SOURCE_EVIDENCE_MANIFESTS) {
   validateEvidenceSemantics(root, readJsonAt(root, sourceSubject.commit, manifestPath), runtime, cargoInventories);
@@ -589,7 +596,7 @@ const receipt = {
   sourceSubject,
   sourceSubjectKind,
   runtime,
-  registryTransition: 'exact:MIG-002 historical transition;actual-PR-base multi-manifest evidence-declared forward-only design/source delta;authority stable',
+  registryTransition: 'exact:MIG-002 historical transition;immutable-ancestor Rust registry delta;actual-PR-base ancestry validated;authority stable',
   sourceSemantics: 'comment-string-aware-unique-symbol-plus-current-process-cargo-target-inventory-binding',
   checkoutPolicy: 'no-untracked-and-no-ignored-repository-inputs',
   productionAuthorized: false,

@@ -89,8 +89,9 @@ fn canonical_mode(mode: &str) -> Result<&str, String> {
             Err(format!("campaign_mode_executor_not_available:{mode}"))
         }
         "referee-autopilot" => Ok("local-review-loop"),
-        "local-build" | "local-package" | "research-verify" | "local-dry-run"
-        | "reviewed-submit" | "referee-review" | "referee-revise" | "local-review-loop" => Ok(mode),
+        "local-build" | "local-package" | "research-verify" | "empirical-analysis"
+        | "local-dry-run" | "reviewed-submit" | "referee-review" | "referee-revise"
+        | "local-review-loop" => Ok(mode),
         _ => Err(format!("campaign_mode_unknown:{mode}")),
     }
 }

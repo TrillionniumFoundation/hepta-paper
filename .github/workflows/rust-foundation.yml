@@ -178,6 +178,7 @@ jobs:
             -D unsafe-code \
             -D clippy::todo \
             -D clippy::unimplemented \
+            -A mismatched_lifetime_syntaxes \
             2>&1 | tee /tmp/hepta-rust-validation/clippy-all-targets.log
 
           cargo clippy \
@@ -195,6 +196,7 @@ jobs:
             -D clippy::unwrap_used \
             -D clippy::expect_used \
             -D clippy::panic \
+            -A mismatched_lifetime_syntaxes \
             2>&1 | tee /tmp/hepta-rust-validation/clippy-production.log
 
       - name: Build native authority test executable

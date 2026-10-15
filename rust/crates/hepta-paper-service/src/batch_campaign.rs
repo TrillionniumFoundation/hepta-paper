@@ -89,9 +89,9 @@ fn canonical_mode(mode: &str) -> Result<&str, String> {
             Err(format!("campaign_mode_executor_not_available:{mode}"))
         }
         "referee-autopilot" => Ok("local-review-loop"),
-        "local-build" | "local-package" | "research-verify" | "empirical-analysis"
-        | "local-dry-run" | "reviewed-submit" | "referee-review" | "referee-revise"
-        | "local-review-loop" => Ok(mode),
+        "local-build" | "local-package" | "full-campaign" | "research-verify"
+        | "empirical-analysis" | "local-dry-run" | "reviewed-submit" | "referee-review"
+        | "referee-revise" | "local-review-loop" => Ok(mode),
         _ => Err(format!("campaign_mode_unknown:{mode}")),
     }
 }
@@ -115,7 +115,11 @@ fn validate(input: &NativeBatchCampaignCommandInputV1) -> Result<(), String> {
         || bytes.contains(&0)
         || input.options.dataset_root.is_some()
         || input.options.benchmark_id.is_some()
-        || input.options.apply_manuscript
+        || (input.options.apply_manuscript
+            && !matches!(
+                input.options.mode.as_str(),
+                "empirical-analysis" | "full-campaign"
+            ))
     {
         return Err("native_batch_campaign_empirical_input_domain_v1_not_implemented".into());
     }
@@ -176,11 +180,11 @@ pub fn build_native_batch_campaign_command_v1(
         .filter(|v| !v.is_empty());
     let venue = requested_venue.or_else(|| optional(&input.paper_task["venueTarget"]));
     let campaign_id = format!("paper-campaign:{paper_id}:batch-{effective}");
-    let mut subject = json!({"version":3,"kind":"PaperBatchCampaignCommand","paperId":paper_id,"paperSemanticIdentityHash":input.paper_task["semanticIdentityHash"],"paperQualityProfile":profiles.first(),"paperQualityProfiles":profiles,"languages":languages,"sourceWorkspace":input.source_workspace,"requestedMode":requested,"requestedMaxRounds":options.max_rounds,"requestedVenueTarget":requested_venue,"requestedDatasetRoot":null,"requestedBenchmarkId":null,"requestedApplyManuscript":false,"venueTarget":venue,"effectiveDatasetRoot":null,"effectiveDatasetMounts":[],"scope":{"requestedPaperIds":input.target_scope_receipt["requestedPaperIds"].as_array().cloned().unwrap_or_default(),"selectedPaperIds":input.target_scope_receipt["selectedPaperIds"].as_array().cloned().unwrap_or_default(),"inventorySource":input.target_scope_receipt["inventorySource"],"inventoryFallback":input.target_scope_receipt["inventoryFallback"]}});
+    let mut subject = json!({"version":3,"kind":"PaperBatchCampaignCommand","paperId":paper_id,"paperSemanticIdentityHash":input.paper_task["semanticIdentityHash"],"paperQualityProfile":profiles.first(),"paperQualityProfiles":profiles,"languages":languages,"sourceWorkspace":input.source_workspace,"requestedMode":requested,"requestedMaxRounds":options.max_rounds,"requestedVenueTarget":requested_venue,"requestedDatasetRoot":null,"requestedBenchmarkId":null,"requestedApplyManuscript":options.apply_manuscript,"venueTarget":venue,"effectiveDatasetRoot":null,"effectiveDatasetMounts":[],"scope":{"requestedPaperIds":input.target_scope_receipt["requestedPaperIds"].as_array().cloned().unwrap_or_default(),"selectedPaperIds":input.target_scope_receipt["selectedPaperIds"].as_array().cloned().unwrap_or_default(),"inventorySource":input.target_scope_receipt["inventorySource"],"inventoryFallback":input.target_scope_receipt["inventoryFallback"]}});
     let mut scheduling_subject = subject.clone();
     scheduling_subject["requestedMode"] = json!(effective);
     let command_hash = hash("PaperBatchCampaignCommand", &scheduling_subject)?;
-    let command_binding = json!({"version":3,"kind":"PaperBatchCampaignCommandBinding","batchCampaignCommandHash":command_hash,"requestedMode":effective,"paperSemanticIdentityHash":input.paper_task["semanticIdentityHash"],"venueTarget":venue,"effectiveDatasetRoot":null,"requestedBenchmarkId":null,"requestedApplyManuscript":false});
+    let command_binding = json!({"version":3,"kind":"PaperBatchCampaignCommandBinding","batchCampaignCommandHash":command_hash,"requestedMode":effective,"paperSemanticIdentityHash":input.paper_task["semanticIdentityHash"],"venueTarget":venue,"effectiveDatasetRoot":null,"requestedBenchmarkId":null,"requestedApplyManuscript":options.apply_manuscript});
     let plan = plan::build(input, &subject, &campaign_id, effective, command_binding)?;
     let object = subject.as_object_mut().ok_or_else(refusal)?;
     object.insert("effectiveMode".into(), json!(effective));

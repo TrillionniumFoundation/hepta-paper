@@ -47,6 +47,8 @@ jobs:
       - name: Checkout exact subject
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          # Validate documentation on the submitted PR head, not the synthetic merge ref.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
       - name: Validate global development graph

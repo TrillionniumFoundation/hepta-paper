@@ -290,7 +290,7 @@ test('normal_verify_store_explicit_native_budget_refusal_remains_partial', () =>
   assert.equal(node.status, 0, node.stderr); assert.equal(JSON.parse(node.stdout).status, 'sqlite_logical_integrity_verified');
   assert.equal(native.status, 1); assert.equal(native.stdout, ''); assert.match(native.stderr, /budget|limit/u);
 });
-test('normal_verify_store_cold_0400_coordination_reports_match_but_shm_effects_remain_partial', () => {
+test('normal_verify_store_cold_0400_coordination_reports_and_shm_effects_match', () => {
   const nodeBefore = observe(coldNode), nativeBefore = observe(coldNative);
   assert.equal(nodeBefore['-shm'].absent, true); assert.equal(nativeBefore['-shm'].absent, true);
   const node = run('node', ['verify', 'store', '--', coldNode], coldNode), native = run('native', ['verify', 'store', '--', coldNative], coldNative);
@@ -300,6 +300,6 @@ test('normal_verify_store_cold_0400_coordination_reports_match_but_shm_effects_r
   delete nodeReport.dbPath; delete nativeReport.dbPath; assert.deepEqual(nativeReport, nodeReport);
   const nodeAfter = observe(coldNode), nativeAfter = observe(coldNative); durable(nodeBefore, nodeAfter); durable(nativeBefore, nativeAfter);
   assert.equal(Number(nodeAfter['-shm'].identity[2]) & 0o777, 0o400); assert.equal(Number(nativeAfter['-shm'].identity[2]) & 0o777, 0o400);
-  assert.equal(nodeAfter['-shm'].identity[6], '32768'); assert.equal(nativeAfter['-shm'].identity[6], '0');
+  assert.equal(nodeAfter['-shm'].identity[6], '32768'); assert.equal(nativeAfter['-shm'].identity[6], '32768');
   pair(['verify', 'store', '--', coldNative], coldNative);
 });

@@ -2184,7 +2184,11 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 inspect_full_production_readiness_v1(&options, &workspace_root)?
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if options.require_full_production && report["fullProductionReady"] != true {
+            if (options.require_full_production && report["fullProductionReady"] != true)
+                || (options.personal_self_hosted
+                    && options.require_ready
+                    && report["personalSelfHostedProductionReady"] != true)
+            {
                 std::process::exit(2);
             }
         }
@@ -2486,7 +2490,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
                 " | autonomous-research-one-shot-campaign-attempt --action plan|preflight|execute|status [--dataset-mount-file PATH|--attempt-id ID] [--root PATH --runtime-root PATH --control-root PATH]",
                 " | autonomous-empirical-plugin-release --action template|plan|publish|inspect [--template ABSOLUTE_PATH] [--package-id ID --package-version SEMVER --benchmark-family FAMILY] [--signing-config ABSOLUTE_PATH] [--install-root ABSOLUTE_PATH] [--activation ABSOLUTE_PATH]",
                 " | autonomous-intake-authority-rotation --action plan|apply --runtime-root PATH --next-machine-intake-config PATH --topic-producer-profile PATH [--rotation-intent PATH --expected-authority-generation N --plan-hash sha256:... --execute]",
-                " | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+                " | full-production-readiness --profile personal-self-hosted-v1 [--root CODE_WORKSPACE] [--runtime-root PRIVATE_RUNTIME] [--require-ready] | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
                 " | strict-full-auto-acceptance --action plan|inspect-runtime-adoption-candidate|adoption-status|adopt-runtime|status|execute|converge --configuration ABSOLUTE_PATH [--plan-hash sha256:... --execute] [--require-accepted|--require-adopted]",
                 " | personal-self-hosted-readiness [--root ABSOLUTE_PATH] [--runtime-root ABSOLUTE_PATH] [--cpu-receipt PATH] [--gpu-enabled --gpu-receipt PATH] [--require-ready] [--now ISO|UNIX_MILLIS] [--help]"
             )

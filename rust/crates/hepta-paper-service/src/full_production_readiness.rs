@@ -15,6 +15,9 @@ pub mod policy;
 mod composition_tests;
 
 use crate::deployment_environment::load_readiness_deployment_environment_v1;
+use crate::personal_self_hosted_readiness::{
+    PersonalSelfHostedReadinessOptions, inspect_personal_self_hosted_readiness_v1,
+};
 use hepta_legacy_compatibility::production_hash_record_v1;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -32,7 +35,7 @@ const SHA256_PREFIX: &str = "sha256:";
 pub const FULL_PRODUCTION_READINESS_USAGE: &str = r#"{
   "version": 1,
   "kind": "FullProductionReadinessUsage",
-  "usage": "full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+  "usage": "full-production-readiness --profile personal-self-hosted-v1 [--root CODE_WORKSPACE] [--runtime-root PRIVATE_RUNTIME] [--require-ready] | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
   "localObservationEffects": "none",
   "externalAction": "never",
   "semanticNotReadyExitCode": 2,
@@ -43,6 +46,11 @@ pub const FULL_PRODUCTION_READINESS_USAGE: &str = r#"{
 pub struct FullProductionReadinessOptions {
     pub help: bool,
     pub json: bool,
+    /// Explicit single-user local profile. This profile has no external
+    /// release, submission, custody or independent-owner authority.
+    pub personal_self_hosted: bool,
+    /// Require the selected personal profile's local controls to pass.
+    pub require_ready: bool,
     pub live_provider_canary: bool,
     pub live_release_attestor: bool,
     pub require_full_production: bool,
@@ -86,6 +94,16 @@ pub fn parse_full_production_readiness_arguments(
         match flag {
             "--help" => options.help = true,
             "--json" => options.json = true,
+            "--profile" => {
+                let profile = option_value(args, &mut index, "profile")?;
+                if profile != "personal-self-hosted-v1" {
+                    return Err(format!(
+                        "full_production_readiness_profile_invalid:{profile}"
+                    ));
+                }
+                options.personal_self_hosted = true;
+            }
+            "--require-ready" => options.require_ready = true,
             "--live-provider-canary" => options.live_provider_canary = true,
             "--live-release-attestor" => options.live_release_attestor = true,
             "--require-full-production" => options.require_full_production = true,
@@ -164,6 +182,45 @@ pub fn parse_full_production_readiness_arguments(
     }
     if options.help {
         return Ok(options);
+    }
+    if options.personal_self_hosted {
+        if options.live_provider_canary || options.live_release_attestor {
+            return Err(
+                "full_production_readiness_personal_profile_disallows_live_external_actions"
+                    .to_owned(),
+            );
+        }
+        if options.owner_trust_store.is_some()
+            || options.owner_trust_store_sha256.is_some()
+            || options.owner_acceptance_document.is_some()
+            || options.owner_acceptance_document_sha256.is_some()
+            || options.package_recovery_readiness_command.is_some()
+            || options.package_recovery_readiness_command_sha256.is_some()
+        {
+            return Err(
+                "full_production_readiness_personal_profile_cannot_mix_external_references"
+                    .to_owned(),
+            );
+        }
+        if options.require_full_production {
+            return Err(
+                "full_production_readiness_personal_profile_has_no_full_production_gate".to_owned(),
+            );
+        }
+    }
+    if options.personal_self_hosted {
+        for (name, path) in [
+            ("root", options.root.as_ref()),
+            ("runtime_root", options.runtime_root.as_ref()),
+        ] {
+            if path.is_some_and(|path| !path.is_absolute()) {
+                return Err(format!("full_production_readiness_{name}_must_be_absolute"));
+            }
+        }
+        return Ok(options);
+    }
+    if options.require_ready {
+        return Err("full_production_readiness_require_ready_requires_personal_profile".to_owned());
     }
     for (name, present) in [
         ("owner_trust_store", options.owner_trust_store.is_some()),
@@ -381,7 +438,15 @@ pub fn full_production_readiness_help_json_v1() -> Value {
     json!({
         "version": 1,
         "kind": "FullProductionReadinessUsage",
-        "usage": "full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+        "usage": "full-production-readiness --profile personal-self-hosted-v1 [--root CODE_WORKSPACE] [--runtime-root PRIVATE_RUNTIME] [--require-ready] | full-production-readiness --owner-trust-store PATH --owner-trust-store-sha256 sha256:... --owner-acceptance-document PATH --owner-acceptance-document-sha256 sha256:... --package-recovery-readiness-command PATH --package-recovery-readiness-command-sha256 sha256:... [--root PATH] [--runtime-root PATH] [--live-provider-canary] [--live-release-attestor] [--require-full-production]",
+        "profiles": {
+            "personal-self-hosted-v1": {
+                "scope": "single-user-private-local-only",
+                "externalQualificationRequired": false,
+                "externalActionsPerformed": false,
+                "retainedControls": ["code-provenance", "formal-zero-skipped", "credential-and-runtime-boundary", "database-inventory-and-schema", "database-restore-drill", "online-anti-rollback", "enabled-scientific-oracles"]
+            }
+        },
         "localObservationEffects": "none",
         "externalAction": "never",
         "semanticNotReadyExitCode": 2,
@@ -444,6 +509,82 @@ fn inspect_with_owner_references(
         .unwrap_or_else(|| default_runtime_root(&workspace_root));
     let root = resolve_path_from_process(root);
     let runtime_root = resolve_path_from_process(runtime_root);
+    if options.personal_self_hosted {
+        // The personal profile is deliberately explicit. It reports the
+        // existing local-only readiness contract and never constructs owner,
+        // deployment, WORM, provider or release authority.
+        let personal_workspace = options
+            .root
+            .clone()
+            .or_else(|| {
+                deployment_environment.environment["HEPTA_WORKSPACE_ROOT"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+            })
+            .map(resolve_path_from_process)
+            .unwrap_or_else(|| workspace_root.clone());
+        let personal_runtime = options
+            .runtime_root
+            .clone()
+            .or_else(|| {
+                deployment_environment.environment["HEPTA_PAPER_RUNTIME_ROOT"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+            })
+            .map(resolve_path_from_process)
+            .unwrap_or_else(|| default_runtime_root(&personal_workspace));
+        let environment = deployment_environment
+            .environment
+            .as_object()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let observed_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?
+            .as_millis();
+        let observed_at = i64::try_from(observed_at)
+            .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+        let observed_at = crate::external_authority_intake::unix_millis_to_iso_v1(observed_at)
+            .map_err(|_| "full_production_readiness_clock_invalid".to_owned())?;
+        let personal =
+            inspect_personal_self_hosted_readiness_v1(&PersonalSelfHostedReadinessOptions {
+                workspace_root: personal_workspace.clone(),
+                runtime_root: personal_runtime.clone(),
+                cpu_receipt: None,
+                gpu_receipt: None,
+                gpu_enabled: false,
+                observed_at,
+                environment,
+            })
+            .map_err(|error| error.to_string())?;
+        let mut payload = personal;
+        payload["profile"] = json!("personal-self-hosted-v1");
+        payload["fullProductionReadinessNotApplicable"] = json!(true);
+        payload["productionScope"] = json!("single-user-private-local-only");
+        payload["externalQualificationRequired"] = json!(false);
+        payload["externalActionPerformed"] = json!(false);
+        payload["serviceStateChanged"] = json!(false);
+        payload["root"] = json!(personal_workspace);
+        payload["runtimeRoot"] = json!(personal_runtime);
+        payload["deploymentEnvironment"] = deployment_environment.inspection;
+        payload["rustBoundary"] = json!(
+            "single-user-private-local-only; local safety controls retained; no external authority or live action"
+        );
+        payload["personalSelfHostedProductionReadinessHash"] = Value::Null;
+        let hash = production_hash_record_v1("PersonalSelfHostedProductionReadiness", &payload)
+            .map_err(|_| "full_production_readiness_status_hash_failed".to_owned())?;
+        payload["personalSelfHostedProductionReadinessHash"] = json!(hash.as_str());
+        return Ok(payload);
+    }
     let owner_trust = inspect_reference(
         options.owner_trust_store.as_deref(),
         options.owner_trust_store_sha256.as_deref(),
@@ -736,6 +877,66 @@ mod tests {
                 format!("{SHA256_PREFIX}{}", "c".repeat(64)),
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn parser_accepts_only_the_explicit_personal_profile_without_external_inputs() {
+        let options = parse_full_production_readiness_arguments(&[
+            "--profile".into(),
+            "personal-self-hosted-v1".into(),
+            "--require-ready".into(),
+        ])
+        .unwrap();
+        assert!(options.personal_self_hosted);
+        assert!(options.require_ready);
+        assert!(
+            parse_full_production_readiness_arguments(&[
+                "--profile".into(),
+                "personal-self-hosted-v1".into(),
+                "--require-full-production".into(),
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_full_production_readiness_arguments(&[
+                "--profile".into(),
+                "personal-self-hosted-v1".into(),
+                "--live-provider-canary".into(),
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_full_production_readiness_arguments(&[
+                "--profile".into(),
+                "personal-self-hosted-v1".into(),
+                "--owner-trust-store".into(),
+                "/tmp/trust.json".into(),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn personal_profile_emits_personal_readiness_without_full_production_authority() {
+        let report = inspect_full_production_readiness_v1(
+            &FullProductionReadinessOptions {
+                personal_self_hosted: true,
+                root: Some(PathBuf::from("/tmp")),
+                runtime_root: Some(PathBuf::from("/tmp/hepta-personal-profile-runtime")),
+                ..Default::default()
+            },
+            Path::new("/tmp"),
+        )
+        .unwrap();
+        assert_eq!(report["kind"], "PersonalSelfHostedProductionReadiness");
+        assert_eq!(report["fullProductionReadinessNotApplicable"], true);
+        assert!(report.get("fullProductionReady").is_none());
+        assert!(report["personalSelfHostedProductionReady"].is_boolean());
+        assert!(
+            report["personalSelfHostedProductionReadinessHash"]
+                .as_str()
+                .is_some_and(|value| value.starts_with(SHA256_PREFIX))
         );
     }
 

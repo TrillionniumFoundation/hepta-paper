@@ -165,9 +165,9 @@ test('NVIDIA workflow routes only to protected runners and pins the event commit
     path.join(REPOSITORY_ROOT, '.github/workflows/gpu-scientific.yml'), 'utf8',
   );
   assert.match(workflow, /runs-on:\s*\[self-hosted, linux, x64, nvidia-gpu, nvidia-gpu-protected\]/u);
-  const protectedJob = workflow.split('  nvidia-gpu-operational:\\n')[1]?.split('  gpu-ci-gate:\\n')[0];
+  const protectedJob = workflow.split('  nvidia-gpu-operational:\n')[1]?.split('  gpu-ci-gate:\n')[0];
   assert.ok(protectedJob, 'protected runner job must exist');
-  assert.match(protectedJob, /ref:\\s*\\$\\{\\{ github\\.sha \\}\\}/u);
+  assert.match(protectedJob, /ref:\s*\$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /HEPTA_GPU_CI_EXPECTED_COMMIT:\s*\$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /git rev-parse --verify HEAD\^\{commit\}/u);
   assert.match(workflow, /git status --porcelain=v1 --untracked-files=all/u);

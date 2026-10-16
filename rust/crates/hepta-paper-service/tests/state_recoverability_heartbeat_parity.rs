@@ -59,6 +59,8 @@ fn oracle(input: Value) -> Value {
                         repository.join("rust/oracle/state-recoverability-heartbeat-v1.mjs")
                     }),
             )
+            .env("LANG", "C.UTF-8")
+            .env("LC_ALL", "C.UTF-8")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

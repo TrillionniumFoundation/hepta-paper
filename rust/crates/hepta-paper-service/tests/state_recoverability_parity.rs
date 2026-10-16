@@ -52,6 +52,8 @@ fn oracle(input: Value) -> Value {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut child = Command::new("node")
         .arg(repository.join("rust/oracle/state-recoverability-v1.mjs"))
+        .env("LANG", "C.UTF-8")
+        .env("LC_ALL", "C.UTF-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

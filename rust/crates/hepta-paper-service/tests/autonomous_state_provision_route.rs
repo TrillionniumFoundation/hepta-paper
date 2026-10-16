@@ -50,6 +50,13 @@ fn plan_is_source_bound_and_execute_is_fail_closed() {
     let (parent, machine, topic, dataset) = fixture();
     let runtime = dataset.parent().unwrap().join("runtime");
     let options = parse_autonomous_state_provisioning_arguments(&[
+        "--root".into(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
         "--runtime-root".into(),
         runtime.to_string_lossy().into_owned(),
         "--machine-intake-config".into(),
@@ -82,6 +89,13 @@ fn options_for(
     dataset: &std::path::Path,
 ) -> hepta_paper_service::autonomous_state_provision::AutonomousStateProvisioningOptions {
     parse_autonomous_state_provisioning_arguments(&[
+        "--root".into(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
         "--runtime-root".into(),
         parent.join("runtime").to_string_lossy().into_owned(),
         "--machine-intake-config".into(),

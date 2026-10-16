@@ -107,6 +107,7 @@ pub fn parse_full_production_readiness_arguments(
                     ));
                 }
                 options.personal_self_hosted = true;
+                continue;
             }
             "--require-ready" => options.require_ready = true,
             "--cpu-receipt" => {
@@ -956,6 +957,27 @@ mod tests {
         .unwrap();
         assert!(options.personal_self_hosted);
         assert!(options.require_ready);
+        // A value-taking --profile must not skip the very next option.
+        // --require-ready is an admission gate, not optional diagnostic prose.
+        let trailing = parse_full_production_readiness_arguments(&[
+            "--gpu-enabled".into(),
+            "--profile".into(),
+            "personal-self-hosted-v1".into(),
+            "--require-ready".into(),
+        ])
+        .unwrap();
+        assert!(trailing.personal_self_hosted);
+        assert!(trailing.gpu_enabled);
+        assert!(trailing.require_ready);
+        assert!(
+            parse_full_production_readiness_arguments(&[
+                "--profile".into(),
+                "personal-self-hosted-v1".into(),
+                "--profile".into(),
+                "personal-self-hosted-v1".into(),
+            ])
+            .is_err()
+        );
         assert!(
             parse_full_production_readiness_arguments(&[
                 "--profile".into(),

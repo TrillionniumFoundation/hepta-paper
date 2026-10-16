@@ -153,3 +153,48 @@ fn omitted_roots_use_the_node_compiled_workspace_siblings() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn personal_profile_require_ready_must_block_with_both_option_orders() {
+    let runtime = temp_root();
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .unwrap();
+    let workspace = workspace.to_str().unwrap();
+    let runtime_path = runtime.to_str().unwrap();
+
+    for flags in [
+        ["--profile", "personal-self-hosted-v1", "--require-ready"],
+        ["--require-ready", "--profile", "personal-self-hosted-v1"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("full-production-readiness")
+            .args(flags)
+            .args(["--root", workspace, "--runtime-root", runtime_path])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "the private not-ready gate was bypassed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["kind"], "PersonalSelfHostedProductionReadiness");
+        assert_eq!(report["personalSelfHostedProductionReady"], false);
+        assert_eq!(report["fullProductionReadinessNotApplicable"], true);
+        assert_eq!(report["externalActionPerformed"], false);
+    }
+
+    let informational = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+        .args(["full-production-readiness", "--profile", "personal-self-hosted-v1"])
+        .args(["--root", workspace, "--runtime-root", runtime_path])
+        .output()
+        .unwrap();
+    assert_eq!(informational.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&informational.stdout).unwrap();
+    assert_eq!(report["personalSelfHostedProductionReady"], false);
+    let _ = fs::remove_dir_all(runtime);
+}

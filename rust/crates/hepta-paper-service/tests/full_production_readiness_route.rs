@@ -165,16 +165,25 @@ fn personal_profile_require_ready_must_block_with_both_option_orders() {
     let workspace = workspace.to_str().unwrap();
     let runtime_path = runtime.to_str().unwrap();
 
+    // Ambient private receipts cannot turn a deliberately empty test runtime
+    // into a ready fixture; both CLI orders must enforce the same failure.
+    let invoke = |flags: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .arg("full-production-readiness")
+            .args(flags)
+            .args(["--root", workspace, "--runtime-root", runtime_path])
+            .env_remove("HEPTA_PERSONAL_CPU_RECEIPT")
+            .env_remove("HEPTA_PERSONAL_GPU_RECEIPT")
+            .env_remove("HEPTA_PERSONAL_GPU_ENABLED")
+            .env_remove("HEPTA_FORMAL_OPERATIONAL_RECEIPT")
+            .output()
+            .unwrap()
+    };
     for flags in [
         ["--profile", "personal-self-hosted-v1", "--require-ready"],
         ["--require-ready", "--profile", "personal-self-hosted-v1"],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
-            .arg("full-production-readiness")
-            .args(flags)
-            .args(["--root", workspace, "--runtime-root", runtime_path])
-            .output()
-            .unwrap();
+        let output = invoke(&flags);
         assert_eq!(
             output.status.code(),
             Some(2),
@@ -188,11 +197,7 @@ fn personal_profile_require_ready_must_block_with_both_option_orders() {
         assert_eq!(report["externalActionPerformed"], false);
     }
 
-    let informational = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
-        .args(["full-production-readiness", "--profile", "personal-self-hosted-v1"])
-        .args(["--root", workspace, "--runtime-root", runtime_path])
-        .output()
-        .unwrap();
+    let informational = invoke(&["--profile", "personal-self-hosted-v1"]);
     assert_eq!(informational.status.code(), Some(0));
     let report: Value = serde_json::from_slice(&informational.stdout).unwrap();
     assert_eq!(report["personalSelfHostedProductionReady"], false);

@@ -19,6 +19,10 @@ fn oracle(input: Value) -> Value {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut child = Command::new("node")
         .arg(repository.join("rust/oracle/state-backup-cli-v1.mjs"))
+        .current_dir(&repository)
+        // The frozen production Node oracle must not inherit the host ICU locale.
+        .env("LANG", "C.UTF-8")
+        .env("LC_ALL", "C.UTF-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

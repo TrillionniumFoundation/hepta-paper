@@ -79,6 +79,9 @@ fn option_value(args: &[String], index: &mut usize, key: &str) -> Result<String,
         return Err(format!("full_production_readiness_{key}_value_required"));
     }
     let value = args[*index + 1].clone();
+    if value.is_empty() {
+        return Err(format!("full_production_readiness_{key}_empty_value"));
+    }
     *index += 2;
     Ok(value)
 }
@@ -923,6 +926,13 @@ mod tests {
     #[test]
     fn parser_requires_all_pinned_inputs_and_rejects_duplicates() {
         assert!(parse_full_production_readiness_arguments(&[]).is_err());
+        assert!(
+            parse_full_production_readiness_arguments(&[
+                "--root".into(),
+                "".into(),
+            ])
+            .is_err()
+        );
         assert!(
             parse_full_production_readiness_arguments(&["--help".into(), "--help".into()]).is_err()
         );

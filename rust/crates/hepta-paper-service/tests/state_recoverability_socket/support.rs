@@ -139,6 +139,11 @@ impl Drop for Daemon {
 pub(super) fn oracle(root: &Root, mode: &str, public_key: Option<String>) -> Value {
     let mut process = Command::new("node")
         .arg(repository().join("rust/oracle/native-authority-business-composition-v1.mjs"))
+        .current_dir(repository())
+        // The production Node oracle uses en-US default ICU collation.
+        // Host zh_CN or other locales must not change its runtime identity.
+        .env("LANG", "C.UTF-8")
+        .env("LC_ALL", "C.UTF-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

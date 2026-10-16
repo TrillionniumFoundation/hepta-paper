@@ -34,6 +34,10 @@ impl Fixture {
         let mut child = Command::new("node")
             .arg(repository.join("rust/oracle/state-backup-restore-source-v1.mjs"))
             .current_dir(repository)
+            // The frozen Node oracle profile requires the en-US ICU default.
+            // Pin the child locale instead of inheriting the operator host.
+            .env("LANG", "C.UTF-8")
+            .env("LC_ALL", "C.UTF-8")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

@@ -123,7 +123,7 @@ function assertOwnCargoPreparationTransitionV1(before, after, ready, proof) {
     if (!Number.isSafeInteger(event.mask) || event.cookie !== 0
       || (event.name === '.global-cache' ? ![2, 8].includes(event.mask)
         : ['.package-cache', '.package-cache-mutate'].includes(event.name) ? event.mask !== 8
-          : event.name === '.global-cache-journal' ? ![2, 8, 256, 512].includes(event.mask) : true)) error();
+          : event.name === '.global-cache-journal' ? ![2, 4, 8, 256, 512].includes(event.mask) : true)) error();
   }
   const adjusted = structuredClone(after); adjusted.native = null;
   for (const [index, entry] of before.configurations.entries()) if (entry.absent && entry.parent.path === proof.parent) {

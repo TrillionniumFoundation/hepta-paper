@@ -73,12 +73,13 @@ try:
     name=os.fsdecode(raw[offset:offset+length].split(b'\0',1)[0]);offset+=length
     if len(events)>=4096:raise RuntimeError('cargo_preparation_event_limit')
     events.append({'name':name,'mask':flags,'cookie':cookie})
-    if wd!=watch or cookie or flags&~(0x2|0x8|0x100|0x200):raise RuntimeError('cargo_preparation_unknown_event')
+    if wd!=watch or cookie or flags&~(0x2|0x4|0x8|0x100|0x200):raise RuntimeError('cargo_preparation_unknown_event')
     if name=='.global-cache':
      if flags&~(0x2|0x8):raise RuntimeError('cargo_preparation_cache_namespace_changed')
     elif name in ['.package-cache','.package-cache-mutate']:
      if flags!=0x8:raise RuntimeError('cargo_preparation_lock_changed')
     elif name=='.global-cache-journal':
+     if flags not in (0x2,0x4,0x8,0x100,0x200):raise RuntimeError('cargo_preparation_unknown_event')
      if flags&0x100:
       if held:raise RuntimeError('cargo_preparation_journal_overlap')
       fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=directory)
@@ -86,6 +87,10 @@ try:
       if not __import__('stat').S_ISREG(metadata.st_mode) or metadata.st_nlink!=1 or metadata.st_uid!=before.st_uid or metadata.st_gid!=before.st_gid or metadata.st_mode&0o2 or metadata.st_size>16*1024*1024:
        os.close(fd);raise RuntimeError('cargo_preparation_journal_identity')
       held['fd']=fd;held['identity']=identity(metadata);journal_creates+=1
+     if flags in (0x2,0x4,0x8):
+      if not held:raise RuntimeError('cargo_preparation_journal_missing_creation')
+      current=os.fstat(held['fd'])
+      if identity(current)[:5]!=held['identity'][:5] or current.st_size>16*1024*1024:raise RuntimeError('cargo_preparation_journal_identity')
      if flags&0x200:
       if not held:raise RuntimeError('cargo_preparation_journal_missing_creation')
       metadata=os.fstat(held['fd'])

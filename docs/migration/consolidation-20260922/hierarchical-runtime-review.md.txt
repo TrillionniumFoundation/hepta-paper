@@ -1,0 +1,60 @@
+# Hierarchical runtime: exact source review for consolidation
+
+Baseline: `fa52364166e5fb308ae9795e11e2556de9f82f38`.
+Old refs/commits:
+
+- `origin/codex/rust-function-gap-closure-20260911`:
+  `409b2077029162f1ba718b7590d3e597688d1a69`.
+- `origin/codex/rust-source-gap-full-closure-20260911`:
+  `45e2861524d850a0b05bebc0c3de3ce0a5cf256b`.
+
+Both contain exactly the same
+`rust/crates/hepta-control-plane/src/hierarchical_runtime.rs`: Git blob
+`fe4a2c3d202fab954d73a3f8c54629f44e7e99fc`, 13,922 bytes, SHA-256
+`3c319da467d04b7c4a56a5b90fd5881b966f3bc89360d3721168fa534943ea73`.
+This independent record closes the missing exact-artifact binding in the earlier
+seven-report index; it does not certify whole branches or production equivalence.
+
+The old file provides `ModuleAdmissionBindingV1` (line 19), an extra receipt
+(35), and optional `HierarchicalControlPlaneV1` wrapper (58). `new` (81) clones
+the registry/planner inputs and owns a second hierarchy allocator. `run` (129)
+selects a plan, prepares/finalizes one hierarchical lease per action, calls the
+ordinary inner runtime and releases those leases. It is not an implementation
+of a mandatory gate in the ordinary `ControlPlaneV1::run` entrypoint.
+
+Whole-old-`rust` `git grep` for `HierarchicalControlPlaneV1` and
+`ModuleAdmissionBindingV1` finds definitions and the lib reexport only: line 53
+of the first old lib and line 51 of the second. No Rust call site or test
+instantiation exists in either inspected ref. No old tests were run. This is an
+in-repository source observation, not proof about unknown external users.
+
+There is a concrete incompatibility with safe unknown-outcome accounting:
+old lines 190–196 call `self.inner.run`, then unconditionally
+`self.release_finalized`, including the inner `Err` case. Release walks the
+recorded IDs at lines 308–314. An executor may already have run or still be
+running when an error is returned; that error is not evidence of released
+physical or external consumption. The old wrapper must not be attached to the
+current execution path without a new retained-charge/recovery contract.
+
+Current `runtime.rs:165–170,178–179,230–253,383–388` installs an inspection
+record before execution, retains the selected plan on later failure, and
+refuses another run on the same owner. It still uses the local allocator.
+`src/runtime/HANDOFF.md:34–41` explicitly states that this is neither persistent
+restart protection nor mandatory hierarchical admission. The current
+`docs/modules/IMPLEMENTATION_HANDOFF.md:130` repeats that distinction.
+The current allocator's `HierarchicalAdmissionRequestV1`/`admit` API also differs
+from the old prepare/finalize/lease API consumed by this wrapper.
+
+**Consolidation recommendation:** retain the current production runtime;
+preserve the old blob as an explicitly archived, unintegrated prototype, not as
+an active `hierarchical_runtime` module or compatibility alias. Do not mark
+mandatory hierarchical admission complete. If that planned capability is later
+implemented, use a real owning factory consuming the current allocator/ledger,
+admit before dispatch, retain all potentially consumed charges on unknown
+results, and require real reconciliation before release. Caller receipt hashes
+are not sufficient. Successful old extra-receipt fields are not the current V1
+runtime receipt protocol and must not silently replace it.
+
+This recommendation is a source-level conflict disposition for one exact blob,
+not a merge performed, independent acceptance, Node compatibility regression,
+or a statement that all useful hierarchical behaviors are already implemented.

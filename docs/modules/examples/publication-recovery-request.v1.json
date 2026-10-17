@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "kind": "NativeStatePublicationRecoveryRequestV1",
+  "action": "inspect",
+  "runtimeRoot": "/absolute/private-parent/runtime",
+  "expectedPreparedReceiptHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "execute": false,
+  "expectedPlanHash": null
+}

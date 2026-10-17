@@ -24,6 +24,29 @@ function inspected(file) {
   });
 }
 
+function portablePaths({
+  version = process.versions.node,
+  architecture = process.arch,
+} = {}) {
+  const root = path.join('/opt/hostedtoolcache', 'node', version, architecture);
+  return Object.freeze({
+    root,
+    node: path.join(root, 'bin', 'node'),
+    npm: path.join(root, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  });
+}
+
+function portableEnvironment(overrides = {}) {
+  return {
+    CI: 'true',
+    GITHUB_ACTIONS: 'true',
+    RUNNER_OS: 'Linux',
+    RUNNER_TOOL_CACHE: '/opt/hostedtoolcache',
+    AGENT_TOOLSDIRECTORY: '/opt/hostedtoolcache',
+    ...overrides,
+  };
+}
+
 test('launcher pins Node network flags, official registry, strict TLS and audit policy', () => {
   const root = fs.realpathSync(process.cwd());
   const invocation = buildStrictNpmAuditInvocation({
@@ -32,6 +55,7 @@ test('launcher pins Node network flags, official registry, strict TLS and audit 
     nodeExecPath: '/usr/bin/node',
     executableInspector: inspected,
   });
+  assert.equal(invocation.runtimeProfile, 'sealed-host');
   assert.equal(invocation.command, '/usr/bin/node');
   assert.deepEqual(invocation.argv, [
     '--dns-result-order=ipv4first',
@@ -44,6 +68,55 @@ test('launcher pins Node network flags, official registry, strict TLS and audit 
     '--package-lock-only',
     '--ignore-scripts',
   ]);
+});
+
+test('GitHub Actions profile accepts only the exact same-installation tool-cache pair', () => {
+  const root = fs.realpathSync(process.cwd());
+  const portable = portablePaths();
+  const invocation = buildStrictNpmAuditInvocation({
+    workspaceRoot: root,
+    npmExecPath: portable.npm,
+    nodeExecPath: portable.node,
+    environment: portableEnvironment(),
+    executableInspector: inspected,
+  });
+  assert.equal(invocation.runtimeProfile, 'github-actions-toolcache');
+  assert.equal(invocation.command, portable.node);
+  assert.equal(invocation.argv[2], portable.npm);
+});
+
+test('GitHub Actions profile rejects spoofed markers, custom roots and cross-installation npm', () => {
+  const root = fs.realpathSync(process.cwd());
+  const portable = portablePaths();
+  const wrongVersion = portablePaths({ version: '99.99.99' });
+  const cases = [
+    { environment: portableEnvironment({ CI: 'false' }), node: portable.node, npm: portable.npm },
+    { environment: portableEnvironment({ GITHUB_ACTIONS: 'false' }), node: portable.node, npm: portable.npm },
+    { environment: portableEnvironment({ RUNNER_OS: 'Windows' }), node: portable.node, npm: portable.npm },
+    { environment: portableEnvironment({ RUNNER_TOOL_CACHE: '/tmp/toolcache' }), node: portable.node, npm: portable.npm },
+    { environment: portableEnvironment({ AGENT_TOOLSDIRECTORY: '/tmp/toolcache' }), node: portable.node, npm: portable.npm },
+    { environment: portableEnvironment(), node: wrongVersion.node, npm: wrongVersion.npm },
+    { environment: portableEnvironment(), node: portable.node, npm: wrongVersion.npm },
+    {
+      environment: portableEnvironment(),
+      node: portable.node.replace('/opt/hostedtoolcache', '/tmp/toolcache'),
+      npm: portable.npm.replace('/opt/hostedtoolcache', '/tmp/toolcache'),
+    },
+  ];
+  for (const selected of cases) {
+    let inspectedExecutable = false;
+    assert.throws(() => buildStrictNpmAuditInvocation({
+      workspaceRoot: root,
+      npmExecPath: selected.npm,
+      nodeExecPath: selected.node,
+      environment: selected.environment,
+      executableInspector() {
+        inspectedExecutable = true;
+        return inspected(selected.node);
+      },
+    }), /strict_npm_audit_executable_not_approved/u);
+    assert.equal(inspectedExecutable, false);
+  }
 });
 
 test('clean invocation uses private ephemeral HOME/cache and removes both after npm', () => {
@@ -73,6 +146,30 @@ test('clean invocation uses private ephemeral HOME/cache and removes both after 
   assert.deepEqual(Object.keys(captured.options.env).sort(),
     ['HOME', 'LANG', 'LC_ALL', 'NO_COLOR', 'PATH', 'npm_config_cache']);
   assert.equal(fs.existsSync(temporaryRoot), false);
+});
+
+test('portable CI invocation is selected automatically but CI markers never reach npm', () => {
+  const root = fs.realpathSync(process.cwd());
+  const portable = portablePaths();
+  let childEnvironment;
+  const result = runStrictNpmAudit({
+    workspaceRoot: root,
+    npmExecPath: portable.npm,
+    nodeExecPath: portable.node,
+    executableInspector: inspected,
+    environment: {
+      ...portableEnvironment(),
+      npm_execpath: portable.npm,
+    },
+    spawn(command, argv, options) {
+      childEnvironment = options.env;
+      return { status: 0, signal: null, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(result.invocation.runtimeProfile, 'github-actions-toolcache');
+  for (const name of [
+    'CI', 'GITHUB_ACTIONS', 'RUNNER_OS', 'RUNNER_TOOL_CACHE', 'AGENT_TOOLSDIRECTORY',
+  ]) assert.equal(Object.hasOwn(childEnvironment, name), false, name);
 });
 
 test('empty inherited pollution values are accepted and stripped from the child', () => {
@@ -165,6 +262,30 @@ test('npm_execpath is required and executable paths are exact-allowlisted', () =
     expectedExecutableGid: process.getgid(),
   }), /strict_npm_audit_executable_not_approved/u);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('executable identity drift after spawn fails closed', () => {
+  const root = fs.realpathSync(process.cwd());
+  let inspectionCount = 0;
+  assert.throws(() => runStrictNpmAudit({
+    workspaceRoot: root,
+    npmExecPath: '/usr/lib/node_modules/npm/bin/npm-cli.js',
+    nodeExecPath: '/usr/bin/node',
+    environment: { npm_execpath: '/usr/lib/node_modules/npm/bin/npm-cli.js' },
+    executableInspector(file) {
+      inspectionCount += 1;
+      return Object.freeze({
+        ...inspected(file),
+        contentHash: hashRecord(
+          'StrictNpmAuditMutableTestExecutable',
+          `${file}:${inspectionCount > 2 ? 'after' : 'before'}`,
+        ),
+      });
+    },
+    spawn() {
+      return { status: 0, signal: null, stdout: '', stderr: '' };
+    },
+  }), /strict_npm_audit_executable_changed_after_spawn/u);
 });
 
 test('production audit composition preserves injected launcher authority', () => {

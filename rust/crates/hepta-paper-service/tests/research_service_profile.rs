@@ -1,0 +1,686 @@
+use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::{
+    SigningKey,
+    pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding},
+};
+use hepta_campaign_writer::WriterLeaseV1;
+use hepta_codex_protocol::Sha256Digest;
+use hepta_control_plane::{
+    ControlPlaneSnapshotV1, HardPolicyV1, PlannerPolicyV1, PlanningFrontierV1,
+};
+use hepta_module_platform::{
+    ActionCandidateV1, ActivationStateV1, AuthorityClassV1, ModuleExecutionV1, ModuleGrantV1,
+    ModuleKindV1, ModuleManifestV1, ModuleRegistryV1, QualificationTierV1, RegistryPolicyV1,
+    ResourceVectorV1,
+};
+use hepta_paper_service::broker_prepared::{
+    BrokerCommitAcknowledgementKeyV2, BrokerCommitAcknowledgementSourceV2,
+    BrokerCostSettlementKeyV1, BrokerCostSettlementSourceV1, BrokerPreparedSourceV1,
+    BrokerRequestSignerSourceV1,
+};
+use hepta_paper_service::{
+    NativeJobV1, ObjectStoreV1, ResearchActivationStageV1, ResearchServiceRunV1,
+    ResearchWorkflowProfileV1, ServiceRunV1, WorkerBindingV1, native_implementation_hash_v1,
+    validate_research_service_policy_v1,
+};
+use hepta_qualification_ingest::{
+    ExternalQualificationClosureSubjectV1, qualification_closure::ResearchWorkflowProfileTemplateV1,
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+static NEXT: AtomicU64 = AtomicU64::new(1);
+
+struct Temp(PathBuf);
+
+impl Temp {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "hepta-research-profile-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for Temp {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn digest(marker: u8) -> Sha256Digest {
+    format!("sha256:{marker:064x}").parse().unwrap()
+}
+
+fn subject() -> ExternalQualificationClosureSubjectV1 {
+    ExternalQualificationClosureSubjectV1 {
+        repository: "TrillionniumFoundation/hepta-paper".into(),
+        commit: "a".repeat(40),
+        tree: "b".repeat(40),
+    }
+}
+
+fn configuration(
+    temp: &Temp,
+    capability: &str,
+    qualification: QualificationTierV1,
+    activation: ActivationStateV1,
+) -> ResearchServiceRunV1 {
+    let objects = ObjectStoreV1::open(&temp.0).unwrap();
+    let initial = objects.put(b"research profile initial state").unwrap();
+    let artifact = objects.put(b"research profile artifact").unwrap();
+    let payload = objects
+        .put(
+            &serde_json::to_vec(&NativeJobV1::ArtifactInventory {
+                artifacts: vec![artifact],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    let module_id = "module.research-worker".to_owned();
+    let capabilities = BTreeSet::from([capability.to_owned()]);
+    let mut registry = ModuleRegistryV1::new(RegistryPolicyV1 {
+        version: 1,
+        protocol_version: 1,
+        central_writer_module_id: "module.commit-sequencer".into(),
+        grants: BTreeMap::from([(
+            module_id.clone(),
+            ModuleGrantV1 {
+                module_version: "1.0.0".into(),
+                authority: AuthorityClassV1::PreparedResultOnly,
+                minimum_qualification: qualification,
+                activation,
+                capability_ids: capabilities.clone(),
+            },
+        )]),
+    })
+    .unwrap();
+    registry
+        .register(ModuleManifestV1 {
+            version: 1,
+            module_id: module_id.clone(),
+            module_version: "1.0.0".into(),
+            protocol_min: 1,
+            protocol_max: 1,
+            module_kind: ModuleKindV1::TrustedInProcess,
+            requested_authority: AuthorityClassV1::PreparedResultOnly,
+            qualification,
+            requested_activation: activation,
+            capability_ids: capabilities.iter().cloned().collect(),
+            dependencies: vec![],
+            primary_owner: "TEAM-RESEARCH".into(),
+            secondary_owner: "TEAM-RUNTIME".into(),
+            independent_reviewer: "TEAM-EVIDENCE".into(),
+            rollback_version: "0.9.0".into(),
+            execution: ModuleExecutionV1::InProcess {
+                implementation_hash: native_implementation_hash_v1().unwrap(),
+            },
+        })
+        .unwrap();
+    let registry = registry.finish().unwrap();
+    let hard_policy = HardPolicyV1 {
+        version: 1,
+        policy_id: "restricted-research-v1".into(),
+        registry_policy_hash: registry.policy_hash().clone(),
+        forbidden_module_ids: BTreeSet::new(),
+        minimum_evidence_by_capability: BTreeMap::from([(capability.to_owned(), qualification)]),
+        external_actions_authorized: false,
+        maximum_central_writer_turns: 0,
+        maximum_candidates_per_decision_group: 1,
+    };
+    let capacity = ResourceVectorV1 {
+        cpu_millis: 100,
+        memory_bytes: 1024 * 1024,
+        storage_bytes: 1024 * 1024,
+        tokens: 100,
+        ..ResourceVectorV1::default()
+    };
+    let snapshot = ControlPlaneSnapshotV1 {
+        version: 1,
+        campaign_id: "campaign-restricted-research".into(),
+        campaign_revision: 1,
+        state_hash: initial.clone(),
+        registry_hash: registry.registry_hash().clone(),
+        registry_policy_hash: registry.policy_hash().clone(),
+        objective_version: "restricted-research-v1".into(),
+        constraint_set_hash: hard_policy.policy_hash().unwrap(),
+        resource_limit: capacity,
+        budget_microusd: 100,
+        required_capability_ids: capabilities,
+        random_seed: None,
+    };
+    let frontier = PlanningFrontierV1 {
+        version: 1,
+        snapshot_hash: snapshot.snapshot_hash().unwrap(),
+        candidates: vec![ActionCandidateV1 {
+            version: 1,
+            candidate_id: "research-action-1".into(),
+            decision_group: "research-action".into(),
+            module_id: module_id.clone(),
+            module_version: "1.0.0".into(),
+            capability_id: capability.to_owned(),
+            snapshot_hash: snapshot.snapshot_hash().unwrap(),
+            dependency_candidate_ids: vec![],
+            resources: ResourceVectorV1 {
+                cpu_millis: 1,
+                memory_bytes: 4096,
+                ..ResourceVectorV1::default()
+            },
+            utility_micros: 1,
+            cost_microusd: 1,
+            uncertainty_ppm: 0,
+            evidence_tier: qualification,
+            payload_hash: payload,
+        }],
+    };
+    let service = ServiceRunV1 {
+        version: 1,
+        production_activation: false,
+        state_directory: temp.0.clone(),
+        registry_json: serde_json::to_string(&registry).unwrap(),
+        hard_policy,
+        planner_policy: PlannerPolicyV1 {
+            version: 1,
+            maximum_exact_candidates: 1,
+            cost_weight_ppm: 0,
+            uncertainty_weight_micros_per_ppm: 0,
+            maximum_selected_candidates: 1,
+        },
+        frontier,
+        snapshot,
+        verifier_hash: initial.clone(),
+        initial_state_hash: initial,
+        writer_lease: WriterLeaseV1 {
+            generation: 1,
+            token: "restricted-research-writer-001".into(),
+            expires_at_unix_ms: 100_000,
+        },
+        observed_at_unix_ms: 1_000,
+        workers: BTreeMap::from([(module_id, WorkerBindingV1::Native)]),
+    };
+    ResearchServiceRunV1 {
+        version: 1,
+        stage: match activation {
+            ActivationStateV1::Canary => ResearchActivationStageV1::Canary,
+            ActivationStateV1::Authoritative => ResearchActivationStageV1::Established,
+            _ => ResearchActivationStageV1::Canary,
+        },
+        subject: subject(),
+        service,
+    }
+}
+
+#[test]
+fn per_role_runtime_profile_v2_is_versioned_and_cannot_reinterpret_legacy_diagnostics() {
+    let mut template = ResearchWorkflowProfileTemplateV1 {
+        version: 2,
+        stage: "canary".into(),
+        repository: "TrillionniumFoundation/hepta-paper".into(),
+        commit: "a".repeat(40),
+        tree: "b".repeat(40),
+        qualification_binding_hash: digest(1).to_string(),
+        qualification_trust_store_generation: 7,
+        qualification_expires_at_unix_ms: 90_000,
+        qualified_codex_runtime_identity_hash: digest(2).to_string(),
+        qualified_codex_role_runtime_identity_hashes_v2: BTreeMap::from([
+            ("author".into(), digest(3).to_string()),
+            ("reviewer".into(), digest(4).to_string()),
+        ]),
+        automatic_activation: false,
+        production_activation: false,
+        release_authority: false,
+        submission_authority: false,
+    };
+    let profile = ResearchWorkflowProfileV1::from_template(&template).unwrap();
+    assert_eq!(profile.version, 2);
+    assert_eq!(
+        profile.qualified_runtime_for_role_v2("author"),
+        Some(&digest(3))
+    );
+    assert_eq!(
+        profile.qualified_runtime_for_role_v2("reviewer"),
+        Some(&digest(4))
+    );
+    assert!(profile.qualified_runtime_for_role_v2("repairer").is_none());
+    assert_eq!(
+        serde_json::to_value(&profile).unwrap(),
+        serde_json::to_value(&template).unwrap()
+    );
+    let restored: ResearchWorkflowProfileV1 =
+        serde_json::from_slice(&serde_json::to_vec(&profile).unwrap()).unwrap();
+    assert_eq!(profile, restored);
+    assert_eq!(
+        profile.qualification_expectation().workflow_profile_version,
+        2
+    );
+    assert_eq!(
+        profile
+            .qualification_expectation()
+            .qualified_codex_role_runtime_identity_hashes_v2,
+        template.qualified_codex_role_runtime_identity_hashes_v2
+    );
+    for case in 0..6 {
+        let mut changed = template.clone();
+        match case {
+            0 => changed.version = 3,
+            1 => changed.version = 1,
+            2 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .remove("reviewer");
+            }
+            3 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .insert("reviewer".into(), digest(3).to_string());
+            }
+            4 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .insert("other".into(), digest(5).to_string());
+            }
+            5 => {
+                changed
+                    .qualified_codex_role_runtime_identity_hashes_v2
+                    .clear();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            ResearchWorkflowProfileV1::from_template(&changed).is_err(),
+            "case {case}"
+        );
+    }
+    template.version = 1;
+    template
+        .qualified_codex_role_runtime_identity_hashes_v2
+        .clear();
+    let legacy = ResearchWorkflowProfileV1::from_template(&template).unwrap();
+    assert!(legacy.is_well_formed());
+    assert!(legacy.qualified_runtime_for_role_v2("author").is_none());
+    assert!(legacy.qualified_runtime_for_role_v2("reviewer").is_none());
+    assert!(
+        !serde_json::to_string(&legacy)
+            .unwrap()
+            .contains("qualifiedCodexRoleRuntimeIdentityHashesV2")
+    );
+}
+
+#[test]
+fn canonical_receipt_profile_template_is_directly_reusable_and_non_authorizing() {
+    let template = ResearchWorkflowProfileTemplateV1 {
+        version: 1,
+        stage: "canary".into(),
+        repository: "TrillionniumFoundation/hepta-paper".into(),
+        commit: "a".repeat(40),
+        tree: "b".repeat(40),
+        qualification_binding_hash: digest(1).to_string(),
+        qualification_trust_store_generation: 7,
+        qualification_expires_at_unix_ms: 90_000,
+        qualified_codex_runtime_identity_hash: digest(2).to_string(),
+        qualified_codex_role_runtime_identity_hashes_v2: BTreeMap::new(),
+        automatic_activation: false,
+        production_activation: false,
+        release_authority: false,
+        submission_authority: false,
+    };
+    let profile = ResearchWorkflowProfileV1::from_template(&template).unwrap();
+    assert_eq!(profile.stage, ResearchActivationStageV1::Canary);
+    assert_eq!(
+        serde_json::to_value(&template).unwrap(),
+        serde_json::to_value(&profile).unwrap()
+    );
+    assert!(profile.is_well_formed());
+
+    for mutation in 0..5 {
+        let mut changed = template.clone();
+        match mutation {
+            0 => changed.stage = "established".into(),
+            1 => changed.automatic_activation = true,
+            2 => changed.production_activation = true,
+            3 => changed.release_authority = true,
+            _ => changed.submission_authority = true,
+        }
+        assert!(ResearchWorkflowProfileV1::from_template(&changed).is_err());
+    }
+}
+
+#[test]
+fn research_policy_accepts_target_host_private_state_without_release_authority() {
+    let temp = Temp::new();
+    let config = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::TargetHost,
+        ActivationStateV1::Canary,
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_ok());
+}
+
+#[test]
+fn research_broker_requires_current_signed_cost_owner_without_release_authority() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = Temp::new();
+    let mut config = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::TargetHost,
+        ActivationStateV1::Canary,
+    );
+    let owner = fs::metadata(&temp.0).unwrap();
+    let requests = temp.0.join("requests");
+    let settlements = temp.0.join("settlements");
+    let acknowledgements = temp.0.join("acknowledgements");
+    fs::create_dir(&requests).unwrap();
+    fs::create_dir(&settlements).unwrap();
+    fs::create_dir(&acknowledgements).unwrap();
+    fs::set_permissions(&requests, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&settlements, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&acknowledgements, fs::Permissions::from_mode(0o700)).unwrap();
+    let request_key = SigningKey::from_bytes(&[73; 32]);
+    let request_key_path = temp.0.join("request-capability-key.pem");
+    fs::write(
+        &request_key_path,
+        request_key.to_pkcs8_pem(LineEnding::LF).unwrap().as_bytes(),
+    )
+    .unwrap();
+    fs::set_permissions(&request_key_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let key = SigningKey::from_bytes(&[74; 32]);
+    let acknowledgement_key = SigningKey::from_bytes(&[75; 32]);
+    let module = config.service.workers.keys().next().unwrap().clone();
+    let mut source = BrokerPreparedSourceV1 {
+        operation_publisher: None,
+        socket_path: temp.0.join("broker.sock"),
+        broker_uid: owner.uid(),
+        broker_gid: owner.gid(),
+        request_directory: requests,
+        request_owner_uid: owner.uid(),
+        request_owner_gid: owner.gid(),
+        role: hepta_codex_protocol::AgentRole::Author,
+        runtime_identity_hash: digest(9),
+        timeout_ms: 1_000,
+        request_signer: None,
+        cost_settlement: None,
+        commit_acknowledgement: None,
+    };
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    source.request_signer = Some(BrokerRequestSignerSourceV1 {
+        private_key_path: request_key_path,
+        private_key_owner_uid: owner.uid(),
+        private_key_owner_gid: owner.gid(),
+        signer_key_id: "research-request-key".into(),
+        public_key_base64: Base64UrlUnpadded::encode_string(request_key.verifying_key().as_bytes()),
+        model_selector: "qualified-research-model".into(),
+        maximum_lifetime_ms: 60_000,
+        maximum_output_bytes: 4096,
+        maximum_event_count: 100,
+        remaining_token_hint: Some(100),
+    });
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    source.cost_settlement = Some(BrokerCostSettlementSourceV1 {
+        directory: settlements,
+        authority_domain_id: "research-billing-domain".into(),
+        authority_uid: owner.uid(),
+        authority_gid: owner.gid(),
+        trust_store_generation: 1,
+        maximum_age_ms: 60_000,
+        keys: vec![BrokerCostSettlementKeyV1 {
+            key_id: "research-billing-key".into(),
+            public_key_base64: Base64UrlUnpadded::encode_string(key.verifying_key().as_bytes()),
+        }],
+    });
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    source.commit_acknowledgement = Some(BrokerCommitAcknowledgementSourceV2 {
+        directory: acknowledgements,
+        authority_domain_id: "research-commit-domain".into(),
+        authority_uid: owner.uid(),
+        authority_gid: owner.gid(),
+        trust_store_generation: 1,
+        maximum_age_ms: 60_000,
+        keys: vec![BrokerCommitAcknowledgementKeyV2 {
+            key_id: "research-commit-key".into(),
+            public_key_base64: Base64UrlUnpadded::encode_string(
+                acknowledgement_key.verifying_key().as_bytes(),
+            ),
+        }],
+    });
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: source.clone(),
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_ok());
+
+    let mut missing_request_signer = source.clone();
+    missing_request_signer.request_signer = None;
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: missing_request_signer,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut shared_request_key = source.clone();
+    shared_request_key
+        .request_signer
+        .as_mut()
+        .unwrap()
+        .public_key_base64 = shared_request_key.cost_settlement.as_ref().unwrap().keys[0]
+        .public_key_base64
+        .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: shared_request_key,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut shared_domain = source.clone();
+    shared_domain
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .authority_domain_id = shared_domain
+        .cost_settlement
+        .as_ref()
+        .unwrap()
+        .authority_domain_id
+        .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: shared_domain,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut shared_directory = source.clone();
+    shared_directory
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .directory = shared_directory
+        .cost_settlement
+        .as_ref()
+        .unwrap()
+        .directory
+        .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: shared_directory,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut shared_key = source.clone();
+    shared_key.commit_acknowledgement.as_mut().unwrap().keys[0].public_key_base64 =
+        shared_key.cost_settlement.as_ref().unwrap().keys[0]
+            .public_key_base64
+            .clone();
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute { source: shared_key },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut invalid_acknowledgement = source.clone();
+    invalid_acknowledgement
+        .commit_acknowledgement
+        .as_mut()
+        .unwrap()
+        .trust_store_generation = 0;
+    config.service.workers.insert(
+        module.clone(),
+        WorkerBindingV1::BrokerExecute {
+            source: invalid_acknowledgement,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+
+    let mut invalid = source;
+    invalid
+        .cost_settlement
+        .as_mut()
+        .unwrap()
+        .trust_store_generation = 0;
+    config
+        .service
+        .workers
+        .insert(module, WorkerBindingV1::BrokerExecute { source: invalid });
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+}
+
+#[test]
+fn research_policy_rejects_release_submission_cutover_and_external_effects() {
+    for capability in ["CAP-REL-VERIFY", "CAP-SUBMIT", "CAP-MIG-CUTOVER"] {
+        let temp = Temp::new();
+        let config = configuration(
+            &temp,
+            capability,
+            QualificationTierV1::TargetHost,
+            ActivationStateV1::Canary,
+        );
+        assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+    }
+    let temp = Temp::new();
+    let mut config = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::TargetHost,
+        ActivationStateV1::Canary,
+    );
+    config.service.snapshot.resource_limit.external_actions = 1;
+    config.service.frontier.candidates[0]
+        .resources
+        .external_actions = 1;
+    assert!(validate_research_service_policy_v1(&config, &digest(9)).is_err());
+}
+
+#[test]
+fn research_policy_rejects_source_process_activation_and_runtime_substitution() {
+    let temp = Temp::new();
+    let source = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::Source,
+        ActivationStateV1::Canary,
+    );
+    assert!(validate_research_service_policy_v1(&source, &digest(9)).is_err());
+    let temp = Temp::new();
+    let mut process = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::TargetHost,
+        ActivationStateV1::Canary,
+    );
+    let module = process.service.workers.keys().next().unwrap().clone();
+    process.service.workers.insert(
+        module,
+        WorkerBindingV1::Process {
+            executable: temp.0.join("worker"),
+            executable_hash: digest(7),
+            arguments: vec![],
+            code_files: BTreeMap::new(),
+            working_directory: temp.0.clone(),
+            implementation_language: "rust".into(),
+            timeout_ms: 1_000,
+            network_declared: false,
+        },
+    );
+    assert!(validate_research_service_policy_v1(&process, &digest(9)).is_err());
+
+    let temp = Temp::new();
+    let mut activation = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::TargetHost,
+        ActivationStateV1::Canary,
+    );
+    activation.stage = ResearchActivationStageV1::Established;
+    assert!(validate_research_service_policy_v1(&activation, &digest(9)).is_err());
+
+    let temp = Temp::new();
+    let mut runtime = configuration(
+        &temp,
+        "CAP-BUILD",
+        QualificationTierV1::TargetHost,
+        ActivationStateV1::Canary,
+    );
+    let module = runtime.service.workers.keys().next().unwrap().clone();
+    runtime.service.workers.insert(
+        module,
+        WorkerBindingV1::BrokerPrepared {
+            source: hepta_paper_service::broker_prepared::BrokerPreparedSourceV1 {
+                operation_publisher: None,
+                socket_path: temp.0.join("broker.sock"),
+                broker_uid: 1,
+                broker_gid: 1,
+                request_directory: temp.0.join("requests"),
+                request_owner_uid: 1,
+                request_owner_gid: 1,
+                role: hepta_codex_protocol::AgentRole::Author,
+                runtime_identity_hash: digest(8),
+                timeout_ms: 1_000,
+                request_signer: None,
+                cost_settlement: None,
+                commit_acknowledgement: None,
+            },
+        },
+    );
+    assert!(validate_research_service_policy_v1(&runtime, &digest(9)).is_err());
+}

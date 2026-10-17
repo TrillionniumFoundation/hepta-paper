@@ -1,0 +1,26 @@
+[
+  {
+    "destination": "rust/crates/hepta-control-plane/src/legacy_planning/calibration.rs",
+    "sourceBlob": "67b74b797bdfcbef4732b76e2a2b0c1f88088440",
+    "sourceSha256": "17c0aa6b77ff873fd0b72ed617072751dc42f239c27930e0c21c635ac301ef0e",
+    "adjustments": "module-local calibration imports and provenance comments only; current canonical_hash_v1 identical to original source"
+  },
+  {
+    "destination": "rust/crates/hepta-control-plane/src/legacy_planning/model_selection.rs",
+    "sourceBlob": "fb918ca567885cd749b0a486becfdfb6c09b671e",
+    "sourceSha256": "1f3577fd8a1a8e92f6c26b0215b82243b707b230e54629deff6ac2c22dde506a",
+    "adjustments": "module-local calibration imports and provenance comments only; current canonical_hash_v1 identical to original source"
+  },
+  {
+    "destination": "rust/crates/hepta-control-plane/src/legacy_planning/observability.rs",
+    "sourceBlob": "09072e726f8acb752098683ba0ae3f8c1ccb6524",
+    "sourceSha256": "c32e1519eb8c98260c9b1d671314ee97fee7e7e60e66a7cb7d7d302da70b4294",
+    "adjustments": "module-local calibration imports and provenance comments only; current canonical_hash_v1 identical to original source"
+  },
+  {
+    "destination": "rust/crates/hepta-orchestration-kernel/src/legacy_calibration_v1.rs",
+    "sourceBlob": "258c92497c27750587e2c457d91a5639e0d37879",
+    "sourceSha256": "4a81ff77b038a57aaed3e0ba510316ad9567b9d6e06500731930d04d23c6dc9a",
+    "adjustments": "provenance module comments only"
+  }
+]

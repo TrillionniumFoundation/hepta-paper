@@ -4,6 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  CANDIDATE_ROUTER_INPUT_BOUNDARY,
+} from '../../paper-application/orchestration/candidate-router.mjs';
+import {
+  SNAPSHOT_BUILDER_INPUT_BOUNDARY,
+} from '../../paper-application/orchestration/planning-snapshot-builder.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ignoredDirectories = new Set([
@@ -65,6 +71,9 @@ async function runBounded(items, concurrency, operation) {
 }
 
 export async function runMjsSyntaxCheck({ root = workspaceRoot } = {}) {
+  if (CANDIDATE_ROUTER_INPUT_BOUNDARY !== SNAPSHOT_BUILDER_INPUT_BOUNDARY) {
+    throw new Error('planning_source_input_boundary_mismatch');
+  }
   const files = discoverMjsModuleFiles(root);
   const failures = (await runBounded(
     files,

@@ -1,0 +1,520 @@
+//! Private staging and no-replace publication. Finalized staging is retained on
+//! failure; filesystem snapshots do not exclude later same-user modifications.
+use super::*;
+use nix::{
+    fcntl::{Flock, FlockArg, OFlag, RenameFlags, openat, renameat2},
+    sys::stat::{Mode, mkdirat},
+};
+use std::{
+    fs::{self, File},
+    io::Write,
+    os::{
+        fd::AsFd,
+        unix::fs::{MetadataExt, PermissionsExt},
+    },
+    path::{Component, Path, PathBuf},
+};
+fn failure() -> crate::sqlite_mutation_coordinator::SqliteMutationCoordinatorError {
+    error("autonomous_research_state_backup_publication_path_changed_or_unsafe")
+}
+fn valid_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
+}
+fn same(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    a.dev() == b.dev()
+        && a.ino() == b.ino()
+        && a.uid() == b.uid()
+        && a.mode() == b.mode()
+        && a.nlink() == b.nlink()
+}
+fn same_regular(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    a.is_file()
+        && b.is_file()
+        && a.dev() == b.dev()
+        && a.ino() == b.ino()
+        && a.uid() == b.uid()
+        && a.gid() == b.gid()
+        && a.mode() == b.mode()
+        && a.nlink() == b.nlink()
+        && a.len() == b.len()
+        && a.mtime() == b.mtime()
+        && a.mtime_nsec() == b.mtime_nsec()
+        && a.ctime() == b.ctime()
+        && a.ctime_nsec() == b.ctime_nsec()
+}
+fn same_directory(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    // Directory link counts change when unrelated children are added/removed.
+    // They are not inode identity. Regular-file hardlink checks keep `same`.
+    a.is_dir()
+        && b.is_dir()
+        && a.dev() == b.dev()
+        && a.ino() == b.ino()
+        && a.uid() == b.uid()
+        && a.gid() == b.gid()
+        && a.mode() == b.mode()
+}
+
+pub(crate) struct ObservedEmptyLock {
+    path: PathBuf,
+    file: File,
+    metadata: fs::Metadata,
+}
+impl ObservedEmptyLock {
+    pub(crate) fn assert_current(&self) -> Result<()> {
+        let held = self.file.metadata().map_err(|_| failure())?;
+        let named = fs::symlink_metadata(&self.path).map_err(|_| failure())?;
+        ensure(
+            same_regular(&self.metadata, &held) && same_regular(&held, &named),
+            "autonomous_research_state_backup_publication_path_changed_or_unsafe",
+        )
+    }
+}
+
+// Another ordinary caller may create this exact leaf after the ENOENT open.
+// EEXIST only permits the original nofollow directory reopen; the caller still
+// verifies the held/name chain and its private or local-data owner/mode policy.
+#[derive(Clone, Copy)]
+enum CreationPolicy {
+    Private,
+    LocalReport,
+}
+impl CreationPolicy {
+    fn mode(self) -> Mode {
+        Mode::from_bits_truncate(match self {
+            Self::Private => 0o700,
+            Self::LocalReport => 0o775,
+        })
+    }
+}
+fn open_missing_directory_child(parent: &File, name: &Path) -> Result<File> {
+    open_missing_directory_child_with_policy(parent, name, CreationPolicy::Private)
+}
+fn open_missing_directory_child_with_policy(
+    parent: &File,
+    name: &Path,
+    policy: CreationPolicy,
+) -> Result<File> {
+    match mkdirat(parent.as_fd(), name, policy.mode()) {
+        Ok(()) | Err(nix::errno::Errno::EEXIST) => {}
+        Err(_) => return Err(failure()),
+    }
+    Ok(File::from(
+        openat(
+            parent.as_fd(),
+            name,
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| failure())?,
+    ))
+}
+
+type HeldDirectoryChain = (PathBuf, File, Vec<(PathBuf, File)>);
+fn open_directory_chain(
+    path: &Path,
+    create: bool,
+    policy: CreationPolicy,
+) -> Result<HeldDirectoryChain> {
+    ensure(
+        path.is_absolute()
+            && path
+                .components()
+                .all(|c| matches!(c, Component::RootDir | Component::Normal(_))),
+        "autonomous_research_state_backup_publication_path_invalid",
+    )?;
+    let mut cursor = PathBuf::from("/");
+    let mut current = File::open("/").map_err(|_| failure())?;
+    let mut parents = Vec::new();
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        let opened = openat(
+            current.as_fd(),
+            Path::new(name),
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        );
+        let child = match opened {
+            Ok(fd) => File::from(fd),
+            Err(nix::errno::Errno::ENOENT) if create => match policy {
+                CreationPolicy::Private => open_missing_directory_child(&current, Path::new(name))?,
+                CreationPolicy::LocalReport => open_missing_directory_child_with_policy(
+                    &current,
+                    Path::new(name),
+                    CreationPolicy::LocalReport,
+                )?,
+            },
+            Err(_) => return Err(failure()),
+        };
+        parents.push((cursor.clone(), current));
+        cursor.push(name);
+        current = child;
+    }
+    Ok((cursor, current, parents))
+}
+mod local_report_directory;
+mod reopen_epoch;
+pub(crate) use local_report_directory::LocalReportDirectoryV1;
+pub(crate) struct Directory {
+    pub path: PathBuf,
+    pub held: File,
+    parents: Vec<(PathBuf, File)>,
+}
+impl Directory {
+    /// Borrow the existing held traversal chain without reopening or replacing
+    /// any component. Reopen witnesses use this only for kernel observations.
+    pub(crate) fn held_reopen_ancestry_v1(&self) -> impl Iterator<Item = (&Path, &File)> {
+        self.parents
+            .iter()
+            .map(|(path, file)| (path.as_path(), file))
+            .chain(std::iter::once((self.path.as_path(), &self.held)))
+    }
+    pub(crate) fn open_or_create(path: &Path, create: bool) -> Result<Self> {
+        let (cursor, current, parents) =
+            open_directory_chain(path, create, CreationPolicy::Private)?;
+        let dir = Self {
+            path: cursor,
+            held: current,
+            parents,
+        };
+        dir.assert_current()?;
+        Ok(dir)
+    }
+    pub(crate) fn assert_current(&self) -> Result<()> {
+        for (path, held) in self
+            .parents
+            .iter()
+            .map(|(p, f)| (p, f))
+            .chain(std::iter::once((&self.path, &self.held)))
+        {
+            let m = fs::symlink_metadata(path).map_err(|_| failure())?;
+            let h = held.metadata().map_err(|_| failure())?;
+            if !m.is_dir() || m.is_symlink() || !same_directory(&m, &h) {
+                return Err(failure());
+            }
+        }
+        let metadata = self.held.metadata().map_err(|_| failure())?;
+        ensure(
+            metadata.mode() & 0o022 == 0 && metadata.uid() == nix::unistd::getuid().as_raw(),
+            "autonomous_research_state_backup_publication_path_changed_or_unsafe",
+        )
+    }
+    /// Sync held ancestors after creating a nested local publication layout.
+    /// All existing owner and no-alias guards remain in effect.
+    pub(crate) fn sync_with_parents(&self) -> Result<()> {
+        self.assert_current()?;
+        for held in self
+            .parents
+            .iter()
+            .map(|(_, file)| file)
+            .chain(std::iter::once(&self.held))
+        {
+            held.sync_all().map_err(|_| failure())?;
+        }
+        self.assert_current()
+    }
+    pub(crate) fn observe_empty_lock(&self, name: &str) -> Result<ObservedEmptyLock> {
+        self.assert_current()?;
+        ensure(
+            valid_name(name),
+            "autonomous_research_state_backup_publication_name_invalid",
+        )?;
+        let file = File::from(
+            openat(
+                self.held.as_fd(),
+                Path::new(name),
+                OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC | OFlag::O_NONBLOCK,
+                Mode::empty(),
+            )
+            .map_err(|_| failure())?,
+        );
+        let metadata = file.metadata().map_err(|_| failure())?;
+        ensure(
+            metadata.is_file()
+                && metadata.nlink() == 1
+                && metadata.uid() == nix::unistd::getuid().as_raw()
+                && metadata.mode() & 0o077 == 0
+                && metadata.len() == 0,
+            "autonomous_research_state_backup_publication_path_changed_or_unsafe",
+        )?;
+        let result = ObservedEmptyLock {
+            path: self.path.join(name),
+            file,
+            metadata,
+        };
+        result.assert_current()?;
+        self.assert_current()?;
+        Ok(result)
+    }
+
+    pub fn child(&self, name: &str) -> Result<Self> {
+        self.assert_current()?;
+        ensure(
+            valid_name(name),
+            "autonomous_research_state_backup_publication_name_invalid",
+        )?;
+        mkdirat(self.held.as_fd(), name, Mode::from_bits_truncate(0o700)).map_err(|_| failure())?;
+        let child = Self::open_or_create(&self.path.join(name), false)?;
+        self.assert_current()?;
+        Ok(child)
+    }
+    pub fn write_new(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.write_new_with_mode(name, bytes, None)
+    }
+    pub(crate) fn write_new_observed_mode_v1(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        mode: u32,
+    ) -> Result<()> {
+        ensure(
+            matches!(mode, 0o644 | 0o664 | 0o755),
+            "autonomous_research_observed_copy_mode_invalid",
+        )?;
+        self.write_new_with_mode(name, bytes, Some(mode))
+    }
+    fn write_new_with_mode(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        observed_mode: Option<u32>,
+    ) -> Result<()> {
+        self.assert_current()?;
+        ensure(
+            valid_name(name),
+            "autonomous_research_state_backup_publication_name_invalid",
+        )?;
+        let mut file = File::from(
+            openat(
+                self.held.as_fd(),
+                name,
+                OFlag::O_WRONLY
+                    | OFlag::O_CREAT
+                    | OFlag::O_EXCL
+                    | OFlag::O_NOFOLLOW
+                    | OFlag::O_CLOEXEC,
+                Mode::from_bits_truncate(0o600),
+            )
+            .map_err(|_| failure())?,
+        );
+        file.write_all(bytes).map_err(|_| failure())?;
+        if let Some(mode) = observed_mode {
+            let before = file.metadata().map_err(|_| failure())?;
+            let named = fs::symlink_metadata(self.path.join(name)).map_err(|_| failure())?;
+            ensure(
+                before.is_file()
+                    && before.nlink() == 1
+                    && before.uid() == nix::unistd::getuid().as_raw()
+                    && same_regular(&before, &named),
+                "autonomous_research_observed_copy_changed_or_unsafe",
+            )?;
+            file.set_permissions(fs::Permissions::from_mode(mode))
+                .map_err(|_| failure())?;
+            let held = file.metadata().map_err(|_| failure())?;
+            let named = fs::symlink_metadata(self.path.join(name)).map_err(|_| failure())?;
+            ensure(
+                held.is_file()
+                    && held.nlink() == 1
+                    && held.uid() == before.uid()
+                    && held.dev() == before.dev()
+                    && held.ino() == before.ino()
+                    && held.mode() & 0o7777 == mode
+                    && same_regular(&held, &named),
+                "autonomous_research_observed_copy_changed_or_unsafe",
+            )?;
+        }
+        file.sync_all().map_err(|_| failure())?;
+        self.assert_current()?;
+        self.held.sync_all().map_err(|_| failure())
+    }
+    pub fn publish_new(&self, staging: &Directory, name: &str) -> Result<PathBuf> {
+        self.assert_current()?;
+        staging.assert_current()?;
+        ensure(
+            valid_name(name) && staging.path.parent() == Some(self.path.as_path()),
+            "autonomous_research_state_backup_publication_name_invalid",
+        )?;
+        let stage_name = staging.path.file_name().ok_or_else(failure)?;
+        renameat2(
+            self.held.as_fd(),
+            stage_name,
+            self.held.as_fd(),
+            name,
+            RenameFlags::RENAME_NOREPLACE,
+        )
+        .map_err(|e| {
+            if e == nix::errno::Errno::EEXIST {
+                error("autonomous_research_state_backup_bundle_already_exists")
+            } else {
+                failure()
+            }
+        })?;
+        self.held.sync_all().map_err(|_| failure())?;
+        self.assert_current()?;
+        let final_path = self.path.join(name);
+        let actual = fs::symlink_metadata(&final_path).map_err(|_| failure())?;
+        ensure(
+            same_directory(&actual, &staging.held.metadata().map_err(|_| failure())?),
+            "autonomous_research_state_backup_publication_path_changed_or_unsafe",
+        )?;
+        Ok(final_path)
+    }
+}
+pub(super) fn nonce() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|_| error("autonomous_research_state_backup_randomness_unavailable"))?;
+    Ok(hex::encode(bytes))
+}
+/// Compare-and-exchange an expected receipt, retaining any displaced competing
+/// bytes on conflict. Cooperating writers serialize with a private exclusive
+/// kernel lock. The lock pathname is persistent; process death releases the
+/// kernel lock, so a crash cannot strand an empty ownership marker.
+pub(crate) fn publish_receipt(
+    directory: &Directory,
+    name: &str,
+    receipt: &Value,
+    expected: Option<&str>,
+) -> Result<()> {
+    let bytes = serde_json::to_vec(receipt).map_err(|e| error(e.to_string()))?;
+    publish_receipt_bytes(directory, name, receipt, &bytes, expected)
+}
+
+/// Publish selected deterministic JSON bytes through the same lock/CAS owner.
+/// Parsed bytes must equal the supplied receipt, so wire ordering cannot change
+/// the record's meaning or bypass the existing path and conflict checks.
+pub(crate) fn publish_receipt_bytes(
+    directory: &Directory,
+    name: &str,
+    receipt: &Value,
+    bytes: &[u8],
+    expected: Option<&str>,
+) -> Result<()> {
+    ensure(
+        serde_json::from_slice::<Value>(bytes).map_err(|e| error(e.to_string()))? == *receipt,
+        "autonomous_research_state_backup_receipt_publication_bytes_mismatch",
+    )?;
+    directory.assert_current()?;
+    ensure(
+        valid_name(name),
+        "autonomous_research_state_backup_publication_name_invalid",
+    )?;
+    let lock_name = format!(".publication-lock-{name}");
+    let lock = File::from(
+        openat(
+            directory.held.as_fd(),
+            lock_name.as_str(),
+            OFlag::O_RDWR
+                | OFlag::O_CREAT
+                | OFlag::O_NOFOLLOW
+                | OFlag::O_CLOEXEC
+                | OFlag::O_NONBLOCK,
+            Mode::from_bits_truncate(0o600),
+        )
+        .map_err(|_| error("autonomous_research_state_backup_receipt_publication_busy"))?,
+    );
+    let lock = Flock::lock(lock, FlockArg::LockExclusiveNonblock)
+        .map_err(|_| error("autonomous_research_state_backup_receipt_publication_busy"))?;
+    let check_lock = || -> Result<()> {
+        let held = lock.metadata().map_err(|_| failure())?;
+        let named = fs::symlink_metadata(directory.path.join(&lock_name)).map_err(|_| failure())?;
+        ensure(
+            held.is_file()
+                && held.nlink() == 1
+                && held.len() == 0
+                && held.uid() == nix::unistd::getuid().as_raw()
+                && held.mode() & 0o077 == 0
+                && same(&held, &named),
+            "autonomous_research_state_backup_receipt_publication_lock_changed",
+        )?;
+        directory.assert_current()
+    };
+    check_lock()?;
+    let result = publish_locked(directory, name, bytes, expected);
+    check_lock()?;
+    // Do not unlink: doing so permits two writers to lock different inodes.
+    result
+}
+
+fn publish_locked(
+    directory: &Directory,
+    name: &str,
+    bytes: &[u8],
+    expected: Option<&str>,
+) -> Result<()> {
+    let conflict = || error("autonomous_research_state_backup_receipt_publication_conflict");
+    let old = match super::files::ObservedFile::open(&directory.path.join(name), 256 * 1024 * 1024)
+    {
+        Ok(v) => Some(v),
+        Err(_) if matches!(fs::symlink_metadata(directory.path.join(name)),Err(e) if e.kind()==std::io::ErrorKind::NotFound) => {
+            None
+        }
+        Err(e) => return Err(e),
+    };
+    let old_bytes = old
+        .as_ref()
+        .map(|file| file.bytes(256 * 1024 * 1024))
+        .transpose()?;
+    if old_bytes.as_ref().map(|b| hash_bytes(b)).as_deref() != expected {
+        return Err(conflict());
+    }
+    let temporary = format!(".pending-{}", nonce()?);
+    directory.write_new(&temporary, bytes)?;
+    let new =
+        super::files::ObservedFile::open(&directory.path.join(&temporary), 256 * 1024 * 1024)?;
+    directory.assert_current()?;
+    if let Some(old) = old {
+        old.assert_current()?;
+        renameat2(
+            directory.held.as_fd(),
+            temporary.as_str(),
+            directory.held.as_fd(),
+            name,
+            RenameFlags::RENAME_EXCHANGE,
+        )
+        .map_err(|_| failure())?;
+        let displaced =
+            super::files::ObservedFile::open(&directory.path.join(&temporary), 256 * 1024 * 1024);
+        let current = fs::symlink_metadata(directory.path.join(name)).map_err(|_| failure())?;
+        let owns_new = same(&current, &new.file.metadata().map_err(|_| failure())?);
+        let displaced_matches = displaced.as_ref().is_ok_and(|f| {
+            f.file
+                .metadata()
+                .is_ok_and(|m| old.file.metadata().is_ok_and(|before| same(&m, &before)))
+                && f.bytes(256 * 1024 * 1024).ok().as_ref() == old_bytes.as_ref()
+        });
+        if !owns_new || !displaced_matches {
+            if owns_new {
+                let _ = renameat2(
+                    directory.held.as_fd(),
+                    temporary.as_str(),
+                    directory.held.as_fd(),
+                    name,
+                    RenameFlags::RENAME_EXCHANGE,
+                );
+                let _ = directory.held.sync_all();
+            }
+            return Err(conflict());
+        }
+        // The validated previous receipt remains as crash evidence. It is private,
+        // hidden from bundle ranking, and never treated as the current receipt.
+    } else {
+        renameat2(
+            directory.held.as_fd(),
+            temporary.as_str(),
+            directory.held.as_fd(),
+            name,
+            RenameFlags::RENAME_NOREPLACE,
+        )
+        .map_err(|_| conflict())?;
+    }
+    directory.held.sync_all().map_err(|_| failure())?;
+    directory.assert_current()
+}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod directory_identity_tests;

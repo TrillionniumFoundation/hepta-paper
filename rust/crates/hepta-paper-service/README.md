@@ -1,0 +1,470 @@
+# Runnable Rust campaign service
+
+This crate composes the real registry, policy, planner, resource allocator,
+executor, content verifier and SQLite commit sequencer. It executes real bytes
+and survives process restart. Its executable currently accepts **local/shadow
+work only**. It cannot enable production with a boolean or issue its own host,
+provider, scientific, external-effect or writer-cutover authorization.
+
+## Build and first run
+
+Use the repository-pinned Rust toolchain. Production compatibility checks also
+require Node 22.23.1 with its pinned ICU/CLDR profile.
+
+The SQLite Session extension is built from the locked bundled SQLite source.
+Its binding generator needs a C compiler and a discoverable `libclang` shared
+library at build time (local validation uses Clang 18). These tools are build
+dependencies; native service execution does not invoke Node or Clang.
+
+```sh
+cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
+cargo run --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --example local_service_drill -- /absolute/new/disposable-state
+cargo run --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --bin hepta-paper-rust -- run /absolute/new/disposable-state/run.json
+```
+
+The drill writes an actual manuscript object, schedules a native inventory job,
+verifies its output bytes, commits through SQLite, closes and reopens the service,
+and proves that exact replay returns the original commit without another debit.
+The directory must be absent; the example cannot overwrite an existing campaign.
+Its generated `run.json` is a complete runnable example, with a synthetic drill
+clock and local writer token. It is not a deployment configuration.
+
+## Command and configuration contracts
+
+`hepta-automation-reconcile` provides read-only reconciliation plans with runtime
+environment defaults and a live clock (or explicit `--database`/`--at`), and
+`--execute-local REQUEST_JSON` for the complete incumbent offline schema-25
+transaction under an already established local cutover epoch. The
+[execution handoff](../../../docs/modules/AUTOMATION_RECONCILIATION_EXECUTION_HANDOFF.md)
+documents the exact request, shared Node locks, receipt and rollback semantics,
+tests, the private signed online callbacks and precommit scope hook, and remaining
+production/online activation and admission gaps.
+
+The command names come from the compiled `CommandV1` catalog used by the
+actual dispatcher. Inspect the runnable interface without creating runtime state:
+
+```sh
+cargo run --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --bin hepta-paper-rust -- --help-json
+```
+
+The [canonical Node-to-Rust command map](../../../docs/migration/node-rust-command-map.v2.json)
+is the single machine source for route arguments, source call chains, regression
+cases and remaining acceptance boundaries. Its
+[generated gap ledger](../../../docs/migration/NODE_RUST_GAP_CLOSURE.md) is the
+human-readable view. This README does not maintain another command-status table.
+A compiled command name is not evidence that all Node argument modes, effects,
+recovery semantics or installed acceptance are complete.
+
+Separate native binaries inspect operational proof, owner acceptance, nested
+runtime qualification and journal connector coverage. Their inputs, signature
+validation, failure behavior and parity boundaries are documented in the
+[authority inspection handoff](../../../docs/modules/NATIVE_AUTHORITY_INSPECTION_HANDOFF.md).
+
+Additional native operator commands are documented in the
+[release-integrity key handoff](../../../docs/modules/RELEASE_INTEGRITY_KEY_HANDOFF.md),
+[portal qualification handoff](../../../docs/modules/PORTAL_TARGET_QUALIFICATION_HANDOFF.md)
+and [runtime image handoff](../../../docs/modules/RUNTIME_IMAGE_REPRODUCIBILITY_HANDOFF.md).
+Each describes its complete argument interface, actual Node differential tests,
+write ownership, crash behavior and remaining acceptance boundaries.
+
+The ordinary `operator autonomous-research-one-shot-campaign-attempt` path uses
+the same dispatcher for status, plan and preflight. Plan/preflight retain the
+actual dataset mount document and the existing opaque V4 dataset observation;
+the receipt is only a diagnostic view. Host borrows use the original cancellation
+object and absolute deadline, checking the held mount, dataset, trust and plugin
+inputs before and after an await, including a failed future. Invalidated owners
+cannot be revived by restoring a path, clearing cancellation or extending time.
+See [the consumer](src/ordinary_one_shot/dataset.rs) and its
+[actual normal-entry and await tests](src/ordinary_one_shot/dataset/tests.rs).
+Run the owners with the pinned Node binary in `HEPTA_TEST_NODE` and
+`HEPTA_PRODUCTION_NODE_BINARY`:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service \
+  --lib ordinary_one_shot:: -- --test-threads=1
+```
+
+These tests compare the incumbent normal arguments and complete output bytes,
+and exercise retained-file, cancellation, expiry and revocation boundaries.
+They use source-only signing fixtures. Ordinary successful one-shot execution,
+real account canaries and installation acceptance remain separate requirements;
+the current normal execute path rejects unsupported execution explicitly.
+
+`ServiceRunV1` uses camelCase, rejects unknown fields, and binds a version, state
+directory, `registryJson`, hard policy, planner policy, frozen snapshot, frontier,
+verifier hash, initial state hash, writer lease, explicit clock and worker table.
+`registryJson` is a string containing the registry's **exact canonical JSON**;
+decoding into a generic object and reordering fields would violate that protocol.
+Snapshot, policy, manifest and frontier hashes are independently checked by the
+existing control-plane contracts. The worker must match the registry execution
+kind and identity; a missing worker never falls back to Node or a fixture.
+
+The serialized clock supports reproducible local drills. The ordinary library,
+CLI and stdin service select a live host clock whenever a `BrokerExecute` worker
+is present; a stale serialized time cannot keep its writer lease valid. This
+does not make the executable a production lease/timer supervisor. The initial
+campaign snapshot uses revision one; later plans bind the recovered state and
+next revision. Exact historical replay remains a distinct case.
+
+## Filesystem and SQLite state
+
+The canonical absolute state directory and its `objects` and `attempts` children
+are private mode 0700. Objects and records are mode 0600, created exclusively and
+fsynced; parent directories are fsynced before the operation returns. Object
+filenames are raw SHA-256 hex, but readers recompute the hash from actual bytes.
+Symlinks, unsafe file modes, hard links and changed object identities fail closed.
+Torn or corrupt objects are retained for investigation, never silently repaired.
+
+`campaign.sqlite` uses the writer's explicit `local_only` identity marker. A local
+service cannot open an unmarked production writer database or an existing Node
+native store as though it were this format. The sequencer persists the full
+prepared body, receipt, campaign revision, accounting and event in one transaction.
+See [the writer contract](../hepta-campaign-writer/README.md) and
+[the control-plane contract](../hepta-control-plane/README.md).
+
+The executor fsyncs a dispatch intent before work and persists the complete
+prepared result after writing artifacts. For broker work, request capture,
+semantic binding, endpoint connection and kernel-peer authorization precede the
+intent; failures in that local preflight cannot have sent request bytes and may
+be retried. The retained request is revalidated after intent persistence and
+before transport. From that point any failure keeps the intent: a started
+attempt without a complete prepared record is ambiguous and broker recovery
+only queries the original operation. Restart never automatically executes it
+again. A committed or prepared exact attempt can replay without another debit.
+Errors return bounded categories without echoing prompts or credentials.
+
+## Native work and gradual process migration
+
+`NativeJobV1` supports artifact inventory, immutable Node-database inspection and
+`Business` jobs. The latter dispatch seven Rust kernels: manuscript structuring,
+structural review, propositional proof checking, descriptive aggregation, dense
+linear solving, deterministic packaging and prepared submission. Each typed job
+has exactly one capability ID, checked both in-process and at the native process
+entry point. A mismatched job is rejected before a durable dispatch intent.
+These bounded kernels are not a claim of complete legacy business equivalence,
+model-generated research, general theorem proving or live external submission.
+Database inspection remains read-only and does not itself translate all Node
+business tables into the new campaign schema.
+
+The service now stages CAS-independent business jobs through at most two native
+computation threads, capped by `available_parallelism` (one on detection failure).
+The closed allowlist is author drafting, structural review, formal certificates,
+empirical aggregation/inference, linear solving, build packaging, legacy
+submission manifest/intent preparation and prepared submission. Existing kernel
+bounds still apply (for example, 128 matrix dimensions and 16,384 proof steps),
+as does the 16 MiB verified CAS payload limit; no new queue lifts those limits.
+The coordinator captures each verified payload, checks the exact reservation ceiling,
+rechecks live admission both before and after fsyncing the dispatch intent, and
+launches that request immediately. Threads receive owned inputs and cancellation/
+deadline controls, never the object store, broker context or admission callback.
+There is no unbounded pending queue. Existing dependency-wave reservations stay
+held until every started computation has joined.
+
+CAS writes and prepared records remain coordinator-only and in request order.
+Live admission is checked before CAS publication and again after artifact/evidence
+I/O immediately before writing each prepared record.
+This also makes identical output objects safe without changing the store's
+exclusive-create/torn-object contract. CAS-consuming research/submission jobs,
+brokers, processes, database inspection, inventory, cached attempts, duplicate
+in-flight requests and repeated exact immutable payloads are serial barriers.
+Repeated work observes its predecessor's publication before any new handoff;
+distinct immutable payloads may still overlap. The first typed admission/clock
+failure is preserved through internal service callbacks.
+A failed admission stops later launches and suppresses pending publication.
+This cutoff starts when the coordinator observes the refusal. Distinct work
+admitted before a later clock change may already be running; it is still joined
+and cannot publish after that refusal is observed.
+Started workers are joined even on error or panic, and unresolved intents remain
+recovery fences. Cancellation/deadline checks prevent kernel entry and successful
+publication; these bounded Rust kernels are not forcibly interrupted mid-compute.
+A partial failure can retain earlier prepared results, but the batch does not
+return success. The existing authoritative sequencer is unchanged.
+
+Run the focused owner regressions with `cargo test --locked -p hepta-paper-service
+--lib worker::bounded::tests::` from `rust/`. They cover genuine overlap, the
+concurrency ceiling, whole prepared-value and CAS-byte equality with the retained serial executor, ordering,
+identical-output reuse, cache replay, admission refusal, cancellation, expiry,
+panic joining and unresolved-intent recovery. This is a bounded native-compute
+slice, not full legacy parity, measured speedup, OS resource enforcement or
+production/Node-retirement acceptance. Registry/resource policy, external package
+contracts, principal permissions, authoritative-writer ownership and required
+check contexts have no delta. The changed implementation and owner tests require
+fresh exact-source evidence; previous source qualification does not carry over.
+
+For a process worker, the registry binds executable bytes, fixed argument vector,
+working directory, declared implementation language, timeout, network declaration
+and source-file hash closure. Interpreted workers require explicit code files;
+hashing only the Node/Python executable would leave script contents unbound.
+The executable and declared code files are checked before and after execution.
+The runner never parses shell commands or inherits ambient credential variables.
+
+The worker receives one JSON stdin envelope containing `version`, `execution`
+and `input`. It returns closed camelCase `WorkerResponseV1` JSON with version one,
+1–256 base64 artifacts, evidence, and `externalActionMayHaveStarted: false`.
+Output, stderr, stdin, deadlines and cleanup are bounded; truncated, malformed,
+failed or ambiguous results cannot commit. All output bytes are independently
+verified. Accounting conservatively charges the admitted resource/cost upper
+bound; it does not pretend to provide operating-system resource metering.
+
+This process path is for **trusted local workers**. It shares the invoking user's
+filesystem and privileges. Network declarations and worker evidence are not
+sandbox enforcement or proof that no external action occurred. Node bridges must
+remain explicitly labelled `node_bridge`. Real provider dispatch uses the
+[broker authority/gate/cgroup contract](../hepta-codex-broker/DISPATCH.md), which
+requires independently verified deployment authority and has no permissive
+production callback supplied by this executable.
+
+## Verification and remaining production work
+
+The canonical command map and generated ledger above distinguish source behavior
+from route acceptance, production activation and Node retirement. Do not copy
+their changing status into a second narrative checklist. The
+[migration implementation report](../../../docs/rust/RUNTIME_MIGRATION_IMPLEMENTATION.md)
+links the current source, installation and acceptance owners.
+
+For the detailed observer contracts, use the
+[generic-domain evidence handoff](../../../docs/modules/GENERIC_DOMAIN_CAPABILITY_EVIDENCE_HANDOFF.md),
+[personal readiness handoff](../../../docs/modules/PERSONAL_SELF_HOSTED_READINESS_HANDOFF.md)
+and [module documentation index](../../../docs/modules/README.md).
+A passive inspection or bounded preflight does not establish that an external
+provider, signer, release attestor, portal or installed writer executed an action.
+
+`cargo test -p hepta-paper-service` covers executable configuration, actual CAS
+bytes, durable commit/replay, unsafe content rejection and authority refusal.
+Run the local service and cutover drills independently: one proves campaign
+orchestration; the other proves cooperative single-writer handoff. Their success
+does not establish complete Node-to-Rust migration, production qualification or
+scientific acceptance. Retain exact-head and deterministic prospective-merge
+results separately; a source change invalidates the earlier source subject.
+
+## Native bundle verification
+
+`native_business::verify_native_build_bundle_v1(bytes, expected_sha256)` provides
+Rust-native verification and decoding of `HEPTA-NATIVE-BUNDLE-V1`. The caller must
+obtain the expected digest from an independently selected manifest or CAS record.
+The decoder checks lengths before allocation, bounded entry counts, UTF-8, exact
+end-of-input, canonical ordering, duplicate paths, unsafe path components and
+file/directory prefix collisions. It returns in-memory `BuildEntryV1` values and
+does not extract files, authorize publication or run embedded content. The encoder
+uses the same path and collision rules.
+
+The native numerical worker rejects non-finite products, partial sums and residuals
+before reducing the infinity norm. A NaN cannot be hidden by `f64::max` and emitted
+as a successful finite residual. Numerical V1's tolerance retains its existing
+pivot semantics; this check does not certify a forward-error bound.
+
+```sh
+cargo test --locked -p hepta-paper-service --test native_bundle_and_binding
+cargo test --locked -p hepta-paper-service --test native_business_service
+```
+
+The tests exercise all 49 job/capability combinations, parser truncations and
+corruption, exact bundle round trips, both process and durable-service dispatch,
+and rejection before dispatch-intent creation. Source tests grant no production
+writer, provider, release or submission authority.
+
+## Multi-step local workflow
+
+`workflow` and the `hepta-local-workflow` executable add immutable output-bound
+steps, SQLite-derived progress, absolute-target retries and between-step
+pause/resume/cancel. See [the workflow engineering handoff](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md).
+This is local/shadow orchestration with real artifacts, not complete Node command
+parity, live-model scientific acceptance or production activation.
+
+## Actual scientific programs and manuscript compilation
+
+`scientific_runtime` and `hepta-scientific-worker` add a first-party Rust adapter
+for exact, operator-selected Python/R/Lean/pdfLaTeX programs. The existing service
+owns reservation, durable dispatch/prepared replay and SQLite commit. Named
+scientific output manifests support `ArtifactBindingV1.artifactName`, avoiding
+reliance on CAS hash order when wiring an actual result into a later step.
+See [the executable runtime handoff](../../../docs/modules/SCIENTIFIC_RUNTIME_HANDOFF.md)
+for profiles, limits, error/recovery contracts, tests and the trusted-local ceiling.
+External scientific tools remain external; this is not a Node bridge or full
+business/runtime qualification. No production or retirement authority is added.
+
+
+## Cooperative local byte backups
+
+The [maintenance contract](MAINTENANCE.md) specifies shared service-state access,
+exclusive maintenance sessions, bounded byte inventories, manifest-last backups
+and independently digest-bound verification. `hepta-local-maintenance` exposes
+`inspect`, `backup` and `verify` byte operations; recovery and quarantine commands
+are specified separately below. No permanent GC-delete command is installed.
+The seven lock tests and fifteen integration tests exercise actual files, SQLite
+and the CLI. Byte identity never implies valid workflow recovery, fresh leases,
+Node command parity, production qualification or Node retirement. Old binaries
+and direct database writers must be drained before lock enrollment.
+
+## Immutable local recovery and quarantine GC
+
+The [maintenance contract](MAINTENANCE.md) now separates byte backups from immutable
+semantic replay, absent original-path no-overwrite restoration and native-only
+mark/quarantine GC. These paths reuse the existing service/writer and require
+explicit quiescence, source identity and reconciliation. Quarantine does not purge
+data or reclaim disk. Historical recovery reports do not qualify a runtime, renew
+a lease or grant production/Node-retirement authority. Consult the
+[canonical command map](../../../docs/migration/node-rust-command-map.v2.json)
+and its [gap ledger](../../../docs/migration/NODE_RUST_GAP_CLOSURE.md) for current
+maintenance and `cancel-node` mappings, regression cases and remaining boundaries.
+A local source mapping is not an accepted full Node parity decision.
+
+## Native incumbent-function ports
+
+`campaign_policy` and `campaign_slo` add a pure closed JSON command surface via
+`hepta-campaign-policy`; no state writer, provider or Node process is invoked.
+`NativeBusinessJobV1::EmpiricalInference` adds bounded paired-analysis statistics
+under `CAP-EMPIRICAL` and the existing durable service pipeline. The seven original
+jobs retain their meaning. See the [native parity handoff](../../../docs/modules/NATIVE_PARITY_HANDOFF.md)
+for exact input domains, limits, Node source/profile oracles, errors, tests and
+rollback exclusions. A dependency-set decision is not in-flight cancellation;
+computed SLOs and p-values are not independently qualified observations.
+
+
+Initial online composition now retains actual pinned process clients, the full
+startup/finalized proof chain, a concrete shared recovery fence and a final common
+expiry check. The evidence constructor is crate-private and grants no native activation;
+a separate sealed consuming owner now runs the fixed signed reconciliation path. Historical schema checkpoint loading verifies original signed
+inventory and exact copied bytes. A separate internal history bridge now proves actual registered replay
+and all-table equivalence to the current signed finalized head. The owning
+evidence constructor explicitly retains this historical branch and the actual
+post-startup inventory, including recovered pending finalizations; signed native
+admission and transaction ownership are checked by that separate consuming owner. See the repository's
+[composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md)
+and [schema readiness handoff](../../../docs/modules/ONLINE_SCHEMA_TRANSITION_READINESS_HANDOFF.md).
+
+
+A private native-process observer now independently re-verifies the actual
+production deployment and retains the current kernel executable, safe ancestry,
+ELF hash, nonroot UID/GID and exact argv binding. Its separate source-owned
+reconciliation digest is a prerequisite for signed native admission, not a
+substitute for independent qualification or a writable transaction scope.
+See the composition handoff for the actual-process tests and deployment limits.
+A separate private transaction scope now retains all service ELF descriptors,
+writable-root and ancestor identities, and the kernel argv file before SQLite
+opens. Its checks bind the original native-process object and actual inventory,
+use held hashes/metadata/positional reads, and preserve real DELETE/WAL locks
+when executable paths are replaced by database hardlinks. The full deployment
+verifier remains unchanged; production qualification still requires a genuine
+root-owned installation and the declared current service principal.
+
+
+The private fixed-native-store transaction inventory guard checks all non-target
+bytes and complete namespace membership without reopening target SQLite files.
+It is minted before opening SQLite and retains inventory through connection
+close. The durable cutover callback can now inspect actual state under its held
+lock, using a borrowed external-v2 observer at each write boundary.
+
+
+Private retained evidence checks now preserve original source/cache, startup,
+schema/history/replay, active/finalized and recovery bindings while SQLite is
+open. Constructors run before the owning connection; checks use held files and
+metadata only. Recovery holds the same evidence allocation through invalidation,
+so clearing controller evidence cannot close target descriptors prematurely.
+The owning caller must close SQLite before releasing any scope or inventory.
+Actual signed fixtures and separate-process lock checks cover these primitives;
+they grant no production activation. The internal consuming reconciliation owner
+now binds real qualification/deployment, actual signed preimage, closed native
+epoch/configuration and locked Production/Canary state. It completes all raw-file
+preflight before opening either SQLite connection, retains every scope until
+both close, and preserves committed/pending failure details. The writable CLI,
+full genuine production-installation acceptance and subsequent-write admission
+still need completion; no activation or retirement flag has changed.
+
+
+A private signing diagnostic now observes an actual external-v2 Production/Shadow
+state under its retained journal lock and derives the same future native epoch
+and closed configuration used at admission. It requires the genuine current
+unit/principal/argv and complete qualification, outputs no authorization, and
+keeps activation/retirement flags false. Its shared projection matches a real
+signed fixture transition. The private owning signed-transfer entrypoint now
+binds a freshly observed typed subject, uses the external-v2 full-Shadow CAS
+and safe retained preimage transfer, then freshly admits the fixed business
+operation from its actual returned Canary. Separate cutover/business outcomes
+preserve committed or unknown status and cannot automatically retry. The
+complete writable CLI remains separate work; the existing generic transfer's
+raw preimage read is not used as a claimed safe native transfer.
+
+The native authority command prerequisite verifies held executable path/hash,
+ELF bytes, root-owned safe installation, and retained process/public-key pins
+for both online and backup clients. It does not invoke an RPC or change generic
+script support. An ELF can be Node itself: reviewed Rust adapter semantics and
+child topology binding remain necessary before exposing the native writer.
+See the [composition handoff](../../../docs/modules/ONLINE_MUTATION_COMPOSITION_HANDOFF.md).
+
+Native `hepta-paper-state-authority-client` and
+`hepta-paper-state-authority-daemon` now implement the Unix protocol and all 15
+local authority request kinds, including genuine Ed25519 signing from an
+operator-provided key, native SQLite persistence, mutation/backup fencing and
+pristine schema rebind. The target-config restart atomically activates ten heads
+and fences an already running old configuration. The dedicated daemon has its
+own key-custody requirements; the library API does not prove OS separation from
+writers. See the [local authority implementation contract](../../../docs/modules/LOCAL_STATE_AUTHORITY_HANDOFF.md)
+for exact configuration, transaction, socket, compatibility and recovery rules.
+Existing Node journals require explicit migration. Installed adapter/topology
+qualification, complete native writer composition and retirement remain open.
+
+Migration preparation now has a read-only original-journal schema inspector:
+actual held main transaction, closed six-table/index profile, complete SQLite
+metadata comparison and `quick_check`, with collection bounds and no source FD
+reopening. The report is explicitly schema-only; it does not verify signed row
+history, stop a service or permit journal rewriting. See the
+[inspection contract](src/local_state_authority/migration/source_profile/HANDOFF.md).
+
+A separate [signed-history inspector](src/local_state_authority/migration/history/HANDOFF.md)
+now authenticates a bounded settled legacy journal with independently pinned public
+inputs, reconstructs schema/rebind epochs and all mutation heads, and compares the
+complete terminal SQL state. It does not read private keys, sign or rewrite data.
+Pending/backup/oversized histories are refused; live migration and service handoff
+remain unimplemented.
+
+That pinned owner also exposes
+[`build_offline_native_image`](src/local_state_authority/migration/offline_image/HANDOFF.md),
+which returns a bounded standalone SQLite artifact built in new memory from the
+same verified snapshot. All original rowids/receipt TEXT and heads are retained;
+native format/key identity are added. There is no destination path or source
+write, and the artifact does not provide durable publication or service cutover.
+
+### Autonomous CLI interruption
+
+The autonomous command now propagates its SIGINT/SIGTERM flag through the same
+workflow, executor and bounded process-group owner. Cancellation observed before
+spawn or a commit boundary denies further work; an active process group is
+terminated and reaped by the existing runtime. Earlier commits and prepared CAS
+bytes are retained. Unprepared started work remains pending across restart, even
+when a later explicit Cancel closes future admission. See the
+[local workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#autonomous-cli-process-interruption)
+for signal/commit races, the distinction from native-kernel preemption or remote
+settlement, and actual binary regressions. This does not activate production.
+
+### Development hash-check cost
+
+The workspace optimizes only the pinned `sha2:0.10.8` dependency in the `dev`
+profile, inherited by `cargo test`. Debug assertions and overflow checks remain
+explicitly enabled. Workspace application code, release settings, executable
+and CAS byte coverage, identity checks, deadlines and test selection are not
+relaxed. This avoids spending most process-workflow feedback time in unoptimized
+hash compression of large debug executables. It is a development-build setting,
+not a production throughput or target-host qualification result.
+
+
+## Compiled command catalog and broker execution
+
+`hepta-paper-rust --help-json` returns `RustCommandCatalogV1` from the same typed
+`CommandV1` enum used by the actual dispatcher. It has no operational side
+effects and rejects extra arguments. The `cli_command_catalog` integration tests
+execute the real binary and compare its output to the compiled catalog; unit
+tests verify exact parsing and that canonical migration rows name real commands.
+Neither check depends on Markdown table formatting or Rust match-arm spelling.
+The catalog and migration ledger describe different interfaces: an executable
+entrypoint is not complete parity acceptance for a Node route.
+
+The [local workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#explicit-signed-broker-execution-and-recovery)
+defines `broker_execute` alongside the unchanged `broker_prepared` backend.
+It sends one original independently signed request, then uses the original
+query/CAS/SQLite path; unresolved retry is query-only. Actual execution CLI calls
+use the live host clock. Neither backend signs a request or grants production,
+release, submission or scientific-acceptance authority.

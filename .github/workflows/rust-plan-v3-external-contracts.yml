@@ -1,0 +1,52 @@
+name: rust-plan-v3-external-contracts
+
+on:
+  pull_request:
+  push:
+    branches: [main, codex/full-rust-replacement-progress-20260916]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install qualified Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Validate harness syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
+          bash -n docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh
+
+      - name: Validate strict external qualification contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test paper-core/tests/external-qualification-contract-governance.test.mjs
+
+      - name: Prove harness is fail-closed without acknowledgement
+        shell: bash
+        run: |
+          set -euo pipefail
+          if sudo env -u HEPTA_CGROUP_QUALIFICATION_ACK \
+              HEPTA_CGROUP_ROOT=/sys/fs/cgroup \
+              HEPTA_EVIDENCE_DIR="$RUNNER_TEMP/forbidden-evidence" \
+              docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh; then
+            echo 'cgroup qualification unexpectedly ran without explicit acknowledgement' >&2
+            exit 1
+          fi
+          test ! -e "$RUNNER_TEMP/forbidden-evidence"

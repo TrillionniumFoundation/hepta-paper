@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/hepta-broker-qualification-evidence-v1.schema.json",
+  "title": "Hepta Broker Qualification Evidence V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "qualificationId",
+    "sourceCommit",
+    "startedAt",
+    "completedAt",
+    "host",
+    "principals",
+    "drills",
+    "independentReview"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Envelope schema revision. Optional only for compatibility with evidence emitted before the Plan v3 external-contract envelope was introduced."
+    },
+    "version": { "const": 1 },
+    "qualificationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{8,128}$"
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bootId", "kernel"],
+      "properties": {
+        "bootId": { "type": "string", "minLength": 1 },
+        "kernel": { "type": "string", "minLength": 1 }
+      }
+    },
+    "principals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorityUid", "brokerUid", "codexUid"],
+      "properties": {
+        "authorityUid": { "type": "integer", "minimum": 0 },
+        "brokerUid": { "type": "integer", "minimum": 0 },
+        "codexUid": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "drills": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "brokerSigkillRestart",
+        "corruptCopyRejected",
+        "destructiveStorage"
+      ],
+      "properties": {
+        "brokerSigkillRestart": { "const": "passed" },
+        "corruptCopyRejected": { "const": true },
+        "destructiveStorage": { "enum": ["not_run", "passed"] }
+      }
+    },
+    "independentReview": { "enum": ["pending", "approved", "rejected"] }
+  }
+}

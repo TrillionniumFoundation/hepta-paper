@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "kind": "NativeStateProvisioningRecoveryRequestV1",
+  "action": "inspect",
+  "runtimeRoot": "/absolute/private-parent/runtime",
+  "stagingRoot": "/absolute/private-parent/.runtime.provisioning-0123456789abcdef0123456789abcdef",
+  "execute": false,
+  "expectedPlanHash": null
+}

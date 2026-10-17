@@ -225,7 +225,8 @@ test('direct Node execution fails before deployment imports without the installe
   assert.equal(result.stdout, '');
 });
 
-test('a spoofed launcher marker cannot authorize a writable candidate executor', () => {
+test('a spoofed launcher marker cannot authorize a writable candidate executor', (t) => {
+  t.mock.method(fs, 'realpathSync', () => assert.fail('reject noncanonical input before filesystem reads'));
   assert.throws(() => inspectImmutableReleaseDeploymentExecutorBoundary({
     entrypointPath: entrypoint,
     launcherMarker: 'sealed-v1',
@@ -605,12 +606,20 @@ test('production composition exposes durable intent and guarded candidate operat
   }), /(?:immutable_release_|Cannot read properties|paths\[0\])/u);
   await assert.rejects(deployment.port.sealAndPublishCandidate({ plan, prepared: {} }),
     /(?:immutable_release_|Cannot read properties|paths\[0\]|path.*must be (?:a string|of type string))/u);
-  const cleaned = await deployment.port.cleanupCandidate({
+  // A portable test must not clean a real host release store, even when present.
+  const lstat = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (file, ...args) => {
+    if (file === path.dirname(plan.target.releasePath)) {
+      throw Object.assign(new Error('fixture store unavailable'), { code: 'ENOENT' });
+    }
+    return lstat(file, ...args);
+  });
+  await assert.rejects(deployment.port.cleanupCandidate({
     plan,
     rollbackComplete: false,
     publishAttempted: false,
-  });
-  assert.equal(cleaned.cleaned, false);
+  }), { code: 'immutable_release_candidate_cleanup_store_invalid' });
+  t.mock.restoreAll();
   await assert.rejects(deployment.port.cleanupCandidate({
     plan,
     lock: { identityHash: plan.deploymentLock.identityHash },

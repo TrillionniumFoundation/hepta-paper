@@ -1,0 +1,787 @@
+{
+  "kind": "HistoricalSourceSemanticSelectionV1",
+  "version": 1,
+  "scope": "mapped_source_content_only_no_behavior_or_runtime_authority",
+  "sourceReviews": [
+    {
+      "oldPath": "rust/crates/hepta-campaign-writer/src/lib.rs",
+      "oldGitBlob": "2294218d037760924007b17883f77e5abcc73b34",
+      "oldContentSha256": "sha256:2d1deaf608bbcc88ffad52d9d1ea26decbaf9ea93ad3485252f4c44745a249e0",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "gitBlob": "d5a4d5178d4f5504d2e57a3ab5b89c4826d0504f",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Early writer exports a distinct generation/revision/attempt schema model. Current canonical cutover-bound WriterLease and explicitly local-only control store supersede that parallel owner; do not restore its schema/API."
+    },
+    {
+      "oldPath": "rust/crates/hepta-campaign-writer/src/lib.rs",
+      "oldGitBlob": "80589ddc2a878e576ea5376c52e945e0c5d4967f",
+      "oldContentSha256": "sha256:aeb309f2b4e47e78edc68c3555aaf7188abb55215a829cb607aba5867e651f1d",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-campaign-writer/src/lib.rs",
+          "gitBlob": "d5a4d5178d4f5504d2e57a3ab5b89c4826d0504f",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Retains cutover-bound acquisition/schema, adds explicit local-only control store, known schema checking and transaction-clock validation. Response captured before COMMIT preserves known committed outcome; historical file merge unnecessary."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/journal/store.rs",
+      "oldGitBlob": "7ad07bdf00cbeb2e9155e24e4b9d0d038bab9e81",
+      "oldContentSha256": "sha256:c8f5781bc1df2aad8b1869863d7882a94163baf0569fe3fa9bb961f4b2f9e367",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/journal/store.rs",
+          "gitBlob": "38d9a22ce9436aca19d547e401ba371c6d0ca758",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Preserve the existing SQLite operation owner, reservation/idempotency/nonce rules and CAS projections; select its strengthened current successor instead of restoring the old generic process-spawn transition."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/lib.rs",
+      "oldGitBlob": "16c30bbab677802474222f40b0ae599b856a7218",
+      "oldContentSha256": "sha256:9bfef3717b4c81f5b8e5a6325fee2b9d1a8a270a8d694715bf2d5b220b56a945",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/lib.rs",
+          "gitBlob": "e046647f8b8c3c414a9fff125ef1ba441b6194f5",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Retains admission/capability/frame/peer/journal/service APIs and existing fake fixture APIs. Current exports add actual Codex dispatch, held configuration/trust source, provider settlement, persisted result delivery and commit-bound V2 ACK without granting credentials or release/submission authority from exports. Historical export variants need no merge; ordinary independent-provider acceptance remains separate."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/lib.rs",
+      "oldGitBlob": "2a0097332e2366c0e7d7489ebe0ef16075478078",
+      "oldContentSha256": "sha256:25f0adc61235042f9a3916d14e0037fc9b613081ee29f1fef88a5424d36da6b0",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/lib.rs",
+          "gitBlob": "e046647f8b8c3c414a9fff125ef1ba441b6194f5",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Retains admission/capability/frame/peer/journal/service APIs and existing fake fixture APIs. Current exports add actual Codex dispatch, held configuration/trust source, provider settlement, persisted result delivery and commit-bound V2 ACK without granting credentials or release/submission authority from exports. Historical export variants need no merge; ordinary independent-provider acceptance remains separate."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/lib.rs",
+      "oldGitBlob": "627b2f08483702e0f118ed24027f5c4aaa0ae919",
+      "oldContentSha256": "sha256:3bd72459559755c2deb56a562a809a3ea2075530e1bff3ef1903b17859fbcc69",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/lib.rs",
+          "gitBlob": "e046647f8b8c3c414a9fff125ef1ba441b6194f5",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Retains admission/capability/frame/peer/journal/service APIs and existing fake fixture APIs. Current exports add actual Codex dispatch, held configuration/trust source, provider settlement, persisted result delivery and commit-bound V2 ACK without granting credentials or release/submission authority from exports. Historical export variants need no merge; ordinary independent-provider acceptance remains separate."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/lib.rs",
+      "oldGitBlob": "e5f34e522926eb068782d354523beb8169c53f80",
+      "oldContentSha256": "sha256:8f0e21cd9f08810fc4b1b4319554685eb6d52aef712d987e97629157f247d135",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/lib.rs",
+          "gitBlob": "e046647f8b8c3c414a9fff125ef1ba441b6194f5",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Retains admission/capability/frame/peer/journal/service APIs and existing fake fixture APIs. Current exports add actual Codex dispatch, held configuration/trust source, provider settlement, persisted result delivery and commit-bound V2 ACK without granting credentials or release/submission authority from exports. Historical export variants need no merge; ordinary independent-provider acceptance remains separate."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/listener.rs",
+      "oldGitBlob": "ab1755d364d4434807a91d53c319931d6e7979b4",
+      "oldContentSha256": "sha256:6d9d6349ba2d5fd09e150eabc8e0536fe6a966e8483b0b735d118a167e5df8b3",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/listener.rs",
+          "gitBlob": "2f2efee9c134e49c1a43569ef27d4a2c25a46e79",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Listener retained with exact service-only/shared-role-group access modes and signed peer-policy marker/qualification binding. Recovery remains fail-closed; fixture shuts down inherited stale descriptors instead of accepting live listener."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/server.rs",
+      "oldGitBlob": "b4dad6d25d8416ff8e45fa97ecb85e5887fc7227",
+      "oldContentSha256": "sha256:5fb78565a896da5b330303c1ef5e908027692b781f94e7f67abd8bbb5e31df9a",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/server.rs",
+          "gitBlob": "d8e3f28c5912bf69e29e74e0e7ea231cfec0170c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "The reservation-only Unix service remains the default; current server preserves its bounded queue and pre-ready reconciliation while replacing stale temporal admission and early-return worker cleanup with the existing strengthened server owner."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-broker/src/server.rs",
+      "oldGitBlob": "cba4f33424d2a9190d8e27b5d9f03a5d7375067e",
+      "oldContentSha256": "sha256:23d46b3dfe10f7f32fe7a8f412d967f02fe673259ecd40f8cd9eadd33156c761",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-broker/src/server.rs",
+          "gitBlob": "d8e3f28c5912bf69e29e74e0e7ea231cfec0170c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "This earlier reservation-only server has the same retained bounded service contract, but lacks startup process reconciliation. Current adds exact pre-ready recovery and all later server boundary fixes without restoring the older server tree."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/lib.rs",
+      "oldGitBlob": "472d22a93969aaa1fd5313683de9b1eb5d06593c",
+      "oldContentSha256": "sha256:a2f30539a51a8075ebc1a2096208fa62ed07ceeb33b60159fcedde68f755b60e",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/lib.rs",
+          "gitBlob": "3191e5a6b2b5ff2f4c8f103db0241f8eafec6e7c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current export delta also retains the pure runtime identity hash and opts into the existing combined-output capture owner; old public exports remain selected. This is source content selection, not whole runtime equivalence."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/lib.rs",
+      "oldGitBlob": "65c693cc49cf69b48932f6aa7fc850812af54d33",
+      "oldContentSha256": "sha256:826d8ad056bb4ad155030d2785ef87f2b0483ce91436b4613ee0724de7720c52",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/lib.rs",
+          "gitBlob": "3191e5a6b2b5ff2f4c8f103db0241f8eafec6e7c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current export delta also retains the pure runtime identity hash and opts into the existing combined-output capture owner; old public exports remain selected. This is source content selection, not whole runtime equivalence."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/lib.rs",
+      "oldGitBlob": "70a50dc83003ab9befda75455107c5db99d22c93",
+      "oldContentSha256": "sha256:ae03ad5d7872be7da4bfe818459596d0a8ada6dbad3831349c1fffe2143a6cd8",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/lib.rs",
+          "gitBlob": "3191e5a6b2b5ff2f4c8f103db0241f8eafec6e7c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current export delta also retains the pure runtime identity hash and opts into the existing combined-output capture owner; old public exports remain selected. This is source content selection, not whole runtime equivalence."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/lib.rs",
+      "oldGitBlob": "c05dde88ad8095b70a2f18ddeb9ad6559f36ca85",
+      "oldContentSha256": "sha256:59fe7afb802ac3fd448c59854e8ae076881b3e39e505f0db1d6e5f7493b02075",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/lib.rs",
+          "gitBlob": "3191e5a6b2b5ff2f4c8f103db0241f8eafec6e7c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current export delta also retains the pure runtime identity hash and opts into the existing combined-output capture owner; old public exports remain selected. This is source content selection, not whole runtime equivalence."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/lib.rs",
+      "oldGitBlob": "ce3d58b633d390527fd1617ab39f7f329ad7b7b3",
+      "oldContentSha256": "sha256:d4bbcf11390c8618ac3852ec7653cf55305a24d5866b3f30acff11bad146770f",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/lib.rs",
+          "gitBlob": "3191e5a6b2b5ff2f4c8f103db0241f8eafec6e7c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current export delta also retains the pure runtime identity hash and opts into the existing combined-output capture owner; old public exports remain selected. This is source content selection, not whole runtime equivalence."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/io.rs",
+      "oldGitBlob": "acb7e3d23cc45284d8267f7dfa8e61e2ded22838",
+      "oldContentSha256": "sha256:8cd2bef02796628d68d6f2704aa23ad1d2834b4a9ab74b62a7884a21ea0849aa",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/io.rs",
+          "gitBlob": "369abcce3e6bcdc4adc1cbcf795e1b1abfe7fba3",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Retains I/O digest, total-byte accounting and tail owner. Opt-in captured stdout obeys existing cap; old entry point chooses capture=false. Historical limits unchanged. Current shared atomic capture budget is explicitly opt-in; legacy None keeps per-stream digest/total/tail behavior. Both observed stream totals remain facts while the new combined retained buffer is bounded; capture-failure wire parity remains a declared gap."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/mod.rs",
+      "oldGitBlob": "427a830484d67dcb9917a68dd950034daf8cbe18",
+      "oldContentSha256": "sha256:edebe05dae8f0b79b357835df9bcfcc7a6e0f8323c99910e94f983bca44375b1",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/mod.rs",
+          "gitBlob": "664944491d9ac5234e657bb8f5f8564022ae7fe3",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current adds the explicit combined-output capture export without replacing the existing process owner. Export selection does not claim whole behavioral or external Rust source compatibility."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/mod.rs",
+      "oldGitBlob": "a178adf8b3b2e0f8807007f9719c6de837f9b345",
+      "oldContentSha256": "sha256:e3352759383d374bf856ffbdac4b1e6128a51767947a48a917bde138d582b384",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/mod.rs",
+          "gitBlob": "664944491d9ac5234e657bb8f5f8564022ae7fe3",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current adds the explicit combined-output capture export without replacing the existing process owner. Export selection does not claim whole behavioral or external Rust source compatibility."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/mod.rs",
+      "oldGitBlob": "d2ede84707560cf0b227314df09d88660af6f6e9",
+      "oldContentSha256": "sha256:61e19d493ebb38961084bee406e381567c6bb9d47efc85884613f4a31d520a5a",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/mod.rs",
+          "gitBlob": "664944491d9ac5234e657bb8f5f8564022ae7fe3",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Old public APIs retained. Adds existing durable pre-exec gate, cgroup containment, caller cancellation and opt-in bounded stdout capture; historical export-only variants need no merge. Current adds the explicit combined-output capture export without replacing the existing process owner. Export selection does not claim whole behavioral or external Rust source compatibility."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/types.rs",
+      "oldGitBlob": "f6167e8b5af4b3b0f66f210ae82b70360dfe4d12",
+      "oldContentSha256": "sha256:fab002f680a897a0ca92d40e8743a0f0f24ab7b4c9e2c1742c31788e1fd93d71",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/types.rs",
+          "gitBlob": "ab4d2bbc6f995f29d106dfeac66d314f111756e5",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Retains ProcessLimitsV1/observation fields and hard limits. Adds cancellation/spawn-hook errors and opt-in capture; historical comment/format variants need no merge. Current also adds CombinedOutputLimitExceeded for the opt-in owner while preserving old named variants and observation/limit fields; this does not claim exhaustive downstream Rust matches remain source-compatible."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+      "oldGitBlob": "0925083a6d26ad8f3f19cdb85ba61ecc193b091b",
+      "oldContentSha256": "sha256:a1f620820ef1a8ada4445ccb13e31e9b7e6f89a3bd4cf68f66e7eb360b2e0afa",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+          "gitBlob": "7d385000d32658532b9afbad9c0a9d504db8f7ae",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Existing process-group spawn, request validation, limits, TERM/KILL, reaping and verified cleanup remain the owner. Adds failing spawn-to-journal hook, sticky original caller cancellation and opt-in bounded capture through that owner; defaults retain no capture and existing resource budgets. Historical unix variants require no merge. Current combined stdout/stderr limit delegates through the same process/cleanup owner; every old public call passes None. Exact opt-in limits and final-drain overflow are checked without changing historical default per-stream limits. Failure-wire and complete runtime acceptance remain separate."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+      "oldGitBlob": "9acf90a5a42fec5b30257e38bdf49059eca12001",
+      "oldContentSha256": "sha256:d6d61e7b26df8fd873d7f7f55d6767dc7dbb32942a5e39a8b2dd2e03cee8135c",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+          "gitBlob": "7d385000d32658532b9afbad9c0a9d504db8f7ae",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Existing process-group spawn, request validation, limits, TERM/KILL, reaping and verified cleanup remain the owner. Adds failing spawn-to-journal hook, sticky original caller cancellation and opt-in bounded capture through that owner; defaults retain no capture and existing resource budgets. Historical unix variants require no merge. Current combined stdout/stderr limit delegates through the same process/cleanup owner; every old public call passes None. Exact opt-in limits and final-drain overflow are checked without changing historical default per-stream limits. Failure-wire and complete runtime acceptance remain separate."
+    },
+    {
+      "oldPath": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+      "oldGitBlob": "c7d9b769d488cd429c4b2dd63b2233f8afaf8d48",
+      "oldContentSha256": "sha256:3f5083916076f26d4942c8bcc96a434f7b9f1bb88899cb49e4e09b929ee7f386",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-codex-runtime/src/process/unix.rs",
+          "gitBlob": "7d385000d32658532b9afbad9c0a9d504db8f7ae",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Existing process-group spawn, request validation, limits, TERM/KILL, reaping and verified cleanup remain the owner. Adds failing spawn-to-journal hook, sticky original caller cancellation and opt-in bounded capture through that owner; defaults retain no capture and existing resource budgets. Historical unix variants require no merge. Current combined stdout/stderr limit delegates through the same process/cleanup owner; every old public call passes None. Exact opt-in limits and final-drain overflow are checked without changing historical default per-stream limits. Failure-wire and complete runtime acceptance remain separate."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/calibration.rs",
+      "oldGitBlob": "67b74b797bdfcbef4732b76e2a2b0c1f88088440",
+      "oldContentSha256": "sha256:17c0aa6b77ff873fd0b72ed617072751dc42f239c27930e0c21c635ac301ef0e",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/calibration.rs",
+          "gitBlob": "91ee1dcce3d8e80a61e2dcefddd866b89a9c6081",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/commit.rs",
+      "oldGitBlob": "a94c17c32180b923c3d06c724a077a5b0f95a08f",
+      "oldContentSha256": "sha256:f36da2aeead320a35c0606d29d08c0ce17adf81a1b8f5d898c20f5a66e405e3b",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/commit.rs",
+          "gitBlob": "757cf8e34d5f0797d2640772b6ec39d2e7a86c1d",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "The deterministic commit/hash/idempotency mechanism is retained, but the public deserializable caller-asserted commit request and unsealed single-item sequencer are deliberately replaced by construction-restricted verification and a sealed atomic batch owner."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/commit.rs",
+      "oldGitBlob": "d5a0044b5043efaa02d6a741c48dfc5ce7481956",
+      "oldContentSha256": "sha256:6aed64c2a833dd400c67d77a46e0817225572bf0196d6157ca2b97f0e626b4d6",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/commit.rs",
+          "gitBlob": "757cf8e34d5f0797d2640772b6ec39d2e7a86c1d",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Retain the older private-constructor commit request and recomputed result identity goals through the current owner; replace its caller-selected plan-local sequence and unsealed single-item commit contract with sequencer-owned global ordering and authenticated atomic batches."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/execution.rs",
+      "oldGitBlob": "24b0fd7fb4e32f04d21c1af16389111da14e2d2b",
+      "oldContentSha256": "sha256:f68f3aa8e22568320a5159d04a65122ba1614cd6cf797ebe31decc6beed27a46",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/execution.rs",
+          "gitBlob": "6bbf0de0bf6f75cdfef14500757747fc17e42625",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Public VerifiedPreparedResult::new minted acceptance from caller-provided structure/hash. Current fields are private and non-deserializable, verifier trait sealed, receipt identity bound and actual artifact-content provenance tracked; per-handoff live admission retains started-work reconciliation. Do not restore historical constructor boundary."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/execution.rs",
+      "oldGitBlob": "d11695051eb4da01ca1cb315810bd1a7e709c3f4",
+      "oldContentSha256": "sha256:8fa88b06d33bdec239c0ace3dc00aab2d0b63f89b66bf4ca0135aa27d81992b3",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/execution.rs",
+          "gitBlob": "6bbf0de0bf6f75cdfef14500757747fc17e42625",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reject",
+      "rationale": "Historical public deserializable accepted/result/verifier fields allow downstream minted acceptance. Current sealed non-deserializable capability and verifier-bound receipt replace that boundary; reject restoring caller-declared acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/hierarchical_resource.rs",
+      "oldGitBlob": "6ba19d317d64418c812abed6af0bf976b3e99825",
+      "oldContentSha256": "sha256:dbdfea48d4bb0cd4e9cfcb88385894c66848638d5af1befd7f2a7baa7e066fc3",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_hierarchy/prepared_v1.rs",
+          "gitBlob": "24722654583b01defd9fb4c0ccef0487b9fd02f9",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/hierarchical_resource.rs",
+      "oldGitBlob": "cd77c6c2f42fc5e64620f9752bdf4e23c61b3dfd",
+      "oldContentSha256": "sha256:2eedfa08ddde7f09a5486594c80137ed6573136a1c31f33d6fcdaded848671a6",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_hierarchy/accounting_v1.rs",
+          "gitBlob": "5c864db003a73dbb37b6d1003924d788c87d2377",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/lib.rs",
+      "oldGitBlob": "16e5971842c1df83935da4b050f54613f9fbffc8",
+      "oldContentSha256": "sha256:3427ad46ce4b504901b9c13ffd05dbfb8a6de5ace3baa90bba431b181a758e4d",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_hierarchy/mod.rs",
+          "gitBlob": "42d203ac2d612f34f86bbf04d060dfb7a34367af",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/mod.rs",
+          "gitBlob": "560d6b4c774191f0a8b4eac91e37d44ea0f0d553",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/lib.rs",
+          "gitBlob": "d3a26098b5a53924a269da3af1d34011d105adcf",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Current exports retain existing planner/executor/sequencer roots and add durable resource recovery and run-inspection errors. Historical hierarchy/planning models are explicit legacy namespaces; obsolete root export structure must not replace current durable owner."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/lib.rs",
+      "oldGitBlob": "2c15e2544f4c2100aec73a42a46f2657cf12e901",
+      "oldContentSha256": "sha256:6f8cc51b52e638198538d7b6624c3a45501c6956bcd3a31ae20d19e5cca8b19b",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_hierarchy/mod.rs",
+          "gitBlob": "42d203ac2d612f34f86bbf04d060dfb7a34367af",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/mod.rs",
+          "gitBlob": "560d6b4c774191f0a8b4eac91e37d44ea0f0d553",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/lib.rs",
+          "gitBlob": "d3a26098b5a53924a269da3af1d34011d105adcf",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Early fixture-only sequencer/root lacks current filesystem verification, exclusive SQLite persistence and durable resource inspection. Current owner extends that root; historical export file is superseded, no new parallel core."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/lib.rs",
+      "oldGitBlob": "5f6191d5462bec74c4084b3909d82de6b54a9534",
+      "oldContentSha256": "sha256:6d3b137d55bda90daffd7ea490cbeadc8db9c2f4b4c5bfb44800f483f3b48127",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_hierarchy/mod.rs",
+          "gitBlob": "42d203ac2d612f34f86bbf04d060dfb7a34367af",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/mod.rs",
+          "gitBlob": "560d6b4c774191f0a8b4eac91e37d44ea0f0d553",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/lib.rs",
+          "gitBlob": "d3a26098b5a53924a269da3af1d34011d105adcf",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Current root exports canonical durable resources and optimizer/telemetry owners. Historical supplied-data planning and in-memory hierarchy retained only in explicit legacy namespaces, not activation/recovery paths."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/lib.rs",
+      "oldGitBlob": "b4e4e38b688fa8de659f8ebe562ace9f83b72c10",
+      "oldContentSha256": "sha256:204c92aab6729d6c2ceed70f92b6146de204977b60dac59cbf0500b2e06f978e",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_hierarchy/mod.rs",
+          "gitBlob": "42d203ac2d612f34f86bbf04d060dfb7a34367af",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/mod.rs",
+          "gitBlob": "560d6b4c774191f0a8b4eac91e37d44ea0f0d553",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-control-plane/src/lib.rs",
+          "gitBlob": "d3a26098b5a53924a269da3af1d34011d105adcf",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Historical root joins alternate hierarchy/governance and supplied-data migration/shadow helpers. Current root retains canonical exclusive sequencer, adds durable charges/unknown-run inspection, and exposes retained legacy contracts separately. Do not restore competing root wiring."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/model_selection.rs",
+      "oldGitBlob": "2b53107163a443427e075c01115f72c739ab10c1",
+      "oldContentSha256": "sha256:fc42fbee4d8685b7a60a7f6d5c56ca112748d365c002baa9d5b5e2527331c505",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/model_selection.rs",
+          "gitBlob": "5fe3f4b06e489a4db4810a99eb9747503bc33fcf",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/model_selection.rs",
+      "oldGitBlob": "fb918ca567885cd749b0a486becfdfb6c09b671e",
+      "oldContentSha256": "sha256:1f3577fd8a1a8e92f6c26b0215b82243b707b230e54629deff6ac2c22dde506a",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/model_selection.rs",
+          "gitBlob": "5fe3f4b06e489a4db4810a99eb9747503bc33fcf",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/observability.rs",
+      "oldGitBlob": "09072e726f8acb752098683ba0ae3f8c1ccb6524",
+      "oldContentSha256": "sha256:c32e1519eb8c98260c9b1d671314ee97fee7e7e60e66a7cb7d7d302da70b4294",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/legacy_planning/observability.rs",
+          "gitBlob": "9f51cd39deded3211facb9c7ab3e384ffdff47b6",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/runtime.rs",
+      "oldGitBlob": "ae42f386ba3607143e7bc774182a2055c8cac63c",
+      "oldContentSha256": "sha256:7801c1ad62056832a1159c48453e90894310e4b85abeaf2d9641d798f3b777ee",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/runtime.rs",
+          "gitBlob": "b306e529bcafbebeaa6622e3faaa79221b787961",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Current retains snapshot/planner/reserve/prepare/verify/dependency-wave/event receipt composition, but supersedes per-wave durable commits and unconditional post-execution release with atomic finalization and an inspection-retaining owner."
+    },
+    {
+      "oldPath": "rust/crates/hepta-control-plane/src/runtime.rs",
+      "oldGitBlob": "e94f522346b8e13d9bf04d79cdc57d6cfeecba31",
+      "oldContentSha256": "sha256:3256b1cd2064cee5171c26ef82dc8ef50ee6b8dc611b5e28b5700affe7202ca7",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-control-plane/src/runtime.rs",
+          "gitBlob": "b306e529bcafbebeaa6622e3faaa79221b787961",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "The earlier dependency-order receipt model is retained in current dependency-wave composition, while its execute-all-before-dependency sequencing, per-item commits and unconditional failure release are deliberately superseded."
+    },
+    {
+      "oldPath": "rust/crates/hepta-legacy-compatibility/src/lib.rs",
+      "oldGitBlob": "370175a45ca418225ac3b9dda2ae20decb23eabc",
+      "oldContentSha256": "sha256:75fb74864f80df329ab2ba92fc5335a9407135c7a1e725dab137f62f1e0e54a8",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-legacy-compatibility/src/lib.rs",
+          "gitBlob": "eeb176bc1db995c02892fe73f1caa7e6c3994691",
+          "mode": "100644"
+        }
+      ],
+      "decision": "supersede",
+      "rationale": "Old module_adapter glob replaced by production request-bound JSON semantics; draft raw observations stay in explicit frozen_observation_compat_v1 diagnostic namespace. Do not restore ambiguous draft glob export."
+    },
+    {
+      "oldPath": "rust/crates/hepta-legacy-compatibility/src/lib.rs",
+      "oldGitBlob": "cf3e8be4cfa5379f76dbe47870f824a336ab444e",
+      "oldContentSha256": "sha256:091ec4958ec6b52ed85632f12eaed68410e5a9cf200d08c0e1fa5512c521cb99",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-legacy-compatibility/src/lib.rs",
+          "gitBlob": "eeb176bc1db995c02892fe73f1caa7e6c3994691",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "Production/node adapter exports retained; adds encoding allocation/cancellation refusals and explicit frozen diagnostics. No merge needed."
+    },
+    {
+      "oldPath": "rust/crates/hepta-legacy-compatibility/src/node_adapter.rs",
+      "oldGitBlob": "2da20018c57dca72db106966f832be5384c921db",
+      "oldContentSha256": "sha256:224c42c579844a2c8d1398421686baf999b273a1481f382accdfc39cb00d14d4",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-legacy-compatibility/src/frozen_observation_compat_v1.rs",
+          "gitBlob": "ed1f228b58f3ee1b4b8d931be40086138b1a39a5",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-orchestration-kernel/src/calibration.rs",
+      "oldGitBlob": "258c92497c27750587e2c457d91a5639e0d37879",
+      "oldContentSha256": "sha256:4a81ff77b038a57aaed3e0ba510316ad9567b9d6e06500731930d04d23c6dc9a",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-orchestration-kernel/src/legacy_calibration_v1.rs",
+          "gitBlob": "53fc31411926a20948dbe476acc5d264676291ee",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Actual old blob compared with retained legacy namespace: documentation, namespace imports and formatting are the differences. Supplied-data/in-memory contract explicitly grants no runtime activation/authority; preservation is not ordinary-path acceptance."
+    },
+    {
+      "oldPath": "rust/crates/hepta-paper-service/src/native_business.rs",
+      "oldGitBlob": "475a03176cd8d13e69ab16804c3989bc05df8c14",
+      "oldContentSha256": "sha256:edd119b52ac5ee2d79f2a116e993cb0cb600b60b8f13a8e213f8f41ca3fed6b7",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business.rs",
+          "gitBlob": "45d95888446815cbb85727587bbed8796405c15b",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/intent.rs",
+          "gitBlob": "af64697f89151c9d4c6f5b3d772cef6776a40498",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs",
+          "gitBlob": "80b6d3d2ca13a5b880e8fdbb39a7095bf91d213c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Retain the old digest/idempotency submission contract as explicit prepared-only reference. Current keeps its fields and routes them through LegacySubmissionIntentV1; the old generic SubmissionPackage job name/router is not restored or declared wire-equivalent."
+    },
+    {
+      "oldPath": "rust/crates/hepta-paper-service/src/native_business.rs",
+      "oldGitBlob": "ed2b28a216e2f9e80077cbaea8ee39b6086ee00c",
+      "oldContentSha256": "sha256:d56cac7b8aeefcfb05d3c4c63ad10bf31bbe49b8f0a99dca7e59fa312b9e22f1",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business.rs",
+          "gitBlob": "45d95888446815cbb85727587bbed8796405c15b",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/manifest.rs",
+          "gitBlob": "6b674121af39faa31cf9c0ade462506ca848051d",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs",
+          "gitBlob": "80b6d3d2ca13a5b880e8fdbb39a7095bf91d213c",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Retain the old artifact-descriptor submission package as explicit prepared-only reference. Current keeps that manifest model and deterministic envelope through LegacySubmissionManifestV1 without restoring the old generic SubmissionPackage dispatch/API."
+    },
+    {
+      "oldPath": "rust/crates/hepta-paper-service/src/native_business/types.rs",
+      "oldGitBlob": "0138d47e4da2b6a5991fb37b2605c0beac522190",
+      "oldContentSha256": "sha256:103111440f181155ddc18cf45c06022952b343934a8514d0ccc59112406d28c5",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/manifest.rs",
+          "gitBlob": "6b674121af39faa31cf9c0ade462506ca848051d",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs",
+          "gitBlob": "80b6d3d2ca13a5b880e8fdbb39a7095bf91d213c",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/types.rs",
+          "gitBlob": "c9aacd809a49f1ca80311d301866b1271bcf6d64",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Preserve the historical manifest descriptor/metadata/job field model in the explicit legacy prepared-only namespace. Current intentionally gives it a distinct LegacySubmissionManifestV1 job kind rather than resurrecting the old SubmissionPackage protocol."
+    },
+    {
+      "oldPath": "rust/crates/hepta-paper-service/src/native_business/types.rs",
+      "oldGitBlob": "c76afca629555e6bc68097761121477a4ff9d767",
+      "oldContentSha256": "sha256:b671201958ae680a448366b7caa92059cffa8f4cd488bce5b391db768be895d8",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/intent.rs",
+          "gitBlob": "af64697f89151c9d4c6f5b3d772cef6776a40498",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/legacy_submission_v1/mod.rs",
+          "gitBlob": "80b6d3d2ca13a5b880e8fdbb39a7095bf91d213c",
+          "mode": "100644"
+        },
+        {
+          "path": "rust/crates/hepta-paper-service/src/native_business/types.rs",
+          "gitBlob": "c9aacd809a49f1ca80311d301866b1271bcf6d64",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Keep the old digest/idempotency intent fields as a historical prepared contract, explicitly represented by LegacySubmissionIntentV1. Current retains core pure-worker value models but does not revive the old generic SubmissionPackage variant/API."
+    },
+    {
+      "oldPath": "rust/crates/hepta-qualification-ingest/src/lib.rs",
+      "oldGitBlob": "bb4bf2e1c0941d2d22f2b17574c515573202e19d",
+      "oldContentSha256": "sha256:d86ced03ecc1478ae52285db76e2c0be5a1675f0fc7b2aa27abcac0c1821792d",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-qualification-ingest/src/lib.rs",
+          "gitBlob": "7ba19b7027a46abde4d66153f14e45ec4d71c4dd",
+          "mode": "100644"
+        }
+      ],
+      "decision": "absorb",
+      "rationale": "The original independently signed envelope, exact subject/freshness and signing-message mechanism is retained in the current ingest owner with stronger file/trust limits and explicit package/profile vocabulary; no old weaker loader or ambiguous enum spelling needs restoration. The current added opaque per-role runtime mapping and versioned research V4/profile exports preserve the old signed envelope subject/freshness boundary; they do not grant missing real-account or installed authority."
+    },
+    {
+      "oldPath": "rust/crates/hepta-readonly-store/src/lib.rs",
+      "oldGitBlob": "c9b9d7686a4c3ca46011ebd785690f4233ca04ac",
+      "oldContentSha256": "sha256:28f328f8c419f2276ef0d931b7517b8062b726aead06576d1fb2ec5e79e1f54c",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-readonly-store/src/logical_store_compat_v1.rs",
+          "gitBlob": "8f3173b23411d1baea88633d2ff523332a4c59d2",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Keep the original schema-25 Rust logical diagnostic wire/hash as an explicit pure projection reference. The mapped current module does not implement or qualify the old SQLite/file owner."
+    },
+    {
+      "oldPath": "rust/crates/hepta-workspace/src/lib.rs",
+      "oldGitBlob": "137f658cc403e76a417dd2e9eac33425de2bbfcd",
+      "oldContentSha256": "sha256:17d148ac4814411d7937e5a50c2f832252ff95c225827ffb7e1b13b1edadef7d",
+      "currentPaths": [
+        {
+          "path": "rust/crates/hepta-workspace/src/workspace_wire_compat_v1.rs",
+          "gitBlob": "90b685722d30d9e58857c427d4b44193418e0ba8",
+          "mode": "100644"
+        }
+      ],
+      "decision": "reference",
+      "rationale": "Keep the original workspace inventory/mutation/prepared wire and hashes as an explicit pure diagnostic projection. The mapped current module deliberately does not restore the old filesystem writer/materializer or permissive mutation-policy owner."
+    }
+  ]
+}

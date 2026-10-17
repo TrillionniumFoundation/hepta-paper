@@ -8,6 +8,66 @@
     "commercialDistribution": false,
     "externalActions": false
   },
+  "externalBlockerDisposition": {
+    "GAP-HOST-001": {
+      "disposition": "scoped_out",
+      "reason": "broker-listener-not-enabled-in-personal-profile"
+    },
+    "GAP-HOST-002": {
+      "disposition": "scoped_out",
+      "reason": "destructive-host-soak-not-enabled-in-personal-profile"
+    },
+    "GAP-KEY-001": {
+      "disposition": "not_applicable",
+      "reason": "no-external-actions-or-distributed-signing"
+    },
+    "GAP-CODEX-001": {
+      "disposition": "not_applicable",
+      "reason": "no-live-provider-or-external-broker-actions"
+    },
+    "GAP-REL-001": {
+      "disposition": "not_applicable",
+      "reason": "no-release-portal-submission-or-distribution"
+    },
+    "LEGACY-REPLAY-001": {
+      "disposition": "scoped_out",
+      "reason": "unsupported-routes-not-enabled-in-personal-profile"
+    }
+  },
+  "localOperationMapping": {
+    "targetHost": {
+      "disposition": "replaced_by_local_deterministic_controls",
+      "controlIds": [
+        "credential-and-runtime-boundary",
+        "database-inventory-and-schema"
+      ],
+      "reason": "private-profile-has-no-broker-listener-or-destructive-host-soak"
+    },
+    "installation": {
+      "disposition": "local_source_bound",
+      "controlIds": [
+        "credential-and-runtime-boundary",
+        "exact-code-provenance"
+      ],
+      "reason": "workspace-and-runtime-ownership-are-the-private-install-boundary"
+    },
+    "canary": {
+      "disposition": "local_deterministic_replay",
+      "controlIds": [
+        "enabled-scientific-oracles",
+        "formal-operational-zero-skipped"
+      ],
+      "reason": "formal-and-enabled-capability-replay-cover-local-behavior"
+    },
+    "rollback": {
+      "disposition": "local_restore_and_anti_rollback",
+      "controlIds": [
+        "database-restore-drill",
+        "online-anti-rollback"
+      ],
+      "reason": "local-restore-and-monotonic-ledger-cover-local-recovery"
+    }
+  },
   "notApplicableControls": [
     {
       "controlId": "hardware-kms-hsm",
@@ -108,5 +168,5 @@
     "multi-operator-release",
     "distribution-from-personal-profile"
   ],
-  "profileHash": "sha256:c98b607a8efa30dac3d7fa9206c7af4d3a0eac5fcc5eaddc7bb82ba008196eab"
+  "profileHash": "sha256:2be3c2639037a21953e3340d2d24e5b486420e1c91fae04856ad8f28521c8098"
 }

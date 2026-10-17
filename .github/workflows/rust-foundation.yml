@@ -1,0 +1,259 @@
+name: rust-foundation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex/full-rust-replacement-progress-20260916
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  RUSTFLAGS: '-Dunsafe-code'
+
+jobs:
+  validate:
+    name: format, lint, test, docs
+    runs-on: ubuntu-24.04
+    # Run 35649917716 reached the 60-minute job limit while late ten-database
+    # parity tests were still progressing. Preserve the complete test command
+    # and allow time for the remaining tests, Rustdoc and retained logs.
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare isolated Cargo target directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(realpath "$RUNNER_TEMP")/hepta-rust-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          workspace="$(realpath "$GITHUB_WORKSPACE")"
+          case "$target/" in
+            "$workspace/"*)
+              echo 'Cargo build outputs must remain outside the source workspace.' >&2
+              exit 1
+              ;;
+          esac
+          # An exclusive mkdir rejects stale/shared directories and symlinks.
+          # Keep all Cargo steps on this one target; source snapshot rules stay unchanged.
+          mkdir -- "$target"
+          printf 'CARGO_TARGET_DIR=%s\n' "$target" >> "$GITHUB_ENV"
+
+      - name: Verify scientific host source contracts
+        shell: bash
+        run: python3 -B .github/scripts/test_scientific_host_source.py
+
+      - name: Install qualified production Node oracle runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Verify production Node oracle runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.23.1"
+          printf 'HEPTA_TEST_NODE=%s\n' "$(realpath "$(command -v node)")" >> "$GITHUB_ENV"
+          node --input-type=module -e 'console.log(JSON.stringify({ node: process.version, versions: process.versions, collator: new Intl.Collator().resolvedOptions() }))'
+
+      - name: Install locked Node oracle dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install qualified Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+          rustup default 1.98.0
+          rustc --version --verbose
+          cargo --version --verbose
+
+      - name: Prepare Rust native build host
+        shell: bash
+        run: bash .github/scripts/prepare-rust-build-host.sh
+
+      - name: Reject Rust OpenClaw dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Dry-run compatibility records retain historical executor identifiers.
+          # Reject dependencies in the actual direct and locked transitive graph.
+          if grep -RniE 'openclaw' \
+            --include='Cargo.toml' \
+            --include='Cargo.lock' \
+            rust/crates rust/vendor rust/Cargo.toml rust/Cargo.lock; then
+            echo 'OpenClaw dependencies are forbidden in the Rust manifest and lock graph.' >&2
+            exit 1
+          fi
+
+      - name: Require committed dependency lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f rust/Cargo.lock
+          sha256sum rust/Cargo.lock
+
+      - name: Validate locked dependency metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata \
+            --manifest-path rust/Cargo.toml \
+            --format-version 1 \
+            --locked \
+            --no-deps \
+            > /tmp/hepta-rust-metadata.json
+          sha256sum rust/Cargo.lock /tmp/hepta-rust-metadata.json
+
+      - name: Prepare validation log directory
+        shell: bash
+        run: mkdir -p /tmp/hepta-rust-validation
+
+      - name: Prepare exact public R source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Use the same pinned historical Git input as the existing source lanes.
+          # The original materializer verifies all blobs and refuses input drift.
+          python3 -B docs/rust/tools/test_public_r_source_cas.py
+          python3 -B docs/rust/tools/materialize-public-r-source-cas.py \
+            | tee /tmp/hepta-rust-validation/public-r-source-inputs.json
+
+      - name: Check formatting
+        id: rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo fmt --manifest-path rust/Cargo.toml --all -- --check; then
+            echo 'failed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'failed=true' >> "$GITHUB_OUTPUT"
+            cargo fmt --manifest-path rust/Cargo.toml --all
+            git diff --binary -- rust > /tmp/hepta-rust-validation/rustfmt.patch
+            test -s /tmp/hepta-rust-validation/rustfmt.patch
+          fi
+
+      - name: Upload rustfmt patch
+        if: steps.rustfmt.outputs.failed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rustfmt-patch
+          path: /tmp/hepta-rust-validation/rustfmt.patch
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Fail on formatting drift
+        if: steps.rustfmt.outputs.failed == 'true'
+        shell: bash
+        run: |
+          echo '::error::rustfmt drift detected; apply the rustfmt-patch artifact.'
+          exit 1
+
+      - name: Run Clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-targets \
+            --all-features \
+            --locked \
+            -- \
+            -D warnings \
+            -D unsafe-code \
+            -D clippy::todo \
+            -D clippy::unimplemented \
+            -A mismatched_lifetime_syntaxes \
+            2>&1 | tee /tmp/hepta-rust-validation/clippy-all-targets.log
+
+          cargo clippy \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --lib \
+            --bins \
+            --all-features \
+            --locked \
+            -- \
+            -D warnings \
+            -D unsafe-code \
+            -D clippy::todo \
+            -D clippy::unimplemented \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::panic \
+            -A mismatched_lifetime_syntaxes \
+            2>&1 | tee /tmp/hepta-rust-validation/clippy-production.log
+
+      - name: Build native authority test executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Selected test targets do not build the standalone example binary.
+          # The real signed-authority/backup tests execute this helper; never
+          # replace it with a stub or skip those tests on a clean runner.
+          command -v strip
+          cargo build --manifest-path rust/Cargo.toml --locked --all-features \
+            -p hepta-paper-service --example native-authority-fixture-client \
+            2>&1 | tee "/tmp/hepta-rust-validation/native-authority-fixture-build.log"
+          test -x "$CARGO_TARGET_DIR/debug/examples/native-authority-fixture-client"
+
+      # Source-only feedback does not need a privileged scientific host. Keep
+      # the complete workspace test command behind the unchanged host gate;
+      # compilation and documentation are never reported as behavior evidence.
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo doc \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            --no-deps \
+            2>&1 | tee /tmp/hepta-rust-validation/rustdoc.log
+
+      - name: Prepare and verify scientific test host
+        shell: bash
+        run: bash .github/scripts/prepare-scientific-test-host.sh
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test \
+            --manifest-path rust/Cargo.toml \
+            --workspace \
+            --all-features \
+            --locked \
+            2>&1 | tee /tmp/hepta-rust-validation/test.log
+
+      - name: Upload Rust validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-validation-logs
+          path: /tmp/hepta-rust-validation
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 0

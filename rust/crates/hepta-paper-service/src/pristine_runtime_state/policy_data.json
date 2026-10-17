@@ -1,0 +1,33 @@
+{
+  "nativeMetadata": {
+    "automation_operations": "enabled",
+    "automation_plane": "enabled",
+    "autonomous_submission_handoff_cutover": "available_inactive",
+    "campaign_attempt_fencing": "enabled",
+    "campaign_lineage_backfill": "completed",
+    "campaign_prepared_results": "enabled",
+    "campaign_release_authority": "current_completed_release",
+    "evidence_isolation": "enabled",
+    "job_lease_fencing": "generation_v1",
+    "legacy_catalog_runtime_scan": "disabled",
+    "legacy_native_lineage": "archive_only",
+    "multiprocess_automation": "enabled",
+    "receipt_issuer_policy": "registered_capability_required",
+    "receipt_ledger_append_only": "enabled",
+    "receipt_ledger_qualification_projection": "monotonic_terminal_state_machine",
+    "resource_admission_queue": "enabled",
+    "reviewer_identity_backfill": "completed",
+    "runtime_ledger": "enabled",
+    "schema_version": "25",
+    "submission_boundary_hardening": "enabled",
+    "submission_delivery_leases": "enabled",
+    "submission_outbox_delivery_kind": "enabled",
+    "submission_outbox_quarantined_legacy_count": "0",
+    "submission_response_consumption": "enabled",
+    "trusted_evidence_writer_policy": "enabled",
+    "verification_runtime_policy": "isolated",
+    "workflow_state_projection_atomicity": "projection_and_ledger_same_transaction",
+    "workspace_lineage_registry": "enabled",
+    "workspace_retention_qualification": "restore_receipt_required"
+  }
+}

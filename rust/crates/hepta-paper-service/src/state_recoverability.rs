@@ -1,0 +1,47 @@
+//! Recoverability reconciliation from real resident, backup and mutation evidence.
+//! Stored restore receipts and caller-provided readiness JSON cannot create an
+//! epoch permit. Local lease checks remain observations, not distributed locks.
+mod backup;
+mod backup_recovery;
+pub mod controller;
+mod drill;
+pub(crate) mod files;
+pub mod observation;
+pub(crate) mod publication;
+mod reconciliation;
+pub mod resident;
+pub mod safety_inspection;
+pub mod service;
+mod sqlite_copy;
+
+// Test-only adapter to the same production Backup kernel. It cannot become a
+// product launcher or confer live-state, writer, or authority qualification.
+#[cfg(test)]
+pub(crate) fn closed_private_backup_for_migration_test_v1(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> crate::sqlite_mutation_coordinator::Result<serde_json::Value> {
+    let directory = publication::Directory::open_or_create(destination, false)?;
+    sqlite_copy::copy(source, &directory, "recovered.sqlite", false)
+}
+use crate::sqlite_mutation_coordinator::clock::{MutationClockV1, iso};
+use crate::sqlite_mutation_coordinator::{Result, error, hash, hash_bytes, int, text, timestamp};
+use serde_json::{Value, json};
+fn ensure(valid: bool, code: &str) -> Result<()> {
+    if valid { Ok(()) } else { Err(error(code)) }
+}
+fn clock_now(clock: &mut dyn MutationClockV1) -> Result<(i64, String)> {
+    let millis = clock.now_millis()?;
+    Ok((millis, iso(millis)?))
+}
+
+mod history;
+pub(crate) use history::{VerifiedCheckpointReplayV1, verify_checkpoint_effective_state_v1};
+
+pub mod cli;
+mod renewal;
+
+pub(crate) mod schema_normalization_repository;
+
+pub(crate) mod schema_finalization_repository;
+pub(crate) mod schema_installation_repository;

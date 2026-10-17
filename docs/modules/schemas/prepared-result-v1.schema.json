@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PreparedResultV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "executionId",
+    "idempotencyKey",
+    "planHash",
+    "candidateHash",
+    "stateSnapshotHash",
+    "moduleIdentityHash",
+    "attemptId",
+    "leaseGeneration",
+    "terminalDisposition",
+    "externalEffectDisposition",
+    "payloadHash",
+    "artifactInventoryHash",
+    "usageSettlement",
+    "recovery"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "PreparedResultV1"
+    },
+    "executionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "candidateHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "stateSnapshotHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "moduleIdentityHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "attemptId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "leaseGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "writerGeneration": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "terminalDisposition": {
+      "type": "string",
+      "minLength": 1
+    },
+    "externalEffectDisposition": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payloadHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "artifactInventoryHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "workspaceMutationInventoryHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "usageSettlement": {
+      "type": "object"
+    },
+    "scientificEvidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "verificationRequirements": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "integrationProposal": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "recovery": {
+      "type": "object"
+    }
+  }
+}

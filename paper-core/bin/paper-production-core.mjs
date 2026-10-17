@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import paperProductionUsage from '../config/paper-production-usage.v1.json' with {type:'json'};
 import { spawnSync } from 'node:child_process';
 import {
   runPaperBatch,
@@ -29,14 +30,7 @@ import {
 export { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
 
 function usage() {
-  return `Usage:
-  paper-production-core batch-run --mode <inventory|local-build|local-package|research-verify|empirical-analysis|referee-review|referee-revise|local-review-loop|local-dry-run|reviewed-submit> [--limit N] [--paper SLUG] [--target VENUE] [--quality-profile PROFILE] [--dataset-root PATH] [--dataset-license SPDX] [--dataset-authorization sha256:...] [--benchmark-id ID] [--apply-manuscript] [--inventory-source auto|hepta|sqlite|yaml] [--max-rounds N] [--json] [--write-report] [--execute]
-
-  Compatibility alias: --mode referee-autopilot maps to local-review-loop and has no academic acceptance authority.
-  Unsupported production vocabulary: journal-manage, venue-resolve, source-adapt. Preview and --execute both fail closed; use only an explicit compatibility entrypoint for legacy projection work.
-  paper-production-core proposal --idea TEXT [--discipline NAME] [--venue NAME] [--title TEXT] [--paper SLUG] [--paper-type TYPE] [--material TEXT] [--constraint TEXT] [--scientific-claim-document PATH] [--approval-document PATH] [--materialize-source] [--stage-inventory] [--json] [--write-report]
-  paper-production-core selftest
-`;
+  return paperProductionUsage;
 }
 
 function renderProposalConsole(report) {

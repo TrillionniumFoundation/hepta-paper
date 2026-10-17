@@ -37,7 +37,11 @@ function assertTrustedFlock() {
 }
 
 function validateLockRoot(root, { expectedUid, expectedGid }) {
-  const selected = fs.lstatSync(root, { bigint: true });
+  let selected;
+  try { selected = fs.lstatSync(root, { bigint: true }); }
+  catch (error) {
+    throw codedError('immutable_release_deployment_lock_root_invalid', { cause: error });
+  }
   if (fs.realpathSync(root) !== root || selected.isSymbolicLink() || !selected.isDirectory()
     || Number(selected.uid) !== expectedUid || Number(selected.gid) !== expectedGid
     || (Number(selected.mode) & 0o7777) !== 0o711) {
@@ -75,7 +79,11 @@ export function inspectImmutableReleaseDeploymentLock({
   }
   const root = path.dirname(lockPath);
   const rootBefore = validateLockRoot(root, { expectedUid, expectedGid });
-  const before = fs.lstatSync(lockPath, { bigint: true });
+  let before;
+  try { before = fs.lstatSync(lockPath, { bigint: true }); }
+  catch (error) {
+    throw codedError('immutable_release_deployment_lock_invalid', { cause: error });
+  }
   const rootAfter = validateLockRoot(root, { expectedUid, expectedGid });
   if (!validateLockStat(before, { expectedUid, expectedGid })
     || !sameNode(rootBefore, rootAfter)) {

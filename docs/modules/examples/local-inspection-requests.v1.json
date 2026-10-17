@@ -1,0 +1,5 @@
+[
+  {"action":"events","cursor":null,"limit":2},
+  {"action":"logs","offset":0,"limit":2},
+  {"action":"slo"}
+]

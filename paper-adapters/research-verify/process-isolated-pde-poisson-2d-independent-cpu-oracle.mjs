@@ -18,6 +18,9 @@ import {
   verifyProductionOsSandboxWorkerReceipt,
 } from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
 import {
+  PDE_POISSON_2D_CPU_ORACLE_EXECUTABLE_TARGET,
+} from '../../paper-domain/research/pde-poisson-2d-cpu-oracle-runtime-attestation.mjs';
+import {
   readScopedFileSync,
 } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import {
@@ -167,7 +170,7 @@ export function runProcessIsolatedPdePoisson2dIndependentCpuOracle({
     try {
       runner = createPdePoisson2dCpuOracleSandboxRunner(effectiveResourceBudget);
       executionIdentity = runner.resolveExecutionRuntimeIdentity({
-        executable: process.execPath,
+        executable: PDE_POISSON_2D_CPU_ORACLE_EXECUTABLE_TARGET,
       });
       if (!executionIdentity?.available || !executionIdentity?.allowlisted
         || executionIdentity.digest
@@ -207,7 +210,7 @@ export function runProcessIsolatedPdePoisson2dIndependentCpuOracle({
         throw new Error('pde_cpu_oracle_source_closure_invalid');
       }
       sandboxReceipt = snapshotJsonObject(runner.run({
-        executable: process.execPath,
+        executable: PDE_POISSON_2D_CPU_ORACLE_EXECUTABLE_TARGET,
         args: [workerPath],
         cwd: repositoryRoot,
         sourceRoot: repositoryRoot,

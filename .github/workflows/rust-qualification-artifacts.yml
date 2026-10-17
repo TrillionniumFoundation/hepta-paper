@@ -1,0 +1,79 @@
+name: rust-qualification-artifacts
+
+on:
+  pull_request:
+  push:
+    branches: [main, codex/full-rust-replacement-progress-20260916]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-qualification-artifacts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install qualified Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+
+      - name: Validate scripts and strict evidence schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n docs/rust/qualification/hepta-broker-host-qualification-v2.sh
+          bash -n docs/rust/qualification/hepta-cgroup-v2-target-host-qualification.sh
+          node --test paper-core/tests/external-qualification-contract-governance.test.mjs
+
+      - name: Build, lint, test, and smoke qualification CLIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.98.0
+          bash .github/scripts/prepare-rust-build-host.sh
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --bin hepta-broker-journal-preflight \
+            --bin hepta-trust-bundle-preflight \
+            --locked
+          cargo build --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest \
+            --bin hepta-qualification-closure \
+            --locked
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-codex-broker \
+            --bin hepta-broker-journal-preflight \
+            --bin hepta-trust-bundle-preflight \
+            --locked -- -D warnings
+          cargo clippy --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest \
+            --all-targets --all-features \
+            --locked -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml \
+            -p hepta-qualification-ingest \
+            --all-features --locked
+
+          if rust/target/debug/hepta-broker-journal-preflight; then exit 1; fi
+          if rust/target/debug/hepta-trust-bundle-preflight; then exit 1; fi
+          if rust/target/debug/hepta-qualification-closure; then exit 1; fi
+          rust/target/debug/hepta-qualification-closure --help
+
+          fixture=$(mktemp -d)
+          chmod 0700 "$fixture"
+          owner_uid=$(stat -c %u "$fixture")
+          rust/target/debug/hepta-broker-journal-preflight \
+            "$fixture/broker.sqlite" "$owner_uid"
+          rust/target/debug/hepta-broker-journal-preflight \
+            "$fixture/broker.sqlite" "$owner_uid"
+          test "$(stat -c %a "$fixture/broker.sqlite")" = 600
+          rm -rf "$fixture"

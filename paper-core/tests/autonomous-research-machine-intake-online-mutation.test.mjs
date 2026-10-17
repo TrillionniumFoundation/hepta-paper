@@ -235,7 +235,7 @@ function databaseSurface({ foreignKey = 'NO ACTION', noPrimaryKey = false, trigg
   return database;
 }
 
-test('mutation surface requires explicit-PK foreign keys and rejects target write triggers', (t) => {
+test('mutation surface requires explicit-PK foreign keys and defers target trigger effects to transaction guards', (t) => {
   const plan = Object.freeze({
     statements: Object.freeze([{ writeTable: 'child' }]),
   });
@@ -256,9 +256,8 @@ test('mutation surface requires explicit-PK foreign keys and rejects target writ
   );
   const withTrigger = databaseSurface({ trigger: true });
   t.after(() => withTrigger.close());
-  assert.throws(
-    () => assertExternallyFencedSqliteMutationDatabaseSurface(withTrigger, plan),
-    /business_trigger_forbidden/,
+  assert.doesNotThrow(() =>
+    assertExternallyFencedSqliteMutationDatabaseSurface(withTrigger, plan),
   );
 });
 

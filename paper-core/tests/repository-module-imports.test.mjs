@@ -303,8 +303,6 @@ function classifyRepositoryModules() {
     ...entrypoints.migrationSupport,
     ...packageScriptModuleEntries('retirement'),
   ]);
-  const allModules = moduleRoots.flatMap((root) => modulesUnder(path.join(workspaceRoot, root)))
-    .map((relative) => path.join(workspaceRoot, relative));
   const reachable = Object.freeze({
     production: productionReachable,
     compatibility: compatibilityReachable,
@@ -313,6 +311,13 @@ function classifyRepositoryModules() {
     maintenance: maintenanceReachable,
     migrationSupport: migrationSupportReachable,
   });
+  // JSON imports are tracked data modules, including resources outside code roots.
+  const allModules = [...new Set([
+    ...moduleRoots.flatMap((root) => modulesUnder(path.join(workspaceRoot, root)))
+      .map((relative) => path.join(workspaceRoot, relative)),
+    ...Object.values(reachable).flatMap((files) => [...files]
+      .filter((file) => file.endsWith('.json'))),
+  ])];
   const ownershipByCategory = Object.fromEntries(
     architectureCategories.map((category) => [category, new Set()]),
   );
@@ -736,7 +741,12 @@ test('production inventory is reachable only from declared executable entrypoint
     .filter((file) => !exposureByCategory.experimental.has(file));
   const failures = [];
   for (const file of importable) {
-    try { await import(pathToFileURL(file).href); }
+    try {
+      await import(
+        pathToFileURL(file).href,
+        file.endsWith('.json') ? { with: { type: 'json' } } : undefined,
+      );
+    }
     catch (error) { failures.push({ relative: posix(path.relative(workspaceRoot, file)), error: error?.stack || error?.message || String(error) }); }
   }
   assert.deepEqual(failures, []);
@@ -1059,6 +1069,50 @@ test('widely consumed paper-core runtime facades are versioned public APIs, not 
     'paper-core/src/code-provenance.mjs',
     'paper-core/src/workspace-layout.mjs',
   ]);
+});
+
+test('Rust product owners exclude de-selected compatibility implementations', () => {
+  const registry = JSON.parse(fs.readFileSync(
+    path.join(workspaceRoot, 'docs/system/truth/modules.v1.json'),
+    'utf8',
+  )).modules;
+  const forbiddenModulePaths = new Map([
+    ['module.candidate-router', ['rust/crates/hepta-orchestration-kernel']],
+    ['module.scheduler-core', ['rust/crates/hepta-orchestration-kernel']],
+    ['module.resource-allocator', ['rust/crates/hepta-orchestration-kernel']],
+    ['module.observability', ['rust/crates/hepta-orchestration-kernel']],
+    ['module.snapshot-builder', ['rust/crates/hepta-orchestration-kernel']],
+    ['module.performance-qualification', ['rust/crates/hepta-orchestration-kernel']],
+    ['module.workspace-authority', ['rust/crates/hepta-workspace-authority']],
+    ['module.compatibility-kernel', ['rust/crates/hepta-compatibility']],
+  ]);
+  for (const [moduleId, forbiddenPaths] of forbiddenModulePaths) {
+    const selected = new Set(registry[moduleId].paths);
+    for (const forbidden of forbiddenPaths) {
+      assert.equal(selected.has(forbidden), false, `de_selected_product_path:${moduleId}:${forbidden}`);
+    }
+  }
+
+  const productCargoFiles = [
+    'rust/crates/hepta-control-plane/Cargo.toml',
+    'rust/crates/hepta-paper-service/Cargo.toml',
+  ];
+  for (const relative of productCargoFiles) {
+    const source = fs.readFileSync(path.join(workspaceRoot, relative), 'utf8');
+    for (const forbidden of [
+      'hepta-orchestration-kernel',
+      'hepta-workspace-authority',
+      'hepta-compatibility',
+    ]) {
+      assert.doesNotMatch(source, new RegExp(`^\\s*${forbidden.replaceAll('-', '\\-')}\\s*=`, 'm'), relative);
+    }
+  }
+
+  const storeCargo = fs.readFileSync(
+    path.join(workspaceRoot, 'rust/crates/hepta-readonly-store/Cargo.toml'),
+    'utf8',
+  );
+  assert.match(storeCargo, /^\s*hepta-readonly-control\s*=/m);
 });
 
 test('SQLite campaign persistence is composed from bounded operation modules', () => {

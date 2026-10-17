@@ -9,6 +9,9 @@ const MAXIMUM_OUTPUT_BYTES = 8 * 1024 * 1024;
 const STRICT_TEMPORARY_PARENT = '/tmp';
 const STRICT_TEMPORARY_PARENT_MODE = 0o1777;
 const WORKSPACE_DOCUMENTS = Object.freeze(['package.json', 'package-lock.json']);
+const GITHUB_ACTIONS_TOOL_CACHE_ROOT = '/opt/hostedtoolcache';
+const SEALED_HOST_PROFILE = 'sealed-host';
+const GITHUB_ACTIONS_TOOL_CACHE_PROFILE = 'github-actions-toolcache';
 export const STRICT_NPM_AUDIT_NODE_EXECUTABLE = '/usr/bin/node';
 export const STRICT_NPM_AUDIT_NPM_EXECUTABLE =
   '/usr/lib/node_modules/npm/bin/npm-cli.js';
@@ -159,39 +162,141 @@ function assertWorkspaceDocumentsUnchanged(root, expected) {
   }
 }
 
-function executableIdentity(file, { expectedUid = 0, expectedGid = 0 } = {}) {
+function allowedOwner(stat, owners) {
+  const uid = Number(stat.uid);
+  const gid = Number(stat.gid);
+  return owners.some((owner) => owner.uid === uid && owner.gid === gid);
+}
+
+function assertTrustedExecutableRoot(file, trustedRoot) {
+  if (trustedRoot === null) return;
+  if (!path.isAbsolute(trustedRoot) || path.resolve(trustedRoot) !== trustedRoot
+    || fs.realpathSync(trustedRoot) !== trustedRoot
+    || !file.startsWith(`${trustedRoot}${path.sep}`)) {
+    throw codedError('strict_npm_audit_tool_cache_root_invalid');
+  }
+  const root = fs.lstatSync(trustedRoot, { bigint: true });
+  if (root.isSymbolicLink() || !root.isDirectory()) {
+    throw codedError('strict_npm_audit_tool_cache_root_invalid');
+  }
+}
+
+function executableIdentity(file, {
+  allowedOwners,
+  requireExecutable = false,
+  trustedRoot = null,
+} = {}) {
   const selected = path.resolve(file);
   if (!path.isAbsolute(file) || selected !== file || fs.realpathSync(file) !== file) {
     throw codedError('strict_npm_audit_executable_path_invalid');
   }
+  assertTrustedExecutableRoot(file, trustedRoot);
   let descriptor;
   try {
     descriptor = fs.openSync(file, fs.constants.O_RDONLY | NO_FOLLOW);
     const before = fs.fstatSync(descriptor, { bigint: true });
     const atPath = fs.lstatSync(file, { bigint: true });
+    const mode = Number(before.mode) & 0o7777;
     if (!before.isFile() || atPath.isSymbolicLink() || !atPath.isFile()
       || before.dev !== atPath.dev || before.ino !== atPath.ino || before.nlink !== 1n
-      || Number(before.uid) !== expectedUid || Number(before.gid) !== expectedGid
-      || (Number(before.mode) & 0o022) !== 0) {
+      || !Array.isArray(allowedOwners) || !allowedOwner(before, allowedOwners)
+      || (mode & 0o6022) !== 0 || (requireExecutable && (mode & 0o111) === 0)) {
       throw codedError('strict_npm_audit_executable_identity_invalid');
     }
     const bytes = fs.readFileSync(descriptor);
     const after = fs.fstatSync(descriptor, { bigint: true });
-    if (before.dev !== after.dev || before.ino !== after.ino
+    if (before.dev !== after.dev || before.ino !== after.ino || before.nlink !== after.nlink
+      || before.uid !== after.uid || before.gid !== after.gid || before.mode !== after.mode
       || before.size !== after.size || before.mtimeNs !== after.mtimeNs
-      || BigInt(bytes.length) !== before.size) {
+      || before.ctimeNs !== after.ctimeNs || BigInt(bytes.length) !== before.size) {
       throw codedError('strict_npm_audit_executable_changed_during_read');
     }
     return Object.freeze({
-      path: file,
-      uid: expectedUid,
-      gid: expectedGid,
-      mode: Number(before.mode) & 0o7777,
+      ...nodeIdentity(before),
+      links: String(before.nlink),
+      size: String(before.size),
+      mtimeNs: String(before.mtimeNs),
+      ctimeNs: String(before.ctimeNs),
       contentHash: hashBytes(bytes),
     });
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
   }
+}
+
+function githubActionsEnvironmentApproved(environment) {
+  return process.platform === 'linux'
+    && environment.CI === 'true'
+    && environment.GITHUB_ACTIONS === 'true'
+    && environment.RUNNER_OS === 'Linux'
+    && environment.RUNNER_TOOL_CACHE === GITHUB_ACTIONS_TOOL_CACHE_ROOT
+    && environment.AGENT_TOOLSDIRECTORY === GITHUB_ACTIONS_TOOL_CACHE_ROOT;
+}
+
+function currentOwner() {
+  return Object.freeze({
+    uid: process.getuid(),
+    gid: process.getgid(),
+  });
+}
+
+function uniqueOwners(owners) {
+  const selected = new Map();
+  for (const owner of owners) selected.set(`${owner.uid}:${owner.gid}`, owner);
+  return Object.freeze([...selected.values()].map((owner) => Object.freeze({ ...owner })));
+}
+
+function resolveRuntimeProfile({
+  nodeExecPath,
+  npmExecPath,
+  environment,
+  expectedExecutableUid,
+  expectedExecutableGid,
+}) {
+  if (nodeExecPath === STRICT_NPM_AUDIT_NODE_EXECUTABLE
+    && npmExecPath === STRICT_NPM_AUDIT_NPM_EXECUTABLE) {
+    return Object.freeze({
+      name: SEALED_HOST_PROFILE,
+      installationRoot: '/usr',
+      trustedRoot: null,
+      allowedOwners: Object.freeze([Object.freeze({
+        uid: expectedExecutableUid,
+        gid: expectedExecutableGid,
+      })]),
+    });
+  }
+  const architecture = process.arch;
+  if (!githubActionsEnvironmentApproved(environment)
+    || !['x64', 'arm64'].includes(architecture)) {
+    throw codedError('strict_npm_audit_executable_not_approved');
+  }
+  const installationRoot = path.join(
+    GITHUB_ACTIONS_TOOL_CACHE_ROOT,
+    'node',
+    process.versions.node,
+    architecture,
+  );
+  const approvedNode = path.join(installationRoot, 'bin', 'node');
+  const approvedNpm = path.join(
+    installationRoot,
+    'lib',
+    'node_modules',
+    'npm',
+    'bin',
+    'npm-cli.js',
+  );
+  if (nodeExecPath !== approvedNode || npmExecPath !== approvedNpm) {
+    throw codedError('strict_npm_audit_executable_not_approved');
+  }
+  return Object.freeze({
+    name: GITHUB_ACTIONS_TOOL_CACHE_PROFILE,
+    installationRoot,
+    trustedRoot: GITHUB_ACTIONS_TOOL_CACHE_ROOT,
+    allowedOwners: uniqueOwners([
+      Object.freeze({ uid: 0, gid: 0 }),
+      currentOwner(),
+    ]),
+  });
 }
 
 export function buildStrictNpmAuditInvocation({
@@ -200,6 +305,7 @@ export function buildStrictNpmAuditInvocation({
   nodeExecPath = process.execPath,
   homePath = '/nonexistent',
   cachePath = '/nonexistent/cache',
+  environment = process.env,
   expectedExecutableUid = 0,
   expectedExecutableGid = 0,
   executableInspector = executableIdentity,
@@ -208,22 +314,27 @@ export function buildStrictNpmAuditInvocation({
   if (path.resolve(workspaceRoot) !== workspaceRoot || root !== workspaceRoot) {
     throw codedError('strict_npm_audit_workspace_root_invalid');
   }
-  if (nodeExecPath !== STRICT_NPM_AUDIT_NODE_EXECUTABLE
-    || npmExecPath !== STRICT_NPM_AUDIT_NPM_EXECUTABLE) {
-    throw codedError('strict_npm_audit_executable_not_approved');
-  }
+  const profile = resolveRuntimeProfile({
+    nodeExecPath,
+    npmExecPath,
+    environment,
+    expectedExecutableUid,
+    expectedExecutableGid,
+  });
   const node = executableInspector(nodeExecPath, {
-    expectedUid: expectedExecutableUid,
-    expectedGid: expectedExecutableGid,
+    allowedOwners: profile.allowedOwners,
+    requireExecutable: true,
+    trustedRoot: profile.trustedRoot,
   });
   const npm = executableInspector(npmExecPath, {
-    expectedUid: expectedExecutableUid,
-    expectedGid: expectedExecutableGid,
+    allowedOwners: profile.allowedOwners,
+    requireExecutable: false,
+    trustedRoot: profile.trustedRoot,
   });
   const argv = Object.freeze([
     '--dns-result-order=ipv4first',
     '--no-network-family-autoselection',
-    npm.path,
+    npmExecPath,
     'audit',
     '--registry=https://registry.npmjs.org/',
     '--strict-ssl=true',
@@ -231,7 +342,7 @@ export function buildStrictNpmAuditInvocation({
     '--package-lock-only',
     '--ignore-scripts',
   ]);
-  const environment = Object.freeze({
+  const childEnvironment = Object.freeze({
     PATH: '/usr/bin:/bin',
     HOME: homePath,
     LANG: 'C.UTF-8',
@@ -242,13 +353,29 @@ export function buildStrictNpmAuditInvocation({
   return Object.freeze({
     version: 1,
     kind: 'StrictNpmAuditInvocation',
-    command: node.path,
+    runtimeProfile: profile.name,
+    runtimeInstallationRootHash: hashRecord(
+      'StrictNpmAuditRuntimeInstallationRoot',
+      Object.freeze({ profile: profile.name, path: profile.installationRoot }),
+    ),
+    command: nodeExecPath,
     argv,
     cwd: root,
-    environment,
+    environment: childEnvironment,
     nodeIdentityHash: hashRecord('StrictNpmAuditNodeIdentity', node),
     npmIdentityHash: hashRecord('StrictNpmAuditNpmIdentity', npm),
   });
+}
+
+function assertInvocationExecutablesUnchanged(before, after) {
+  if (before.runtimeProfile !== after.runtimeProfile
+    || before.runtimeInstallationRootHash !== after.runtimeInstallationRootHash
+    || before.command !== after.command
+    || JSON.stringify(before.argv) !== JSON.stringify(after.argv)
+    || before.nodeIdentityHash !== after.nodeIdentityHash
+    || before.npmIdentityHash !== after.npmIdentityHash) {
+    throw codedError('strict_npm_audit_executable_changed_after_spawn');
+  }
 }
 
 export function runStrictNpmAudit({
@@ -276,16 +403,18 @@ export function runStrictNpmAudit({
   const documentSnapshot = captureWorkspaceDocuments(root);
   const temporary = createPrivateAuditDirectories();
   try {
-    const invocation = buildStrictNpmAuditInvocation({
+    const buildInvocation = () => buildStrictNpmAuditInvocation({
       workspaceRoot: root,
       npmExecPath,
       nodeExecPath,
       homePath: temporary.home,
       cachePath: temporary.cache,
+      environment,
       expectedExecutableUid,
       expectedExecutableGid,
       executableInspector,
     });
+    const invocation = buildInvocation();
     const result = spawn(invocation.command, invocation.argv, {
       cwd: invocation.cwd,
       env: invocation.environment,
@@ -293,6 +422,8 @@ export function runStrictNpmAudit({
       shell: false,
       maxBuffer: MAXIMUM_OUTPUT_BYTES,
     });
+    const after = buildInvocation();
+    assertInvocationExecutablesUnchanged(invocation, after);
     assertWorkspaceDocumentsUnchanged(root, documentSnapshot);
     if (result.error || result.signal || result.status !== 0) {
       throw codedError('strict_npm_audit_failed', {

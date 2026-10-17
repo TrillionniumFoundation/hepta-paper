@@ -1,0 +1,1155 @@
+//! Complete external-qualification closure for one immutable production subject.
+//!
+//! Individual signed packages intentionally grant no activation authority. This
+//! module verifies either the historical seven-package V1 set or the current six
+//! operational packages in V2, validates every payload, checks
+//! cross-package host/database identities, preserves authority-domain separation,
+//! and returns an opaque closure value suitable for a later independently signed
+//! writer-cutover decision.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::Serialize;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+
+use crate::package_payload::validate_external_package_payload_with_expiry_v1;
+use crate::{
+    ExternalQualificationEnvelopeV1, QualificationIngestError, QualificationPackageIdV1,
+    QualificationPayloadError, QualificationSubjectV1, QualificationTrustStoreV1,
+    VerifiedExternalQualificationV1, verify_external_qualification_v1,
+};
+
+const MAXIMUM_PACKAGE_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
+const MAXIMUM_CLOSURE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+const REQUIRED_REPOSITORY: &str = "TrillionniumFoundation/hepta-paper";
+
+/// Closed qualification profiles; callers cannot choose an arbitrary subset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QualificationClosureProfile {
+    /// Historical seven-package contract, including independent repository review.
+    LegacySevenPackageV1,
+    /// Current six operational packages; no human PR approval requirement.
+    SingleMaintainerV2,
+    /// Research-only acceptance: never convertible into a full closure grant.
+    RestrictedResearchV3,
+    /// Restricted research with signed state recovery, without writer cutover.
+    RestrictedResearchV4,
+}
+impl QualificationClosureProfile {
+    /// Parse an explicitly versioned request. Unknown versions fail closed.
+    #[must_use]
+    pub const fn from_version(version: u16) -> Option<Self> {
+        match version {
+            1 => Some(Self::LegacySevenPackageV1),
+            2 => Some(Self::SingleMaintainerV2),
+            3 => Some(Self::RestrictedResearchV3),
+            4 => Some(Self::RestrictedResearchV4),
+            _ => None,
+        }
+    }
+    /// Exact package set required by this version.
+    #[must_use]
+    pub const fn packages(self) -> &'static [QualificationPackageIdV1] {
+        match self {
+            Self::LegacySevenPackageV1 => &QualificationPackageIdV1::ALL,
+            Self::SingleMaintainerV2 => &QualificationPackageIdV1::CURRENT_REQUIRED,
+            Self::RestrictedResearchV3 => &QualificationPackageIdV1::RESEARCH_REQUIRED,
+            Self::RestrictedResearchV4 => &QualificationPackageIdV1::RESEARCH_V4_REQUIRED,
+        }
+    }
+    /// Receipt version, included in the hashed canonical body.
+    #[must_use]
+    pub const fn version(self) -> u16 {
+        match self {
+            Self::LegacySevenPackageV1 => 1,
+            Self::SingleMaintainerV2 => 2,
+            Self::RestrictedResearchV3 => 3,
+            Self::RestrictedResearchV4 => 4,
+        }
+    }
+    /// Number of actual operational authority groups, not human reviewer count.
+    #[must_use]
+    pub const fn authority_group_count(self) -> usize {
+        match self {
+            Self::LegacySevenPackageV1 => 5,
+            Self::SingleMaintainerV2 | Self::RestrictedResearchV3 => 4,
+            Self::RestrictedResearchV4 => 3,
+        }
+    }
+
+    /// Both research profiles remain unavailable to release/submission consumers.
+    #[must_use]
+    pub const fn is_research(self) -> bool {
+        matches!(
+            self,
+            Self::RestrictedResearchV3 | Self::RestrictedResearchV4
+        )
+    }
+}
+
+/// One signed envelope and its exact canonical package payload bytes.
+#[derive(Clone, Debug)]
+pub struct ExternalQualificationCandidateV1 {
+    /// Signed package envelope.
+    pub envelope: ExternalQualificationEnvelopeV1,
+    /// Canonical compact JSON bytes whose hash is signed by the envelope.
+    pub payload: Vec<u8>,
+}
+
+/// Immutable repository subject shared by every package in a closure.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalQualificationClosureSubjectV1 {
+    /// Canonical repository full name.
+    pub repository: String,
+    /// Exact forty-character Git commit.
+    pub commit: String,
+    /// Exact forty-character Git tree.
+    pub tree: String,
+}
+
+/// Cross-package production identities established by the complete closure.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalQualificationRuntimeFactsV1 {
+    /// Target host identity agreed by cgroup and destructive-storage reviews.
+    pub host_identity_hash: String,
+    /// Production database identity agreed by storage and cutover/soak reviews.
+    pub database_identity_hash: String,
+    /// Reviewed service-unit identity from the destructive-storage package.
+    pub service_identity_hash: String,
+    /// Legacy aggregate diagnostic label from the signed role package; V2 dispatch uses its per-role map.
+    pub codex_runtime_identity_hash: String,
+    /// Durable writer-transfer receipt from full/V3 cutover evidence. V4 research
+    /// omits this fact rather than inventing a receipt for its private state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub writer_transfer_receipt_hash: Option<String>,
+}
+
+/// Per-role facts derived only after authenticating the closed V2 role payload.
+/// No deserializer or public constructor can manufacture this evidence view.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QualifiedCodexRoleRuntimeIdentityV2 {
+    uid: u32,
+    gid: u32,
+    home_identity_hash: String,
+    runtime_identity_hash: String,
+    transport_profile_hash: String,
+}
+
+impl QualifiedCodexRoleRuntimeIdentityV2 {
+    /// Qualified broker process principal.
+    #[must_use]
+    pub const fn principal(&self) -> (u32, u32) {
+        (self.uid, self.gid)
+    }
+    /// Private home including configuration and non-secret credential metadata.
+    #[must_use]
+    pub fn home_identity_hash(&self) -> &str {
+        &self.home_identity_hash
+    }
+    /// Exact composed runtime hash, checked by the original runtime hash owner.
+    #[must_use]
+    pub fn runtime_identity_hash(&self) -> &str {
+        &self.runtime_identity_hash
+    }
+    /// Exact transport profile included in this runtime hash.
+    #[must_use]
+    pub fn transport_profile_hash(&self) -> &str {
+        &self.transport_profile_hash
+    }
+}
+
+/// Opaque, complete and cross-bound external qualification set.
+///
+/// This value cannot be deserialized or directly constructed outside this crate.
+/// It is evidence input for a separate activation decision; it is not itself a
+/// writer lease, release permit, provider credential or submission authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedExternalQualificationClosureV1 {
+    profile: QualificationClosureProfile,
+    subject: ExternalQualificationClosureSubjectV1,
+    receipt_hash: String,
+    binding_hash: String,
+    trust_store_generation: u64,
+    verified_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
+    packages: BTreeMap<QualificationPackageIdV1, VerifiedExternalQualificationV1>,
+    authority_groups: BTreeMap<String, Vec<String>>,
+    runtime_facts: ExternalQualificationRuntimeFactsV1,
+    codex_role_principals: BTreeMap<String, (u32, u32)>,
+    codex_role_runtime_identities_v2: BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2>,
+}
+
+impl VerifiedExternalQualificationClosureV1 {
+    /// Exact required-package contract used by the verified producer.
+    #[must_use]
+    pub const fn profile(&self) -> QualificationClosureProfile {
+        self.profile
+    }
+
+    /// Exact repository/commit/tree shared by every accepted package.
+    #[must_use]
+    pub fn subject(&self) -> &ExternalQualificationClosureSubjectV1 {
+        &self.subject
+    }
+
+    /// Deterministic hash of the complete ordered verification receipt. It
+    /// includes the verification observation time and therefore identifies one
+    /// concrete verification event rather than a durable recovery subject.
+    #[must_use]
+    pub fn receipt_hash(&self) -> &str {
+        &self.receipt_hash
+    }
+
+    /// Stable domain-separated identity of the exact signed evidence set. It
+    /// excludes only the verification observation time while retaining profile,
+    /// subject, trust generation, derived expiry, package records, authority
+    /// separation and cross-package runtime facts.
+    #[must_use]
+    pub fn binding_hash(&self) -> &str {
+        &self.binding_hash
+    }
+
+    /// Monotonic external trust-store generation used for payload verification.
+    #[must_use]
+    pub const fn trust_store_generation(&self) -> u64 {
+        self.trust_store_generation
+    }
+
+    /// Rechecks that the complete package set is still within the verified window.
+    pub fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError> {
+        if now_unix_ms < self.verified_at_unix_ms || now_unix_ms >= self.expires_at_unix_ms {
+            return Err(QualificationClosureError::ClosureExpired);
+        }
+        Ok(())
+    }
+
+    /// First invalid millisecond across signed envelopes, payloads and required
+    /// inner authority receipts. Exact submillisecond expirations round upward.
+    #[must_use]
+    pub const fn expires_at_unix_ms(&self) -> u64 {
+        self.expires_at_unix_ms
+    }
+
+    /// Cross-package host, database, service and runtime facts.
+    #[must_use]
+    pub fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1 {
+        &self.runtime_facts
+    }
+
+    /// Exact role UID/GID from the authenticated canary payload. The retained
+    /// package hash already binds these facts; no caller-described role or
+    /// diagnostic receipt can manufacture a principal for another broker.
+    #[must_use]
+    pub fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
+        self.codex_role_principals.get(role).copied()
+    }
+
+    /// Current-version identities from the exact authenticated role package.
+    /// Legacy V1 evidence intentionally has no per-role runtime admission.
+    #[must_use]
+    pub fn codex_role_runtime_identities_v2(
+        &self,
+    ) -> &BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2> {
+        &self.codex_role_runtime_identities_v2
+    }
+
+    /// Exact independently bound runtime for one role; legacy V1 returns none.
+    #[must_use]
+    pub fn codex_role_runtime_identity_v2(
+        &self,
+        role: &str,
+    ) -> Option<&QualifiedCodexRoleRuntimeIdentityV2> {
+        self.codex_role_runtime_identities_v2.get(role)
+    }
+
+    /// Returns the verified package record for a closed package identifier.
+    #[must_use]
+    pub fn package(
+        &self,
+        package_id: QualificationPackageIdV1,
+    ) -> Option<&VerifiedExternalQualificationV1> {
+        self.packages.get(&package_id)
+    }
+
+    /// Authority domains grouped by the independent control plane they represent.
+    #[must_use]
+    pub fn authority_groups(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.authority_groups
+    }
+}
+
+/// Verify all external packages and derive one opaque exact-subject closure.
+pub fn verify_external_qualification_closure_v1(
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
+    verify_for_profile(
+        QualificationClosureProfile::LegacySevenPackageV1,
+        candidates,
+        subject,
+        now_unix_ms,
+        trust_store_generation,
+        trust_store,
+    )
+}
+
+/// Verify the six operational packages without a repository-review ceremony.
+/// Signatures, exact subjects, host/database agreement, expiry and authority
+/// separation remain identical to V1. This does not activate any product owner.
+pub fn verify_external_qualification_closure_v2(
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
+    verify_for_profile(
+        QualificationClosureProfile::SingleMaintainerV2,
+        candidates,
+        subject,
+        now_unix_ms,
+        trust_store_generation,
+        trust_store,
+    )
+}
+
+/// Independently verified research-only evidence. Its private payload cannot be
+/// deserialized, converted or borrowed as a full release/submission closure.
+/// Host/storage, keys and role isolation remain mandatory; explicit V3 additionally requires cutover/soak.
+///
+/// ```compile_fail
+/// use hepta_qualification_ingest::{VerifiedResearchQualificationV3, VerifiedExternalQualificationClosureV1};
+/// fn requires_full(_: &VerifiedExternalQualificationClosureV1) {}
+/// fn cannot_promote(research: &VerifiedResearchQualificationV3) { requires_full(research); }
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedResearchQualificationV3 {
+    inner: VerifiedExternalQualificationClosureV1,
+}
+impl VerifiedResearchQualificationV3 {
+    /// Exact research evidence profile. The legacy opaque type name is retained
+    /// for Rust API compatibility; V3 and V4 have distinct signed-set bindings.
+    #[must_use]
+    pub const fn profile(&self) -> QualificationClosureProfile {
+        self.inner.profile()
+    }
+    /// Research subject; identical identities do not change the authority scope.
+    pub fn subject(&self) -> &ExternalQualificationClosureSubjectV1 {
+        self.inner.subject()
+    }
+    /// Domain-separated research-only verification receipt hash.
+    pub fn receipt_hash(&self) -> &str {
+        self.inner.receipt_hash()
+    }
+    /// Stable domain-separated research binding for durable workflow recovery.
+    pub fn binding_hash(&self) -> &str {
+        self.inner.binding_hash()
+    }
+    /// Currentness over every original envelope and payload expiry.
+    pub fn assert_current(&self, now_unix_ms: u64) -> Result<(), QualificationClosureError> {
+        self.inner.assert_current(now_unix_ms)
+    }
+    /// First invalid millisecond, including nested payload evidence windows.
+    pub const fn expires_at_unix_ms(&self) -> u64 {
+        self.inner.expires_at_unix_ms()
+    }
+    /// Original trust generation; no signing or currentness authority is minted.
+    pub const fn trust_store_generation(&self) -> u64 {
+        self.inner.trust_store_generation()
+    }
+    /// Exact retained package. Publication/submission packages are always absent.
+    pub fn package(
+        &self,
+        id: QualificationPackageIdV1,
+    ) -> Option<&VerifiedExternalQualificationV1> {
+        self.inner.package(id)
+    }
+    /// Host/database/runtime facts retain the same cross-package checks.
+    pub fn runtime_facts(&self) -> &ExternalQualificationRuntimeFactsV1 {
+        self.inner.runtime_facts()
+    }
+    /// Qualified role UID/GID, retained from the exact signed canary package.
+    #[must_use]
+    pub fn codex_role_principal(&self, role: &str) -> Option<(u32, u32)> {
+        self.inner.codex_role_principal(role)
+    }
+
+    /// Authenticated V2 runtime mapping, never reconstructed from a receipt.
+    #[must_use]
+    pub fn codex_role_runtime_identities_v2(
+        &self,
+    ) -> &BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2> {
+        self.inner.codex_role_runtime_identities_v2()
+    }
+
+    /// Bound runtime facts for the selected role. Legacy evidence returns none.
+    #[must_use]
+    pub fn codex_role_runtime_identity_v2(
+        &self,
+        role: &str,
+    ) -> Option<&QualifiedCodexRoleRuntimeIdentityV2> {
+        self.inner.codex_role_runtime_identity_v2(role)
+    }
+    /// Non-authorizing expected hashes for durable workflow comparison.
+    #[must_use]
+    pub fn codex_role_runtime_identity_hashes_v2(&self) -> BTreeMap<String, String> {
+        self.codex_role_runtime_identities_v2()
+            .iter()
+            .map(|(role, identity)| (role.clone(), identity.runtime_identity_hash().to_owned()))
+            .collect()
+    }
+    /// Still-separated operational control domains, not a human approval count.
+    pub fn authority_groups(&self) -> &BTreeMap<String, Vec<String>> {
+        self.inner.authority_groups()
+    }
+}
+
+/// Verify the fixed five-package research scope. A full closure verifier still
+/// rejects this set, and adding a publication package here is also rejected.
+/// This function does not activate a writer or authorize a provider operation.
+pub fn verify_research_qualification_v3(
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedResearchQualificationV3, QualificationClosureError> {
+    verify_for_profile(
+        QualificationClosureProfile::RestrictedResearchV3,
+        candidates,
+        subject,
+        now_unix_ms,
+        trust_store_generation,
+        trust_store,
+    )
+    .map(|inner| VerifiedResearchQualificationV3 { inner })
+}
+
+/// Verify the fixed four-package V4 research scope. Signed containment, storage
+/// recovery, key lifecycle and role isolation remain mandatory; cutover,
+/// governance and irreversible-action authority packages are rejected.
+pub fn verify_research_qualification_v4(
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedResearchQualificationV3, QualificationClosureError> {
+    verify_for_profile(
+        QualificationClosureProfile::RestrictedResearchV4,
+        candidates,
+        subject,
+        now_unix_ms,
+        trust_store_generation,
+        trust_store,
+    )
+    .map(|inner| VerifiedResearchQualificationV3 { inner })
+}
+
+fn verify_for_profile(
+    profile: QualificationClosureProfile,
+    candidates: &[ExternalQualificationCandidateV1],
+    subject: &ExternalQualificationClosureSubjectV1,
+    now_unix_ms: u64,
+    trust_store_generation: u64,
+    trust_store: &QualificationTrustStoreV1,
+) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
+    validate_subject(subject)?;
+    if trust_store_generation == 0 || candidates.len() != profile.packages().len() {
+        return Err(QualificationClosureError::PackageSetIncomplete);
+    }
+    let mut expires_at_unix_ms = candidates
+        .iter()
+        .map(|candidate| candidate.envelope.expires_at_unix_ms)
+        .min()
+        .ok_or(QualificationClosureError::PackageSetIncomplete)?;
+    let mut total_payload_bytes = 0usize;
+    let mut records = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if candidate.payload.is_empty() || candidate.payload.len() > MAXIMUM_PACKAGE_PAYLOAD_BYTES {
+            return Err(QualificationClosureError::PayloadSizeInvalid);
+        }
+        total_payload_bytes = total_payload_bytes
+            .checked_add(candidate.payload.len())
+            .ok_or(QualificationClosureError::PayloadSizeInvalid)?;
+        if total_payload_bytes > MAXIMUM_CLOSURE_PAYLOAD_BYTES {
+            return Err(QualificationClosureError::PayloadSizeInvalid);
+        }
+        let package_subject = QualificationSubjectV1 {
+            repository: subject.repository.clone(),
+            commit: subject.commit.clone(),
+            tree: subject.tree.clone(),
+            package_id: candidate.envelope.package_id,
+        };
+        let verified = verify_external_qualification_v1(
+            &candidate.envelope,
+            &package_subject,
+            now_unix_ms,
+            trust_store,
+        )?;
+        if hash_bytes(&candidate.payload) != verified.payload_hash {
+            return Err(QualificationClosureError::PayloadHashMismatch);
+        }
+        let payload_expires_at_unix_ms = validate_external_package_payload_with_expiry_v1(
+            &candidate.payload,
+            &package_subject,
+            &verified.authority_domain_id,
+            &verified.signer_key_id,
+            now_unix_ms,
+            trust_store_generation,
+            trust_store,
+        )?;
+        expires_at_unix_ms = expires_at_unix_ms.min(payload_expires_at_unix_ms);
+        let payload: Value = serde_json::from_slice(&candidate.payload)
+            .map_err(|_| QualificationClosureError::PayloadFactsInvalid)?;
+        records.push((verified, payload));
+    }
+    assemble_verified_closure(
+        profile,
+        subject,
+        trust_store_generation,
+        now_unix_ms,
+        expires_at_unix_ms,
+        records,
+    )
+}
+
+fn assemble_verified_closure(
+    profile: QualificationClosureProfile,
+    subject: &ExternalQualificationClosureSubjectV1,
+    trust_store_generation: u64,
+    verified_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
+    records: Vec<(VerifiedExternalQualificationV1, Value)>,
+) -> Result<VerifiedExternalQualificationClosureV1, QualificationClosureError> {
+    if verified_at_unix_ms == 0 || expires_at_unix_ms <= verified_at_unix_ms {
+        return Err(QualificationClosureError::ClosureExpired);
+    }
+    let mut by_package = BTreeMap::new();
+    let mut payload_by_package = BTreeMap::new();
+    let mut nonces = BTreeSet::new();
+    let mut payload_hashes = BTreeSet::new();
+    for (record, payload) in records {
+        if !nonces.insert(record.nonce.clone()) {
+            return Err(QualificationClosureError::DuplicateNonce);
+        }
+        if !payload_hashes.insert(record.payload_hash.clone()) {
+            return Err(QualificationClosureError::DuplicatePayload);
+        }
+        let package = record.package_id;
+        if by_package.insert(package, record).is_some()
+            || payload_by_package.insert(package, payload).is_some()
+        {
+            return Err(QualificationClosureError::DuplicatePackage);
+        }
+    }
+    let expected = profile.packages().iter().copied().collect::<BTreeSet<_>>();
+    if by_package.keys().copied().collect::<BTreeSet<_>>() != expected {
+        return Err(QualificationClosureError::PackageSetIncomplete);
+    }
+
+    let mut authority_groups = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut domain_group = BTreeMap::<String, String>::new();
+    for (package, record) in &by_package {
+        let group = authority_group(*package).to_owned();
+        if let Some(previous) =
+            domain_group.insert(record.authority_domain_id.clone(), group.clone())
+            && previous != group
+        {
+            return Err(QualificationClosureError::AuthoritySeparationViolation);
+        }
+        authority_groups
+            .entry(group)
+            .or_default()
+            .insert(record.authority_domain_id.clone());
+    }
+    if authority_groups.len() != profile.authority_group_count() {
+        return Err(QualificationClosureError::AuthoritySeparationViolation);
+    }
+    let authority_groups = authority_groups
+        .into_iter()
+        .map(|(group, domains)| (group, domains.into_iter().collect::<Vec<_>>()))
+        .collect::<BTreeMap<_, _>>();
+
+    let host_cgroup = payload_object(
+        &payload_by_package,
+        QualificationPackageIdV1::ExtHostCgroup001,
+    )?;
+    let host_storage = payload_object(
+        &payload_by_package,
+        QualificationPackageIdV1::ExtHostStorage001,
+    )?;
+    let codex = payload_object(
+        &payload_by_package,
+        QualificationPackageIdV1::ExtCodexRole001,
+    )?;
+    let cgroup_host = fact(host_cgroup, "hostIdentityHash")?;
+    let storage_host = fact(host_storage, "hostIdentityHash")?;
+    let storage_database = fact(host_storage, "databaseIdentityHash")?;
+    if cgroup_host != storage_host {
+        return Err(QualificationClosureError::CrossPackageIdentityMismatch);
+    }
+    let writer_transfer_receipt_hash =
+        if profile == QualificationClosureProfile::RestrictedResearchV4 {
+            None
+        } else {
+            let cutover = payload_object(
+                &payload_by_package,
+                QualificationPackageIdV1::ExtCutoverSoak001,
+            )?;
+            if storage_database != fact(cutover, "databaseIdentityHash")? {
+                return Err(QualificationClosureError::CrossPackageIdentityMismatch);
+            }
+            Some(fact(cutover, "writerTransferReceiptHash")?.to_owned())
+        };
+    let runtime_facts = ExternalQualificationRuntimeFactsV1 {
+        host_identity_hash: cgroup_host.to_owned(),
+        database_identity_hash: storage_database.to_owned(),
+        service_identity_hash: fact(host_storage, "serviceUnitHash")?.to_owned(),
+        codex_runtime_identity_hash: fact(codex, "runtimeIdentityHash")?.to_owned(),
+        writer_transfer_receipt_hash,
+    };
+    let codex_role_principals = codex_role_principals(codex)?;
+    let codex_role_runtime_identities_v2 = codex_role_runtime_identities_v2(codex)?;
+
+    let ordered_packages = profile
+        .packages()
+        .iter()
+        .copied()
+        .map(|package| {
+            let record = by_package
+                .get(&package)
+                .ok_or(QualificationClosureError::PackageSetIncomplete)?;
+            Ok(ClosurePackageBodyV1 {
+                package_id: package.as_str(),
+                payload_hash: &record.payload_hash,
+                authority_domain_id: &record.authority_domain_id,
+                signer_key_id: &record.signer_key_id,
+                nonce: &record.nonce,
+                signing_message_hash: &record.signing_message_hash,
+            })
+        })
+        .collect::<Result<Vec<_>, QualificationClosureError>>()?;
+    let version = profile.version();
+    let receipt_kind = match profile {
+        QualificationClosureProfile::LegacySevenPackageV1 => {
+            "VerifiedExternalQualificationClosureV1"
+        }
+        QualificationClosureProfile::SingleMaintainerV2 => "VerifiedExternalQualificationClosureV2",
+        QualificationClosureProfile::RestrictedResearchV3 => "VerifiedResearchQualificationV3",
+        QualificationClosureProfile::RestrictedResearchV4 => "VerifiedResearchQualificationV4",
+    };
+    let binding_kind = match profile {
+        QualificationClosureProfile::LegacySevenPackageV1 => {
+            "VerifiedExternalQualificationBindingV1"
+        }
+        QualificationClosureProfile::SingleMaintainerV2 => "VerifiedExternalQualificationBindingV2",
+        QualificationClosureProfile::RestrictedResearchV3 => {
+            "VerifiedResearchQualificationBindingV3"
+        }
+        QualificationClosureProfile::RestrictedResearchV4 => {
+            "VerifiedResearchQualificationBindingV4"
+        }
+    };
+    let binding_body = ClosureBindingBodyV1 {
+        version,
+        kind: binding_kind,
+        subject,
+        trust_store_generation,
+        expires_at_unix_ms,
+        packages: ordered_packages.clone(),
+        authority_groups: &authority_groups,
+        runtime_facts: &runtime_facts,
+        automatic_activation: false,
+        production_activation: false,
+    };
+    let binding_hash = hash_bytes(
+        &serde_json::to_vec(&binding_body)
+            .map_err(|_| QualificationClosureError::EncodingInvalid)?,
+    );
+    let body = ClosureBodyV1 {
+        version,
+        kind: receipt_kind,
+        subject,
+        trust_store_generation,
+        verified_at_unix_ms,
+        expires_at_unix_ms,
+        packages: ordered_packages,
+        authority_groups: &authority_groups,
+        runtime_facts: &runtime_facts,
+        automatic_activation: false,
+        production_activation: false,
+    };
+    let receipt_hash = hash_bytes(
+        &serde_json::to_vec(&body).map_err(|_| QualificationClosureError::EncodingInvalid)?,
+    );
+    Ok(VerifiedExternalQualificationClosureV1 {
+        profile,
+        subject: subject.clone(),
+        receipt_hash,
+        binding_hash,
+        trust_store_generation,
+        verified_at_unix_ms,
+        expires_at_unix_ms,
+        packages: by_package,
+        authority_groups,
+        runtime_facts,
+        codex_role_principals,
+        codex_role_runtime_identities_v2,
+    })
+}
+
+fn codex_role_runtime_identities_v2(
+    payload: &serde_json::Map<String, Value>,
+) -> Result<BTreeMap<String, QualifiedCodexRoleRuntimeIdentityV2>, QualificationClosureError> {
+    // This extractor is reached only after closed payload and signature checks.
+    // Legacy records (including internal facts-only diagnostics) have no map.
+    if payload.get("schemaVersion").and_then(Value::as_u64) != Some(2) {
+        return Ok(BTreeMap::new());
+    }
+    let roles = payload
+        .get("roles")
+        .and_then(Value::as_array)
+        .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+    let mut identities = BTreeMap::new();
+    for role in roles {
+        let role = role
+            .as_object()
+            .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+        let id = |name| {
+            role.get(name)
+                .and_then(Value::as_u64)
+                .and_then(|id| u32::try_from(id).ok())
+                .filter(|id| *id > 0)
+                .ok_or(QualificationClosureError::PayloadFactsInvalid)
+        };
+        let name = role
+            .get("role")
+            .and_then(Value::as_str)
+            .filter(|name| {
+                matches!(
+                    *name,
+                    "author" | "reviewer" | "formal_reviewer" | "repairer"
+                )
+            })
+            .ok_or(QualificationClosureError::PayloadFactsInvalid)?
+            .to_owned();
+        let identity = QualifiedCodexRoleRuntimeIdentityV2 {
+            uid: id("uid")?,
+            gid: id("gid")?,
+            home_identity_hash: fact(role, "homeIdentityHash")?.to_owned(),
+            runtime_identity_hash: fact(role, "runtimeIdentityHash")?.to_owned(),
+            transport_profile_hash: fact(role, "transportProfileHash")?.to_owned(),
+        };
+        if identities.insert(name, identity).is_some() {
+            return Err(QualificationClosureError::PayloadFactsInvalid);
+        }
+    }
+    Ok(identities)
+}
+
+fn codex_role_principals(
+    payload: &serde_json::Map<String, Value>,
+) -> Result<BTreeMap<String, (u32, u32)>, QualificationClosureError> {
+    let roles = payload
+        .get("roles")
+        .and_then(Value::as_array)
+        .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+    let mut principals = BTreeMap::new();
+    for role in roles {
+        let role = role
+            .as_object()
+            .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+        let name = role
+            .get("role")
+            .and_then(Value::as_str)
+            .filter(|name| {
+                matches!(
+                    *name,
+                    "author" | "reviewer" | "formal_reviewer" | "repairer"
+                )
+            })
+            .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+        let principal_id = |field| {
+            role.get(field)
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or(QualificationClosureError::PayloadFactsInvalid)
+        };
+        if principals
+            .insert(
+                name.to_owned(),
+                (principal_id("uid")?, principal_id("gid")?),
+            )
+            .is_some()
+        {
+            return Err(QualificationClosureError::PayloadFactsInvalid);
+        }
+    }
+    if !principals.contains_key("author") || !principals.contains_key("reviewer") {
+        return Err(QualificationClosureError::PayloadFactsInvalid);
+    }
+    Ok(principals)
+}
+
+fn validate_subject(
+    subject: &ExternalQualificationClosureSubjectV1,
+) -> Result<(), QualificationClosureError> {
+    if subject.repository != REQUIRED_REPOSITORY
+        || !valid_git_hash(&subject.commit)
+        || !valid_git_hash(&subject.tree)
+    {
+        return Err(QualificationClosureError::SubjectInvalid);
+    }
+    Ok(())
+}
+
+fn payload_object(
+    values: &BTreeMap<QualificationPackageIdV1, Value>,
+    package: QualificationPackageIdV1,
+) -> Result<&serde_json::Map<String, Value>, QualificationClosureError> {
+    values
+        .get(&package)
+        .and_then(Value::as_object)
+        .ok_or(QualificationClosureError::PayloadFactsInvalid)
+}
+
+fn fact<'a>(
+    value: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, QualificationClosureError> {
+    let value = value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or(QualificationClosureError::PayloadFactsInvalid)?;
+    if !valid_sha256(value) {
+        return Err(QualificationClosureError::PayloadFactsInvalid);
+    }
+    Ok(value)
+}
+
+const fn authority_group(package: QualificationPackageIdV1) -> &'static str {
+    match package {
+        QualificationPackageIdV1::ExtGovMain001 => "governance",
+        QualificationPackageIdV1::ExtHostCgroup001
+        | QualificationPackageIdV1::ExtHostStorage001 => "target_host",
+        QualificationPackageIdV1::ExtKeyOwner001 => "key_owner",
+        QualificationPackageIdV1::ExtCodexRole001 => "codex_account",
+        QualificationPackageIdV1::ExtCutoverSoak001
+        | QualificationPackageIdV1::ExtAuthoritySet001 => "release_and_cutover",
+    }
+}
+
+fn valid_git_hash(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
+fn hash_bytes(value: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value);
+    format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClosureBindingBodyV1<'a> {
+    version: u16,
+    kind: &'static str,
+    subject: &'a ExternalQualificationClosureSubjectV1,
+    trust_store_generation: u64,
+    expires_at_unix_ms: u64,
+    packages: Vec<ClosurePackageBodyV1<'a>>,
+    authority_groups: &'a BTreeMap<String, Vec<String>>,
+    runtime_facts: &'a ExternalQualificationRuntimeFactsV1,
+    automatic_activation: bool,
+    production_activation: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClosureBodyV1<'a> {
+    version: u16,
+    kind: &'static str,
+    subject: &'a ExternalQualificationClosureSubjectV1,
+    trust_store_generation: u64,
+    verified_at_unix_ms: u64,
+    expires_at_unix_ms: u64,
+    packages: Vec<ClosurePackageBodyV1<'a>>,
+    authority_groups: &'a BTreeMap<String, Vec<String>>,
+    runtime_facts: &'a ExternalQualificationRuntimeFactsV1,
+    automatic_activation: bool,
+    production_activation: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClosurePackageBodyV1<'a> {
+    package_id: &'static str,
+    payload_hash: &'a str,
+    authority_domain_id: &'a str,
+    signer_key_id: &'a str,
+    nonce: &'a str,
+    signing_message_hash: &'a str,
+}
+
+/// Complete-set, payload, authority-separation or cross-identity rejection.
+#[derive(Debug, Error)]
+pub enum QualificationClosureError {
+    /// Repository, commit or tree is malformed or not the supported repository.
+    #[error("external qualification closure subject is invalid")]
+    SubjectInvalid,
+    /// The set does not contain every required package exactly once.
+    #[error("external qualification package set is incomplete")]
+    PackageSetIncomplete,
+    /// One package appears more than once.
+    #[error("external qualification package appears more than once")]
+    DuplicatePackage,
+    /// A replay nonce appears more than once.
+    #[error("external qualification nonce appears more than once")]
+    DuplicateNonce,
+    /// A payload digest appears more than once.
+    #[error("external qualification payload appears more than once")]
+    DuplicatePayload,
+    /// Package bytes violate per-package or aggregate bounds.
+    #[error("external qualification payload size is invalid")]
+    PayloadSizeInvalid,
+    /// Payload bytes do not match the envelope's signed digest.
+    #[error("external qualification payload hash mismatch")]
+    PayloadHashMismatch,
+    /// Required facts could not be extracted from a validated payload.
+    #[error("external qualification payload facts are invalid")]
+    PayloadFactsInvalid,
+    /// Host/database identities disagree across independent packages.
+    #[error("external qualification cross-package identity mismatch")]
+    CrossPackageIdentityMismatch,
+    /// One authority domain was reused across independent control groups.
+    #[error("external qualification authority separation violated")]
+    AuthoritySeparationViolation,
+    /// Deterministic closure receipt encoding failed.
+    #[error("external qualification closure encoding failed")]
+    EncodingInvalid,
+    /// Envelope, trust, subject, time or signature verification failed.
+    #[error(transparent)]
+    Ingest(#[from] QualificationIngestError),
+    /// The closure is used outside the common verified package lifetime.
+    #[error("external qualification closure is expired or not yet current")]
+    ClosureExpired,
+    /// Package-specific canonical semantics or nested signatures failed.
+    #[error(transparent)]
+    Payload(#[from] QualificationPayloadError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn record(
+        package_id: QualificationPackageIdV1,
+        domain: &str,
+        index: usize,
+    ) -> VerifiedExternalQualificationV1 {
+        VerifiedExternalQualificationV1 {
+            package_id,
+            payload_hash: format!("sha256:{:064x}", index + 1),
+            authority_domain_id: domain.to_owned(),
+            signer_key_id: format!("key-{index}"),
+            nonce: format!("nonce-{index}"),
+            signing_message_hash: format!("sha256:{:064x}", index + 100),
+        }
+    }
+
+    fn facts_payload(package: QualificationPackageIdV1) -> Value {
+        match package {
+            QualificationPackageIdV1::ExtHostCgroup001 => json!({
+                "hostIdentityHash": format!("sha256:{}", "1".repeat(64))
+            }),
+            QualificationPackageIdV1::ExtHostStorage001 => json!({
+                "hostIdentityHash": format!("sha256:{}", "1".repeat(64)),
+                "databaseIdentityHash": format!("sha256:{}", "2".repeat(64)),
+                "serviceUnitHash": format!("sha256:{}", "3".repeat(64))
+            }),
+            QualificationPackageIdV1::ExtCodexRole001 => json!({
+                "runtimeIdentityHash": format!("sha256:{}", "4".repeat(64)),
+                "roles": [
+                    {"role": "author", "uid": 1001, "gid": 2001},
+                    {"role": "reviewer", "uid": 1002, "gid": 2002}
+                ]
+            }),
+            QualificationPackageIdV1::ExtCutoverSoak001 => json!({
+                "databaseIdentityHash": format!("sha256:{}", "2".repeat(64)),
+                "writerTransferReceiptHash": format!("sha256:{}", "5".repeat(64))
+            }),
+            _ => json!({}),
+        }
+    }
+
+    fn complete_records() -> Vec<(VerifiedExternalQualificationV1, Value)> {
+        let domains = [
+            "governance-review",
+            "host-review",
+            "host-review",
+            "key-review",
+            "codex-review",
+            "release-review",
+            "release-review",
+        ];
+        QualificationPackageIdV1::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(index, package)| {
+                (
+                    record(package, domains[index], index),
+                    facts_payload(package),
+                )
+            })
+            .collect()
+    }
+
+    fn subject() -> ExternalQualificationClosureSubjectV1 {
+        ExternalQualificationClosureSubjectV1 {
+            repository: REQUIRED_REPOSITORY.into(),
+            commit: "a".repeat(40),
+            tree: "b".repeat(40),
+        }
+    }
+
+    #[test]
+    fn complete_set_derives_cross_bound_opaque_receipt() {
+        let verified = assemble_verified_closure(
+            QualificationClosureProfile::LegacySevenPackageV1,
+            &subject(),
+            7,
+            1_000,
+            2_000,
+            complete_records(),
+        )
+        .expect("complete closure");
+        assert_eq!(verified.packages.len(), 7);
+        assert_eq!(verified.authority_groups.len(), 5);
+        assert_eq!(verified.trust_store_generation(), 7);
+        assert_eq!(
+            verified.runtime_facts().host_identity_hash,
+            format!("sha256:{}", "1".repeat(64))
+        );
+        assert!(valid_sha256(verified.receipt_hash()));
+        assert!(valid_sha256(verified.binding_hash()));
+        assert_eq!(verified.codex_role_principal("author"), Some((1001, 2001)));
+        assert_eq!(
+            verified.codex_role_principal("reviewer"),
+            Some((1002, 2002))
+        );
+        assert_eq!(verified.codex_role_principal("repairer"), None);
+        assert_eq!(verified.expires_at_unix_ms(), 2_000);
+        assert!(verified.assert_current(1_500).is_ok());
+        assert!(matches!(
+            verified.assert_current(2_000),
+            Err(QualificationClosureError::ClosureExpired)
+        ));
+        let repeated = assemble_verified_closure(
+            QualificationClosureProfile::LegacySevenPackageV1,
+            &subject(),
+            7,
+            1_000,
+            2_000,
+            complete_records(),
+        )
+        .expect("repeat closure");
+        assert_eq!(verified.receipt_hash(), repeated.receipt_hash());
+        assert_eq!(verified.binding_hash(), repeated.binding_hash());
+
+        let later = assemble_verified_closure(
+            QualificationClosureProfile::LegacySevenPackageV1,
+            &subject(),
+            7,
+            1_001,
+            2_000,
+            complete_records(),
+        )
+        .expect("same evidence verified later");
+        assert_ne!(verified.receipt_hash(), later.receipt_hash());
+        assert_eq!(verified.binding_hash(), later.binding_hash());
+    }
+
+    #[test]
+    fn closure_rejects_incomplete_duplicate_and_collapsed_authority_sets() {
+        let mut incomplete = complete_records();
+        incomplete.pop();
+        assert!(matches!(
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                incomplete
+            ),
+            Err(QualificationClosureError::PackageSetIncomplete)
+        ));
+
+        let mut duplicate = complete_records();
+        duplicate[1].0.nonce = duplicate[0].0.nonce.clone();
+        assert!(matches!(
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                duplicate
+            ),
+            Err(QualificationClosureError::DuplicateNonce)
+        ));
+
+        let mut collapsed = complete_records();
+        collapsed[3].0.authority_domain_id = "governance-review".into();
+        assert!(matches!(
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                collapsed
+            ),
+            Err(QualificationClosureError::AuthoritySeparationViolation)
+        ));
+    }
+
+    #[test]
+    fn closure_rejects_cross_package_host_or_database_drift() {
+        let mut records = complete_records();
+        records[2].1["hostIdentityHash"] = Value::String(format!("sha256:{}", "9".repeat(64)));
+        assert!(matches!(
+            assemble_verified_closure(
+                QualificationClosureProfile::LegacySevenPackageV1,
+                &subject(),
+                1,
+                1_000,
+                2_000,
+                records
+            ),
+            Err(QualificationClosureError::CrossPackageIdentityMismatch)
+        ));
+    }
+}

@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "scope": "three additive historical diagnostic compatibility modules, no filesystem/SQLite/Node invocation in new production modules, no authority",
+  "frozenForRootIntegration": true,
+  "rootOwnsFinalFormattingAndValidation": true,
+  "tests": {
+    "command": "cargo test --locked -p hepta-legacy-compatibility --test frozen_observation_compat -p hepta-readonly-store --test logical_store_compat -p hepta-workspace --test workspace_wire_compat",
+    "exitCode": 0,
+    "groupsPassed": 10,
+    "byTarget": {
+      "frozen_observation_compat": 4,
+      "logical_store_compat": 3,
+      "workspace_wire_compat": 3
+    }
+  },
+  "ownedFiles": {
+    "rust/crates/hepta-legacy-compatibility/src/lib.rs": {
+      "bytes": 7158,
+      "sha256": "557c260f55f8c9a223940ecbd58337119c35e6dc6960863c23f98d07066c1e54"
+    },
+    "rust/crates/hepta-legacy-compatibility/src/frozen_observation_compat_v1.rs": {
+      "bytes": 17894,
+      "sha256": "f31b008ea5a685a6cf5f2f78e82b6d1df502a3c4a21fb9e4d6c8a54255c4d8d9"
+    },
+    "rust/crates/hepta-legacy-compatibility/tests/frozen_observation_compat.rs": {
+      "bytes": 4629,
+      "sha256": "9f3d9787a24494d33009bc674c0cef9baef2fb3c2a0c2d4d87b3d637cd2cd77f"
+    },
+    "rust/crates/hepta-legacy-compatibility/COMPATIBILITY.md": {
+      "bytes": 1961,
+      "sha256": "83c49637c984f8eaf090fa35beec93267a1aabafe242c03378248ae7772d5eaf"
+    },
+    "rust/crates/hepta-legacy-compatibility/tests/fixtures/frozen-observation-compat-v1.json": {
+      "bytes": 3386,
+      "sha256": "8d496df532d6f381e96b9f1c353c6cfc19fa7f617799405d59389ddd7c4911d6"
+    },
+    "rust/crates/hepta-legacy-compatibility/README.md": {
+      "bytes": 7971,
+      "sha256": "f7899f1e0961ad6bbdf017661394100a62aa0cf1cad5cc6a0a0909408a40485e"
+    },
+    "rust/crates/hepta-readonly-store/src/lib.rs": {
+      "bytes": 36354,
+      "sha256": "622f1b5fa118c33db8c1aa59b2a2f85553ee38a44cede2cb6b467f1d4dc5b3be"
+    },
+    "rust/crates/hepta-readonly-store/src/logical_store_compat_v1.rs": {
+      "bytes": 5906,
+      "sha256": "70f1bd8c62cf7cdb7d58232c1bc94d7127682cbb5a187a9263e28ab3a20ab10f"
+    },
+    "rust/crates/hepta-readonly-store/tests/logical_store_compat.rs": {
+      "bytes": 3596,
+      "sha256": "5c94a47ababd4aaf7b99a60b57fe0545a0bdd7420e5817bb48023600d67d5f3a"
+    },
+    "rust/crates/hepta-readonly-store/COMPATIBILITY.md": {
+      "bytes": 2168,
+      "sha256": "5bb175e39181f4c5ab66fd2460f0f06452e479e242b9f3136b01757828d73a1e"
+    },
+    "rust/crates/hepta-readonly-store/tests/fixtures/logical-store-compat-v1.json": {
+      "bytes": 1016,
+      "sha256": "2af7acc92609304e83ddac1b3f9a89ee496812f42bf7ffae6f8e998c0f008912"
+    },
+    "rust/crates/hepta-readonly-store/README.md": {
+      "bytes": 5238,
+      "sha256": "38e8462b01858aa1fd440d366b0872f950d10096afbd24879a55ad1f99281825"
+    },
+    "rust/crates/hepta-workspace/src/lib.rs": {
+      "bytes": 84638,
+      "sha256": "b5b8e3f944cdb0b9dced814d88025c50aa24c925f8940d33b28d10df26fbf017"
+    },
+    "rust/crates/hepta-workspace/src/workspace_wire_compat_v1.rs": {
+      "bytes": 7754,
+      "sha256": "7c0046cdcaa557fd93bcd4e17efa04883b29a612713c389755c0406d57e7301f"
+    },
+    "rust/crates/hepta-workspace/tests/workspace_wire_compat.rs": {
+      "bytes": 3055,
+      "sha256": "3de07f7edebe821481608842e0a55436e65ba9cd703a281e4f85124aba0067fa"
+    },
+    "rust/crates/hepta-workspace/COMPATIBILITY.md": {
+      "bytes": 2198,
+      "sha256": "a74281c0c45d449362df7fafa268c320bc41499fb12c445b46fc4e3c72db9698"
+    },
+    "rust/crates/hepta-workspace/tests/fixtures/workspace-wire-compat-v1.json": {
+      "bytes": 4670,
+      "sha256": "c5d138471fea1fe0301da7b18586238c4289181145d06ebd6c951373c052ed69"
+    },
+    "rust/crates/hepta-legacy-compatibility/Cargo.toml": {
+      "bytes": 722,
+      "sha256": "51293efddbbd9585eac8b701757fdd282c69b7674211be38dc8339d6b286c148"
+    }
+  },
+  "logs": {
+    "preflight-tests.log": {
+      "bytes": 2117,
+      "sha256": "283e68dcd9aff0039915cafada51abe096066e78de7c8d2eef85d67ad2ab4973"
+    },
+    "oracle-build.log": {
+      "bytes": 2776,
+      "sha256": "940acf85635d6d18871acdf2d78f46e0751c9306d35ccb071af33c92d3d49916"
+    },
+    "frozen-vectors.json": {
+      "bytes": 9149,
+      "sha256": "3783b9c2f73a943ee0df6435a0f17c403625000237ddc9d45c5ffa80a578231d"
+    },
+    "provenance.json": {
+      "bytes": 2411,
+      "sha256": "834a099fd75f4bf915975b02bb899cf33ae0d4943aaede76bf14948093016723"
+    }
+  }
+}

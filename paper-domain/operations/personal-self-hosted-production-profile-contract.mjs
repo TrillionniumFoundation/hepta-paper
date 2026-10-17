@@ -38,9 +38,79 @@ export const PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS = Object.freeze([
   'enabled-scientific-oracles',
 ].sort());
 
+// Distribution-only authority packages are outside the single-user profile.
+// Broker/listener and destructive-host soak scopes are disabled by this
+// profile; local runtime, database and storage integrity controls remain
+// requirements for explicitly enabled local capabilities.
+export const PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION = Object.freeze({
+  'GAP-HOST-001': Object.freeze({
+    disposition: 'scoped_out',
+    reason: 'broker-listener-not-enabled-in-personal-profile',
+  }),
+  'GAP-HOST-002': Object.freeze({
+    disposition: 'scoped_out',
+    reason: 'destructive-host-soak-not-enabled-in-personal-profile',
+  }),
+  'GAP-KEY-001': Object.freeze({
+    disposition: 'not_applicable',
+    reason: 'no-external-actions-or-distributed-signing',
+  }),
+  'GAP-CODEX-001': Object.freeze({
+    disposition: 'not_applicable',
+    reason: 'no-live-provider-or-external-broker-actions',
+  }),
+  'GAP-REL-001': Object.freeze({
+    disposition: 'not_applicable',
+    reason: 'no-release-portal-submission-or-distribution',
+  }),
+  'LEGACY-REPLAY-001': Object.freeze({
+    disposition: 'scoped_out',
+    reason: 'unsupported-routes-not-enabled-in-personal-profile',
+  }),
+});
+
 export const PERSONAL_SELF_HOSTED_OPTIONAL_DIAGNOSTIC_IDS = Object.freeze([
   'local-slo-alert-policy',
 ]);
+
+// Distribution qualification names target-host installation/canary/rollback
+// as external packages. The private profile keeps the same safety intent by
+// binding each local operation to the existing seven deterministic controls;
+// it never claims a portable installer, live-provider canary, or Node cutover.
+export const PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING = Object.freeze({
+  targetHost: Object.freeze({
+    disposition: 'replaced_by_local_deterministic_controls',
+    controlIds: Object.freeze([
+      'credential-and-runtime-boundary',
+      'database-inventory-and-schema',
+    ]),
+    reason: 'private-profile-has-no-broker-listener-or-destructive-host-soak',
+  }),
+  installation: Object.freeze({
+    disposition: 'local_source_bound',
+    controlIds: Object.freeze([
+      'credential-and-runtime-boundary',
+      'exact-code-provenance',
+    ]),
+    reason: 'workspace-and-runtime-ownership-are-the-private-install-boundary',
+  }),
+  canary: Object.freeze({
+    disposition: 'local_deterministic_replay',
+    controlIds: Object.freeze([
+      'enabled-scientific-oracles',
+      'formal-operational-zero-skipped',
+    ]),
+    reason: 'formal-and-enabled-capability-replay-cover-local-behavior',
+  }),
+  rollback: Object.freeze({
+    disposition: 'local_restore_and_anti_rollback',
+    controlIds: Object.freeze([
+      'database-restore-drill',
+      'online-anti-rollback',
+    ]),
+    reason: 'local-restore-and-monotonic-ledger-cover-local-recovery',
+  }),
+});
 
 const NOT_APPLICABLE_REASONS = Object.freeze({
   'independent-external-authority-roles':
@@ -103,6 +173,8 @@ const PROFILE_PAYLOAD = Object.freeze({
   kind: PROFILE_KIND,
   profileId: PROFILE_ID,
   scope: PROFILE_SCOPE,
+  externalBlockerDisposition: PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION,
+  localOperationMapping: PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING,
   notApplicableControls: Object.freeze(PERSONAL_SELF_HOSTED_NOT_APPLICABLE_CONTROL_IDS.map(
     (controlId) => Object.freeze({
       controlId,
@@ -171,9 +243,9 @@ function profilePayload(value) {
 
 function validProfileShape(value) {
   if (!hasExactObjectKeys(value, [
-    'kind', 'notApplicableControls', 'profileHash', 'profileId',
-    'optionalDiagnostics', 'prohibitedActions', 'requiredLocalControls', 'scope',
-    'scientificCapabilities', 'version',
+    'externalBlockerDisposition', 'kind', 'localOperationMapping', 'notApplicableControls',
+    'profileHash', 'profileId', 'optionalDiagnostics', 'prohibitedActions',
+    'requiredLocalControls', 'scope', 'scientificCapabilities', 'version',
   ]) || value.version !== 1 || value.kind !== PROFILE_KIND
     || value.profileId !== PROFILE_ID || !SHA256.test(String(value.profileHash || ''))
     || !hasExactObjectKeys(value.scope, [
@@ -185,6 +257,31 @@ function validProfileShape(value) {
     || value.scope.externalActions !== false
     || !exactArray(value.prohibitedActions, (item) => typeof item === 'string' && item.length > 0)
     || !hasExactObjectKeys(value.scientificCapabilities, ['cpu', 'gpu'])) return false;
+  const dispositionIds = Object.keys(PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION).sort();
+  if (!value.externalBlockerDisposition
+    || !hasExactObjectKeys(value.externalBlockerDisposition, dispositionIds)
+    || dispositionIds.some((id) => {
+      const expected = PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION[id];
+      const actual = value.externalBlockerDisposition[id];
+      return !hasExactObjectKeys(actual, ['disposition', 'reason'])
+        || actual.disposition !== expected.disposition || actual.reason !== expected.reason;
+    })) return false;
+  const validOperation = (name) => {
+    const expected = PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING[name];
+    const actual = value.localOperationMapping?.[name];
+    return !!expected && !!actual
+      && hasExactObjectKeys(actual, ['controlIds', 'disposition', 'reason'])
+      && actual.disposition === expected.disposition
+      && actual.reason === expected.reason
+      && exactArray(actual.controlIds, (controlId) =>
+        PERSONAL_SELF_HOSTED_REQUIRED_LOCAL_CONTROL_IDS.includes(controlId))
+      && JSON.stringify([...actual.controlIds].sort())
+        === JSON.stringify([...expected.controlIds].sort());
+  };
+  if (!hasExactObjectKeys(value.localOperationMapping,
+    Object.keys(PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING))
+    || Object.keys(PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING).some((name) =>
+      !validOperation(name))) return false;
   const validNa = (item) => hasExactObjectKeys(item, ['controlId', 'reason'])
     && PERSONAL_SELF_HOSTED_NOT_APPLICABLE_CONTROL_IDS.includes(item.controlId)
     && item.reason === NOT_APPLICABLE_REASONS[item.controlId];
@@ -358,6 +455,8 @@ export function evaluatePersonalSelfHostedProductionReadiness({
     productionScope: 'single-user-private-local-only',
     distributionReady: false,
     externalQualificationRequired: false,
+    externalBlockerDisposition: profile.externalBlockerDisposition,
+    localOperationMapping: profile.localOperationMapping,
     externalActionsPerformed: false,
     observedAt: observed,
     notApplicableControls: profile.notApplicableControls,
@@ -380,6 +479,8 @@ export function evaluatePersonalSelfHostedProductionReadiness({
 
 export const PERSONAL_SELF_HOSTED_PROFILE_CONSTANTS = Object.freeze({
   maxEvidenceAgeMs: MAXIMUM_EVIDENCE_AGE_MS,
+  externalBlockerDisposition: PERSONAL_SELF_HOSTED_EXTERNAL_BLOCKER_DISPOSITION,
+  localOperationMapping: PERSONAL_SELF_HOSTED_LOCAL_OPERATION_MAPPING,
   notApplicableReasons: NOT_APPLICABLE_REASONS,
   localControlDefinitions: LOCAL_CONTROL_DEFINITIONS,
   optionalDiagnosticDefinitions: OPTIONAL_DIAGNOSTIC_DEFINITIONS,

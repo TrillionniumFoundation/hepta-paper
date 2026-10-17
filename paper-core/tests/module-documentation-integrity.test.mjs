@@ -1,0 +1,437 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+import { validateModuleDocumentation } from '../../docs/tools/validate-module-documentation.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(HERE, '../..');
+
+function copyFile(sourceRoot, targetRoot, relative) {
+  const source = path.join(sourceRoot, relative);
+  const target = path.join(targetRoot, relative);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+}
+
+function createFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-module-docs-'));
+  const registryPath = 'docs/system/truth/modules.v1.json';
+  const indexPath = 'docs/modules/module-documentation.v1.json';
+  copyFile(ROOT, root, registryPath);
+  copyFile(ROOT, root, indexPath);
+  const registry = JSON.parse(fs.readFileSync(path.join(ROOT, registryPath), 'utf8'));
+  const index = JSON.parse(fs.readFileSync(path.join(ROOT, indexPath), 'utf8'));
+  for (const [moduleId, entry] of Object.entries(index.modules)) {
+    copyFile(ROOT, root, entry.specPath);
+    copyFile(ROOT, root, entry.manifestPath);
+    for (const configuredPath of registry.modules[moduleId].paths) {
+      const target = path.join(root, configuredPath);
+      if (path.extname(configuredPath)) {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, 'fixture\n');
+      } else {
+        fs.mkdirSync(target, { recursive: true });
+      }
+    }
+  }
+  for (const relative of [
+    'docs/system/truth/work-items.v2.json',
+    'docs/system/schemas/modules-v1.schema.json',
+    'docs/system/schemas/work-items-v2.schema.json',
+    'docs/modules/schemas/module-documentation-index-v1.schema.json',
+    'docs/modules/schemas/module-documentation-manifest-v1.schema.json',
+  ]) copyFile(ROOT, root, relative);
+  return root;
+}
+
+test('live repository has complete one-to-one module documentation', () => {
+  const result = validateModuleDocumentation({ root: ROOT });
+  assert.equal(result.ok, true, result.failures.join('\n'));
+  assert.equal(result.report.registryModules, 32);
+  assert.equal(result.report.specifications, 32);
+  assert.equal(result.report.manifests, 32);
+});
+
+test('renaming an explanatory section is advisory, not a correctness failure', () => {
+  const root = createFixture();
+  try {
+    const index = JSON.parse(fs.readFileSync(path.join(root, 'docs/modules/module-documentation.v1.json'), 'utf8'));
+    const entry = index.modules['module.submission-port'];
+    const spec = fs.readFileSync(path.join(root, entry.specPath), 'utf8').replace('## Failure, recovery, and idempotency', '## Removed failure section');
+    fs.writeFileSync(path.join(root, entry.specPath), spec);
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    assert.match(result.advisories.join('\n'), /missing heading/);
+    assert.equal(result.report.implementationProjection.modules['module.submission-port'].productionActivationVerified, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('typed authority and registry parity fail closed', () => {
+  const root = createFixture();
+  try {
+    const index = JSON.parse(fs.readFileSync(path.join(root, 'docs/modules/module-documentation.v1.json'), 'utf8'));
+    const entry = index.modules['module.commit-sequencer'];
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, entry.manifestPath), 'utf8'));
+    manifest.authorityClass = 'read_only';
+    fs.writeFileSync(path.join(root, entry.manifestPath), `${JSON.stringify(manifest, null, 2)}\n`);
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, false);
+    assert.match(result.failures.join('\n'), /authorityClass mismatch/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function changeJson(root, relative, mutate) {
+  const file = path.join(root, relative);
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const replacement = mutate(value);
+  fs.writeFileSync(file, `${JSON.stringify(replacement === undefined ? value : replacement)}\n`);
+}
+
+function ownerSchemaDocuments(owner, label) {
+  const registry = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/system/truth/modules.v1.json'), 'utf8'));
+  const record = registry.modules['module.commit-sequencer'];
+  record.owners = [owner, owner, owner];
+  registry.modules = { 'module.commit-sequencer': record };
+  registry.teams = [owner];
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/modules/manifests/commit-sequencer.v1.json'), 'utf8'));
+  manifest.ownerTeams = [owner, owner, owner];
+  return [
+    ['registry', 'docs/system/schemas/modules-v1.schema.json', registry],
+    ['manifest', 'docs/modules/schemas/module-documentation-manifest-v1.schema.json', manifest],
+  ].map(([kind, relative, instance]) => ({
+    name: `${label}:${kind}`,
+    schema: fs.readFileSync(path.join(ROOT, relative), 'utf8'),
+    instance: JSON.stringify(instance),
+  }));
+}
+
+function validateOwnerDocuments(documents) {
+  const result = spawnSync('python3', [path.join(ROOT, 'docs/rust/tools/strict_json_schema.py'), '--batch-stdin'], {
+    input: JSON.stringify(documents), encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.ok(result.status === 0 || result.status === 1, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+test('owner schemas accept a single registered maintainer in all three roles', () => {
+  const owners = ['TEAM-KERNEL', '@ProfHepta', 'local-owner', 'local.owner_1', 'a'.repeat(96), `@${'a'.repeat(95)}`];
+  const report = validateOwnerDocuments(owners.flatMap((owner, index) => ownerSchemaDocuments(owner, `valid-${index}`)));
+  assert.equal(report.ok, true, JSON.stringify(report.failures));
+});
+
+test('owner schemas reject malformed and oversized tokens including trailing line breaks', () => {
+  const owners = ['', '@', '@@owner', '-owner', ' owner', 'owner ', 'owner\n', 'owner\r',
+    'owner\u2028', 'owner\0', 'owner/name', 'owner\\name', 'owner@example', 'ownér',
+    'a'.repeat(97), `@${'a'.repeat(96)}`, null, 42];
+  const documents = owners.flatMap((owner, index) => ownerSchemaDocuments(owner, `invalid-${index}`));
+  const report = validateOwnerDocuments(documents);
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.failures.map(({ name }) => name), documents.map(({ name }) => name));
+});
+
+test('one maintainer preserves documentation parity and registered-owner references', () => {
+  const root = createFixture();
+  const owner = '@ProfHepta';
+  try {
+    changeJson(root, 'docs/system/truth/modules.v1.json', (value) => {
+      value.teams.push(owner);
+      value.modules['module.commit-sequencer'].owners = [owner, owner, owner];
+    });
+    changeJson(root, 'docs/modules/manifests/commit-sequencer.v1.json', (value) => {
+      value.ownerTeams = [owner, owner, owner];
+    });
+    const file = path.join(root, 'docs/modules/specs/commit-sequencer.md');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+      /^(primaryOwnerTeam|secondaryOwnerTeam|independentReviewerTeam): .+$/gmu,
+      (_, role) => `${role}: ${owner}`,
+    ));
+    const accepted = validateModuleDocumentation({ root });
+    assert.equal(accepted.ok, true, accepted.failures.join('\n'));
+    changeJson(root, 'docs/system/truth/modules.v1.json', (value) => {
+      value.teams = value.teams.filter((team) => team !== owner);
+    });
+    const unregistered = validateModuleDocumentation({ root });
+    assert.equal(unregistered.ok, false);
+    assert.match(unregistered.failures.join('\n'), /unregistered owner @ProfHepta/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const WRITER_MANIFEST = 'docs/modules/manifests/commit-sequencer.v1.json';
+const WRITER_SPEC = 'docs/modules/specs/commit-sequencer.md';
+const hostileCases = [
+  ['duplicate registry identities', (root) => changeJson(root, 'docs/system/truth/modules.v1.json', (value) => {
+    value.teams.push(value.teams[0]);
+  }), /schema/],
+  ['missing owner role slot', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.ownerTeams.pop();
+  }), /schema/],
+  ['extra owner role slot', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.ownerTeams.push(value.ownerTeams[0]);
+  }), /schema/],
+  ['null registry', (root) => changeJson(root, 'docs/system/truth/modules.v1.json', () => null), /schema/],
+  ['null module entry', (root) => changeJson(root, 'docs/modules/module-documentation.v1.json', (value) => {
+    value.modules['module.commit-sequencer'] = null;
+  }), /schema/],
+  ['empty closed-world inventory', (root) => {
+    changeJson(root, 'docs/system/truth/modules.v1.json', (value) => { value.modules = {}; });
+    changeJson(root, 'docs/modules/module-documentation.v1.json', (value) => { value.modules = {}; });
+  }, /schema/],
+  ['missing specification path', (root) => changeJson(root, 'docs/modules/module-documentation.v1.json', (value) => {
+    delete value.modules['module.commit-sequencer'].specPath;
+  }), /schema/],
+  ['mandatory section substitution', (root) => changeJson(root, 'docs/modules/module-documentation.v1.json', (value) => {
+    value.requiredSections[1] = 'Different heading';
+  }), /schema/],
+  ['non-array implementation paths', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.implementationPaths = 'rust/crates/hepta-campaign-writer';
+  }), /schema/],
+  ['unknown authority extension', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.privilegedOverride = true;
+  }), /schema/],
+  ['numeric boolean disguise', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.rollout.productionActivation = 0;
+  }), /schema/],
+  ['production activation', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.rollout.productionActivation = true;
+  }), /schema/],
+  ['implicit resource capacity', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.resourceProfile.implicitCapacityAllowed = true;
+  }), /schema/],
+  ['unbounded child concurrency', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.resourceProfile.unboundedChildConcurrencyAllowed = true;
+  }), /schema/],
+  ['missing rollback requirement', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    delete value.rollout.rollbackTargetRequired;
+  }), /schema/],
+  ['weakened safety counters', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.sloProfile.zeroToleranceSafetyCountersRequired = false;
+  }), /schema/],
+  ['static activation drift', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.rollout.currentStaticActivation = 'authoritative';
+  }), /static activation mismatch/],
+  ['writer mutual-exclusion removal', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.rollout.mutualExclusionRequired = false;
+  }), /mutual exclusion/],
+  ['side-effect authority escalation', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.sideEffectClasses.push('submission');
+  }), /authority ceiling/],
+  ['owner role exchange', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.ownerTeams.reverse();
+  }), /owner role order/],
+  ['unknown work item', (root) => {
+    changeJson(root, 'docs/system/truth/modules.v1.json', (value) => {
+      value.modules['module.commit-sequencer'].workItemIds.push('UNKNOWN-001');
+    });
+    changeJson(root, WRITER_MANIFEST, (value) => { value.workItemIds.push('UNKNOWN-001'); });
+  }, /unknown work item/],
+  ['specification activation drift', (root) => {
+    const file = path.join(root, WRITER_SPEC);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('staticActivation: disabled', 'staticActivation: authoritative'));
+  }, /specification staticActivation mismatch/],
+  ['oversized specification', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), 'x'.repeat(1024 * 1024)), /byte limit/],
+  ['duplicate raw JSON key', (root) => {
+    const file = path.join(root, WRITER_MANIFEST);
+    const source = fs.readFileSync(file, 'utf8');
+    const objectStart = source.indexOf('{');
+    assert.equal(objectStart, 0, 'manifest fixture must start with a JSON object');
+    fs.writeFileSync(file, `{"schemaVersion":1,${source.slice(objectStart + 1)}`);
+  }, /duplicate JSON property/],
+  ['unindexed symbolic document', (root) => fs.symlinkSync(path.join(root, WRITER_SPEC), path.join(root, 'docs/modules/specs/unindexed.md')), /symbolic module document/],
+];
+
+const proseShapeCases = [
+  ['empty mandatory section', (root) => {
+    const file = path.join(root, WRITER_SPEC);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/## Inputs and outputs[\s\S]*?(?=## State and authority)/, '## Inputs and outputs\n\n'));
+  }, /empty section/],
+  ['heading hidden inside a code fence', (root) => {
+    const file = path.join(root, WRITER_SPEC);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('## Inputs and outputs', '```text\n## Inputs and outputs\n```'));
+  }, /missing heading/],
+  ['duplicate mandatory heading', (root) => fs.appendFileSync(path.join(root, WRITER_SPEC), '\n## Inputs and outputs\nDuplicated.\n'), /duplicate heading/],
+];
+for (const [name, mutate, expected] of proseShapeCases) {
+  test(`module documentation advises on ${name} without weakening typed authority`, () => {
+    const root = createFixture();
+    try {
+      mutate(root);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, true, result.failures.join('\n'));
+      assert.match(result.advisories.join('\n'), expected);
+      changeJson(root, WRITER_MANIFEST, (value) => { value.sideEffectClasses.push('submission'); });
+      const invalid = validateModuleDocumentation({ root });
+      assert.equal(invalid.ok, false);
+      assert.match(invalid.failures.join('\n'), /authority ceiling/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+for (const [name, mutate, expected] of hostileCases) {
+  test(`module documentation rejects ${name}`, () => {
+    const root = createFixture();
+    try {
+      mutate(root);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, false, name);
+      assert.match(result.failures.join('\n'), expected);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test('module document reads reject an intermediate symlink rather than traversing it', () => {
+  const root = createFixture();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-module-docs-outside-'));
+  try {
+    fs.renameSync(path.join(root, 'docs/modules/specs'), path.join(outside, 'specs'));
+    fs.symlinkSync(path.join(outside, 'specs'), path.join(root, 'docs/modules/specs'));
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, false);
+    assert.match(result.failures.join('\n'), /symbolic link in repository path/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('implementation projection is deterministic and preserves pending work without qualification', () => {
+  const first = validateModuleDocumentation({ root: ROOT });
+  const second = validateModuleDocumentation({ root: ROOT });
+  assert.deepEqual(first, second);
+  const projection = first.report.implementationProjection;
+  assert.equal(projection.coverageMeaning, 'structural_documentation_only');
+  assert.equal(Object.keys(projection.modules).length, 32);
+  const scheduler = projection.modules['module.scheduler-core'];
+  assert.equal(scheduler.staticImplementationState, 'source_implemented');
+  assert.equal(scheduler.referencedWorkStates['SCH-001'], 'source_implemented');
+  assert.ok(!scheduler.pendingSourceWorkItemIds.includes('SCH-001'));
+  assert.equal(scheduler.referencedWorkStates['SCH-004'], 'source_implemented');
+  assert.ok(scheduler.codeRoots.includes('rust/crates/hepta-control-plane'));
+  assert.ok(scheduler.contractRefs.includes('docs/control-plane/GLOBAL_OPTIMIZATION.md'));
+  const qualification = projection.modules['module.source-qualification'];
+  assert.ok(qualification.pendingSourceWorkItemIds.includes('QUAL-001'));
+  const writer = projection.modules['module.commit-sequencer'];
+  assert.ok(writer.blockedExternalWorkItemIds.includes('GAP-HOST-002'));
+  for (const row of Object.values(projection.modules)) {
+    assert.equal(row.effectiveQualification, 'not_evaluated');
+    assert.equal(row.productionActivationVerified, false);
+  }
+});
+
+
+test('equivalent prose does not require magic authority keywords', () => {
+  const root = createFixture();
+  try {
+    const file = path.join(root, WRITER_SPEC);
+    const source = fs.readFileSync(file, 'utf8')
+      .replaceAll('single-writer', 'exclusive writer')
+      .replaceAll('fencing', 'generation isolation');
+    fs.writeFileSync(file, source);
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    // The same reworded document still cannot hide a typed authority escalation.
+    changeJson(root, WRITER_MANIFEST, (value) => {
+      value.sideEffectClasses.push('submission');
+    });
+    const escalated = validateModuleDocumentation({ root });
+    assert.equal(escalated.ok, false);
+    assert.match(escalated.failures.join('\n'), /authority ceiling/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('documented unfinished work is allowed without granting authority', () => {
+  const root = createFixture();
+  try {
+    fs.appendFileSync(path.join(root, WRITER_SPEC),
+      '\nTODO: GAP-HOST-002 retains its restore-drill and target-host evidence requirements. This note grants no additional authority.\n');
+    const result = validateModuleDocumentation({ root });
+    assert.equal(result.ok, true, result.failures.join('\n'));
+    changeJson(root, WRITER_MANIFEST, (value) => {
+      value.sideEffectClasses.push('submission');
+    });
+    const escalated = validateModuleDocumentation({ root });
+    assert.equal(escalated.ok, false);
+    assert.match(escalated.failures.join('\n'), /authority ceiling/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const marker of ['TODO', 'TBD', 'PLACEHOLDER', 'FIXME']) {
+  test(`a bare ${marker} explanatory section produces advice, not authority`, () => {
+    const root = createFixture();
+    try {
+      const file = path.join(root, WRITER_SPEC);
+      const source = fs.readFileSync(file, 'utf8').replace(
+        /## Inputs and outputs[\s\S]*?(?=## State and authority)/,
+        `## Inputs and outputs\n\n${marker}\n\n`,
+      );
+      fs.writeFileSync(file, source);
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, true, result.failures.join('\n'));
+      assert.match(result.advisories.join('\n'), /placeholder-only section/);
+      assert.equal(result.report.implementationProjection.modules['module.commit-sequencer'].productionActivationVerified, false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const heading of ['Identity', 'Open blockers', 'Operational runbook']) {
+  test(`machine-referenced ${heading} section remains unique and mandatory`, () => {
+    const root = createFixture();
+    try {
+      const file = path.join(root, WRITER_SPEC);
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`## ${heading}`, '## Other text'));
+      const result = validateModuleDocumentation({ root });
+      assert.equal(result.ok, false);
+      assert.match(result.failures.join('\n'), /missing heading|mismatch|work-state projection/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+// Exercise the authoritative matrix writer in a disposable source-only fixture.
+// Empty promotion inputs do not claim qualification or consume real evidence.
+test('source promotion generator reproduces the committed module matrix', () => {
+  const root = createFixture();
+  try {
+    const evidenceDirectory = path.join(root, 'docs/system/evidence');
+    fs.mkdirSync(evidenceDirectory, { recursive: true });
+    for (const name of ['repository-source-implementation-v1', 'rust-functional-source-closure-v1']) {
+      fs.writeFileSync(path.join(evidenceDirectory, `${name}.json`), JSON.stringify({
+        kind: 'RepositorySourceImplementationEvidenceV1', records: {},
+      }));
+    }
+    const truthPaths = ['docs/system/truth/modules.v1.json', 'docs/system/truth/work-items.v2.json'];
+    const before = truthPaths.map((relative) => JSON.parse(fs.readFileSync(path.join(root, relative), 'utf8')));
+    const result = spawnSync(process.execPath, [path.join(ROOT, 'docs/tools/apply-source-promotions.mjs'), '--write'], {
+      cwd: root, encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
+    });
+    assert.equal(result.status, 0, result.stderr || result.error?.message);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.promotionCount, 0);
+    assert.deepEqual(report.promotedModules, []);
+    assert.deepEqual(report.changedSpecs, []);
+    assert.ok(Object.values(report.authorityClaims).every((value) => value === false));
+    for (const [index, relative] of truthPaths.entries()) {
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, relative), 'utf8')), before[index]);
+    }
+    const matrix = 'docs/modules/MODULE_DOCUMENTATION_MATRIX.md';
+    assert.equal(fs.readFileSync(path.join(root, matrix), 'utf8'), fs.readFileSync(path.join(ROOT, matrix), 'utf8'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

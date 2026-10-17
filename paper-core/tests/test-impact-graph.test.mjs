@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import {
   buildTestImpactGraph,
+  requiresNativeRouteToolchain,
   selectImpactedTests,
   shardImpactedTests,
 } from '../src/test-impact-graph.mjs';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const repositoryControlPlaneFiles = Object.freeze({
+  codeowners: new URL('../../.github/CODEOWNERS', import.meta.url),
+  continuousIntegration: new URL('../../.github/workflows/ci.yml', import.meta.url),
+  gitignore: new URL('../../.gitignore', import.meta.url),
+  runnerGroups: new URL('../../.github/runner-groups.yml', import.meta.url),
+});
 
 function fixtureGraph() {
   const sources = {
@@ -20,14 +28,50 @@ function fixtureGraph() {
     'paper-domain/unmapped.mjs': 'export const unmapped = true;\n',
     'paper-core/tests/claim.test.mjs':
       "import '../../paper-application/use-claim.mjs';\n",
-    'paper-core/tests/other.test.mjs':
-      "import '../../paper-domain/other.mjs';\n",
+    'paper-core/tests/other.test.mjs': [
+      "import '../../paper-domain/other.mjs';",
+      "const currentStatus = '../docs/CURRENT_STATUS.md';",
+      '',
+    ].join('\n'),
     'paper-core/tests/spawn.test.mjs':
       "const executable = 'paper-core/bin/tool.mjs';\n",
-    'paper-core/bin/tool.mjs': 'process.stdout.write(\"ok\");\n',
+    'paper-core/tests/repository-control-plane.test.mjs': [
+      "const codeowners = '../../.github/CODEOWNERS';",
+      "const ci = '../../.github/workflows/ci.yml';",
+      "const gitignore = '../../.gitignore';",
+      "const runnerGroups = '../../.github/runner-groups.yml';",
+      '',
+    ].join('\n'),
+    'migration/tests/legacy-matrix-reference-publication.test.mjs': [
+      "const workflow = '../../.github/workflows/legacy-matrix-reference-verification.yml';",
+      "const verifier = '../bin/verify-legacy-matrix-reference-publication.mjs';",
+      "const pointer = '../fixtures/legacy-matrix-reference-publication-v1.json';",
+      '',
+    ].join('\n'),
+    'paper-core/bin/tool.mjs': 'process.stdout.write("ok");\n',
+    'rust/oracle/legacy-stable-json-v1.mjs': 'process.stdout.write("rust-oracle");\n',
   };
   return buildTestImpactGraph({
-    files: [...Object.keys(sources), 'paper-core/config/policy.json', 'README.md'],
+    files: [
+      ...Object.keys(sources),
+      'paper-core/config/policy.json',
+      'paper-core/docs/CURRENT_STATUS.md',
+      'README.md',
+      '.github/CODEOWNERS',
+      '.github/actionlint.yaml',
+      '.github/runner-groups.yml',
+      '.github/workflows/ci.yml',
+      '.github/workflows/legacy-matrix-reference-verification.yml',
+      '.github/workflows/workflow-lint.yml',
+      '.gitignore',
+      'migration/bin/verify-legacy-matrix-reference-publication.mjs',
+      'migration/fixtures/legacy-matrix-reference-publication-v1.json',
+      'docs/rust/RUST_PLAN.md',
+      'docs/rust/current-status.v1.json',
+      'docs/rust/tools/validate-program-truth.py',
+      'rust/Cargo.toml',
+      'rust/crates/example/src/lib.rs',
+    ],
     readSource: (file) => sources[file] || '',
   });
 }
@@ -52,6 +96,7 @@ test('impact graph follows transitive imports and explicit executable references
 test('impact selection fails safe for global, nonmodule, and unmapped changes', () => {
   const graph = fixtureGraph();
   for (const changedFile of [
+    '.github/workflows/unclassified.yml',
     'package.json',
     'paper-core/config/policy.json',
     'paper-domain/unmapped.mjs',
@@ -61,12 +106,262 @@ test('impact selection fails safe for global, nonmodule, and unmapped changes', 
     assert.deepEqual(selection.selectedTests, graph.tests, changedFile);
     assert.ok(selection.fallbackFiles.includes(changedFile), changedFile);
   }
-  const documentation = selectImpactedTests({
-    graph,
-    changedFiles: ['README.md'],
+  for (const changedFile of ['README.md', 'paper-core/docs/CURRENT_STATUS.md']) {
+    const documentation = selectImpactedTests({
+      graph,
+      changedFiles: [changedFile],
+    });
+    assert.equal(
+      documentation.status,
+      'test_impact_selection_no_tests_required',
+      changedFile,
+    );
+    assert.deepEqual(documentation.selectedTests, [], changedFile);
+    assert.deepEqual(documentation.fallbackFiles, [], changedFile);
+  }
+
+  for (const changedFile of [
+    'docs/system/truth/program.v2.json',
+    'docs/modules/schemas/module-manifest-v1.schema.json',
+    'paper-core/docs/history/architecture-p1p2-review-groups-2026-07-14.json',
+  ]) {
+    const documentationArtifact = selectImpactedTests({
+      graph,
+      changedFiles: [changedFile],
+    });
+    assert.equal(
+      documentationArtifact.status,
+      'test_impact_selection_no_tests_required',
+      changedFile,
+    );
+    assert.deepEqual(documentationArtifact.selectedTests, [], changedFile);
+    assert.deepEqual(documentationArtifact.fallbackFiles, [], changedFile);
+  }
+
+  for (const changedFile of [
+    '.github/actionlint.yaml',
+    '.github/workflows/rust-foundation.yml',
+    '.github/workflows/rust-broker-installed-qualification-v2.yml',
+    '.github/workflows/exact-head-source-validation.yml',
+    '.github/workflows/workflow-lint.yml',
+    'docs/rust/RUST_PLAN.md',
+    'docs/rust/current-status.v1.json',
+    'docs/rust/tools/validate-program-truth.py',
+    'docs/rust/qualification/hepta-broker-host-qualification.sh',
+    'docs/rust/qualification/hepta-broker-qualification-evidence-v1.schema.json',
+    'rust/Cargo.toml',
+    'rust/crates/example/src/lib.rs',
+    'rust/oracle/legacy-stable-json-v1.mjs',
+  ]) {
+    const isolated = selectImpactedTests({ graph, changedFiles: [changedFile] });
+    assert.equal(isolated.status, 'test_impact_selection_no_tests_required', changedFile);
+    assert.deepEqual(isolated.selectedTests, [], changedFile);
+    assert.deepEqual(isolated.fallbackFiles, [], changedFile);
+  }
+});
+
+test('the development-documentation validator is narrow only when contract-tested', () => {
+  const mapped = buildTestImpactGraph({
+    files: [
+      'docs/tools/validate-development-docs.mjs',
+      'paper-core/tests/development-documentation-governance.test.mjs',
+    ],
+    readSource(file) {
+      if (file === 'paper-core/tests/development-documentation-governance.test.mjs') {
+        return "const validator = '../../docs/tools/validate-development-docs.mjs';\n";
+      }
+      return '';
+    },
   });
-  assert.equal(documentation.status, 'test_impact_selection_no_tests_required');
-  assert.deepEqual(documentation.selectedTests, []);
+  const selection = selectImpactedTests({
+    graph: mapped,
+    changedFiles: ['docs/tools/validate-development-docs.mjs'],
+  });
+  assert.equal(selection.status, 'test_impact_selection_ready');
+  assert.deepEqual(selection.fallbackFiles, []);
+  assert.deepEqual(selection.selectedTests, [
+    'paper-core/tests/development-documentation-governance.test.mjs',
+  ]);
+
+  const unmapped = buildTestImpactGraph({
+    files: [
+      'docs/tools/validate-development-docs.mjs',
+      'paper-core/tests/other.test.mjs',
+    ],
+    readSource: () => '',
+  });
+  const fallback = selectImpactedTests({
+    graph: unmapped,
+    changedFiles: ['docs/tools/validate-development-docs.mjs'],
+  });
+  assert.equal(fallback.status, 'test_impact_selection_full_fallback');
+  assert.deepEqual(fallback.fallbackFiles, [
+    'docs/tools/validate-development-docs.mjs',
+  ]);
+  assert.deepEqual(fallback.selectedTests, ['paper-core/tests/other.test.mjs']);
+});
+
+test('mixed current documentation and CODEOWNERS changes remain narrowly contract-tested', () => {
+  const graph = fixtureGraph();
+  const selection = selectImpactedTests({
+    graph,
+    changedFiles: [
+      '.github/CODEOWNERS',
+      'README.md',
+      'docs/system/truth/program.v2.json',
+      'docs/modules/schemas/module-manifest-v1.schema.json',
+      'paper-core/docs/history/architecture-p1p2-review-groups-2026-07-14.json',
+    ],
+  });
+  assert.equal(selection.status, 'test_impact_selection_ready');
+  assert.equal(selection.fullFallback, false);
+  assert.deepEqual(selection.fallbackFiles, []);
+  assert.deepEqual(
+    selection.selectedTests,
+    ['paper-core/tests/repository-control-plane.test.mjs'],
+  );
+});
+
+test('repository control-plane changes are narrow only when contract-tested', () => {
+  const graph = fixtureGraph();
+  for (const changedFile of [
+    '.github/CODEOWNERS',
+    '.github/runner-groups.yml',
+    '.github/workflows/ci.yml',
+    '.gitignore',
+  ]) {
+    const selection = selectImpactedTests({ graph, changedFiles: [changedFile] });
+    assert.equal(selection.status, 'test_impact_selection_ready', changedFile);
+    assert.equal(selection.fullFallback, false, changedFile);
+    assert.deepEqual(selection.fallbackFiles, [], changedFile);
+    assert.deepEqual(
+      selection.selectedTests,
+      ['paper-core/tests/repository-control-plane.test.mjs'],
+      changedFile,
+    );
+  }
+
+  const unmapped = buildTestImpactGraph({
+    files: [
+      '.github/CODEOWNERS',
+      'paper-core/tests/other.test.mjs',
+    ],
+    readSource: () => '',
+  });
+  const selection = selectImpactedTests({
+    graph: unmapped,
+    changedFiles: ['.github/CODEOWNERS'],
+  });
+  assert.equal(selection.status, 'test_impact_selection_full_fallback');
+  assert.deepEqual(selection.fallbackFiles, ['.github/CODEOWNERS']);
+  assert.deepEqual(selection.selectedTests, unmapped.tests);
+});
+
+test('legacy matrix publication control surfaces are narrow only when contract-tested', () => {
+  const graph = fixtureGraph();
+  for (const changedFile of [
+    '.github/workflows/legacy-matrix-reference-verification.yml',
+    'migration/bin/verify-legacy-matrix-reference-publication.mjs',
+    'migration/fixtures/legacy-matrix-reference-publication-v1.json',
+  ]) {
+    const selection = selectImpactedTests({ graph, changedFiles: [changedFile] });
+    assert.equal(selection.status, 'test_impact_selection_ready', changedFile);
+    assert.equal(selection.fullFallback, false, changedFile);
+    assert.deepEqual(selection.fallbackFiles, [], changedFile);
+    assert.deepEqual(
+      selection.selectedTests,
+      ['migration/tests/legacy-matrix-reference-publication.test.mjs'],
+      changedFile,
+    );
+  }
+
+  const unmapped = buildTestImpactGraph({
+    files: [
+      '.github/workflows/legacy-matrix-reference-verification.yml',
+      'paper-core/tests/other.test.mjs',
+    ],
+    readSource: () => '',
+  });
+  const selection = selectImpactedTests({
+    graph: unmapped,
+    changedFiles: ['.github/workflows/legacy-matrix-reference-verification.yml'],
+  });
+  assert.equal(selection.status, 'test_impact_selection_full_fallback');
+  assert.deepEqual(
+    selection.fallbackFiles,
+    ['.github/workflows/legacy-matrix-reference-verification.yml'],
+  );
+  assert.deepEqual(selection.selectedTests, unmapped.tests);
+});
+
+function assertOwnershipRouting(source) {
+  const rules = new Map(source.split('\n')
+    .map((line) => line.split('#')[0].trim()).filter(Boolean)
+    .map((line) => { const [scope, ...owners] = line.split(/\s+/u); return [scope, owners]; }));
+  for (const scope of ['/.github/', '/rust/', '/paper-adapters/', '/migration/', '/store/migrations/']) {
+    const owners = rules.get(scope);
+    assert.ok(owners?.length, `missing ownership routing: ${scope}`);
+    for (const owner of owners) assert.match(owner, /^@[A-Za-z0-9-]+(?:\/[A-Za-z0-9-]+)?$/u);
+  }
+  assert.doesNotMatch(source, /@TrillionniumFoundation(?:\s|$)/u);
+}
+
+test('ownership routing allows one maintainer without prescribing reviewer identities or headcount', () => {
+  const scopes = ['/.github/', '/rust/', '/paper-adapters/', '/migration/', '/store/migrations/'];
+  for (const owners of ['@maintainer', '@maintainer @optional-contributor']) {
+    const source = scopes.map((scope) => `${scope} ${owners}`).join('\n');
+    assert.doesNotThrow(() => assertOwnershipRouting(source));
+    assert.throws(() => assertOwnershipRouting(source.replace('/rust/', '/other/')), /missing ownership/u);
+    assert.throws(() => assertOwnershipRouting(source.replaceAll('@maintainer', 'not-an-owner')));
+  }
+});
+
+test('checked-in repository control-plane contracts remain fail-closed', () => {
+  // Ownership routes are not a mandatory human review policy. Do not duplicate
+  // individual usernames or reviewer counts in the impact graph's test suite.
+  assertOwnershipRouting(fs.readFileSync(repositoryControlPlaneFiles.codeowners, 'utf8'));
+
+  const continuousIntegration = fs.readFileSync(
+    repositoryControlPlaneFiles.continuousIntegration,
+    'utf8',
+  );
+  assert.match(continuousIntegration, /^name: hepta-paper-ci$/mu);
+  assert.match(continuousIntegration, /^  pull_request:$/mu);
+  assert.match(continuousIntegration, /npm run test:impacted --/u);
+  // Command failure propagation is executed in ci-static-command-failure.test.mjs.
+  assert.match(continuousIntegration, /npm run static:check/u);
+  assert.match(continuousIntegration, /npm run security:npm-audit/u);
+  assert.doesNotMatch(continuousIntegration, /\bpull_request_target\s*:/u);
+  assert.doesNotMatch(continuousIntegration, /\bcontinue-on-error\s*:\s*true\b/u);
+
+  const gitignore = fs.readFileSync(repositoryControlPlaneFiles.gitignore, 'utf8');
+  assert.ok(gitignore.split('\n').includes('/rust/target/'));
+  assert.ok(gitignore.split('\n').includes('/runtime/'));
+
+  const runnerGroups = fs.readFileSync(repositoryControlPlaneFiles.runnerGroups, 'utf8');
+  assert.deepEqual(runnerGroups.trimEnd().split('\n'), [
+    'self-hosted-runner:',
+    '  labels:',
+    '    - nvidia-gpu',
+    '    - nvidia-gpu-protected',
+  ]);
+});
+
+test('mixed Rust governance and mapped JavaScript changes run only mapped tests', () => {
+  const graph = fixtureGraph();
+  const selection = selectImpactedTests({
+    graph,
+    changedFiles: [
+      '.github/actionlint.yaml',
+      'docs/rust/current-status.v1.json',
+      'rust/oracle/legacy-stable-json-v1.mjs',
+      'paper-domain/claim.mjs',
+    ],
+  });
+  assert.equal(selection.status, 'test_impact_selection_ready');
+  assert.equal(selection.fullFallback, false);
+  assert.deepEqual(selection.fallbackFiles, []);
+  assert.deepEqual(selection.selectedTests, ['paper-core/tests/claim.test.mjs']);
 });
 
 test('deterministic shards cover each selected test exactly once', () => {
@@ -111,4 +406,30 @@ test('runner emits a real repository impact plan without executing tests', () =>
   assert.ok(report.selectedTestCount >= 1);
   assert.ok(report.changedFiles.includes('paper-core/src/test-impact-graph.mjs'));
   assert.equal(report.shardCount, 4);
+});
+
+test('ordinary frontend toolchain planning follows actual transitive imports and keeps unrelated or empty shards independent', () => {
+  const sources = {
+    'paper-core/tests/ordinary.test.mjs': "import './support/native.mjs';\n",
+    'paper-core/tests/support/native.mjs': "import '../../../docs/tools/node-rust-route-acceptance.mjs';\nimport './cycle.mjs';\n",
+    'paper-core/tests/support/cycle.mjs': "import './native.mjs';\n",
+    'docs/tools/node-rust-route-acceptance.mjs': 'export function buildNativeOwners() {}\n',
+    'paper-core/tests/unrelated.test.mjs': 'export const observation = true;\n',
+  };
+  const graph = buildTestImpactGraph({ files: Object.keys(sources), readSource: file => sources[file] });
+  assert.equal(requiresNativeRouteToolchain({ graph, tests: ['paper-core/tests/ordinary.test.mjs'] }), true);
+  assert.equal(requiresNativeRouteToolchain({ graph, tests: ['paper-core/tests/unrelated.test.mjs'] }), false);
+  assert.equal(requiresNativeRouteToolchain({ graph, tests: [] }), false);
+});
+
+test('the selected ordinary workspace frontend receives qualified Cargo in its actual shard plan', () => {
+  const target = 'paper-core/tests/native-workspace-default-root.test.mjs';
+  const result = spawnSync(process.execPath, ['paper-core/bin/run-impacted-tests.mjs',
+    '--changed-file', target, '--shard-count', '1', '--shard-index', '0', '--dry-run', '--json'], {
+    cwd: root, encoding: 'utf8', timeout: 30_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.ok(report.shardTests.includes(target));
+  assert.equal(report.requiresNativeRouteToolchain, true);
 });

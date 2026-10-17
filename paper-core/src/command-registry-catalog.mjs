@@ -62,6 +62,7 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'test:dynamic-formal-kernel-operational',
     'test:impacted',
     'test:impacted:plan',
+    'test:legacy-deletion-drill-operational',
     'test:migration-differential',
     'test:typed-numeric-process-operational',
     'workspace:verify-decoupled',

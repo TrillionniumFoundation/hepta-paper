@@ -1,11 +1,16 @@
 function isIdentifierStart(character) {
-  return /[A-Za-z_$]/.test(character || '');
+  const code = character?.charCodeAt(0);
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+    || code === 95 || code === 36;
 }
 function isIdentifierPart(character) {
-  return /[A-Za-z0-9_$]/.test(character || '');
+  const code = character?.charCodeAt(0);
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+    || (code >= 48 && code <= 57) || code === 95 || code === 36;
 }
 
 function tokenizeModuleSource(source) {
+  // Tokens never leave this parser; only the public specifier result is frozen.
   const tokens = [];
   const text = String(source || '');
   let index = 0;
@@ -52,7 +57,7 @@ function tokenizeModuleSource(source) {
         value += current;
         index += 1;
       }
-      tokens.push(Object.freeze({ type: 'string', value, escaped }));
+      tokens.push({ type: 'string', value, escaped });
       continue;
     }
     if (character === '`') {
@@ -68,17 +73,17 @@ function tokenizeModuleSource(source) {
         }
         index += 1;
       }
-      tokens.push(Object.freeze({ type: 'template', value: null }));
+      tokens.push({ type: 'template', value: null });
       continue;
     }
     if (isIdentifierStart(character)) {
       const start = index;
       index += 1;
       while (isIdentifierPart(text[index])) index += 1;
-      tokens.push(Object.freeze({ type: 'identifier', value: text.slice(start, index) }));
+      tokens.push({ type: 'identifier', value: text.slice(start, index) });
       continue;
     }
-    tokens.push(Object.freeze({ type: 'punctuator', value: character }));
+    tokens.push({ type: 'punctuator', value: character });
     index += 1;
   }
   return tokens;

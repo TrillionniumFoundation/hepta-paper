@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.example/schemas/external-key-owner-drill-v1.schema.json",
+  "title": "External Capability Key Owner Drill V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageId",
+    "repository",
+    "commit",
+    "tree",
+    "authorityDomainId",
+    "authorityKeyId",
+    "reviewerAuthorityDomain",
+    "reviewerKeyId",
+    "initialGeneration",
+    "finalGeneration",
+    "initialBundleHash",
+    "finalBundleHash",
+    "drills",
+    "privateKeyAbsentFromBroker",
+    "brokerAdmissionDisabledOnAmbiguity",
+    "decision",
+    "issuedAt",
+    "expiresAt",
+    "signatureBase64"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "packageId": {
+      "const": "EXT-KEY-OWNER-001"
+    },
+    "repository": {
+      "const": "TrillionniumFoundation/hepta-paper"
+    },
+    "commit": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "tree": {
+      "$ref": "#/$defs/gitHash"
+    },
+    "authorityDomainId": {
+      "$ref": "#/$defs/id"
+    },
+    "authorityKeyId": {
+      "$ref": "#/$defs/id"
+    },
+    "reviewerAuthorityDomain": {
+      "$ref": "#/$defs/id"
+    },
+    "reviewerKeyId": {
+      "$ref": "#/$defs/id"
+    },
+    "initialGeneration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "finalGeneration": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "initialBundleHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "finalBundleHash": {
+      "$ref": "#/$defs/sha256"
+    },
+    "drills": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overlapRotation",
+        "activeKeyRevocation",
+        "signedRollbackRejection",
+        "interruptedPublication",
+        "requestSignerCompromise",
+        "bundleSignerCompromise",
+        "allActiveKeysRemoved",
+        "emergencyAdmissionStop"
+      ],
+      "properties": {
+        "overlapRotation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "activeKeyRevocation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "signedRollbackRejection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "interruptedPublication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "requestSignerCompromise": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "bundleSignerCompromise": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "allActiveKeysRemoved": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "emergencyAdmissionStop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidenceHash",
+            "notesHash"
+          ],
+          "properties": {
+            "result": {
+              "const": "passed"
+            },
+            "evidenceHash": {
+              "$ref": "#/$defs/sha256"
+            },
+            "notesHash": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "privateKeyAbsentFromBroker": {
+      "const": true
+    },
+    "brokerAdmissionDisabledOnAmbiguity": {
+      "const": true
+    },
+    "decision": {
+      "const": "approved"
+    },
+    "issuedAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "expiresAt": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "signatureBase64": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "gitHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 512
+    }
+  }
+}

@@ -96,4 +96,15 @@ export default [
     },
     rules: correctnessRules,
   },
+  {
+    files: [
+      'paper-core/bin/verify-source-implementation-evidence.mjs',
+      'paper-core/src/source-evidence-cargo-observations.mjs',
+    ],
+    rules: {
+      // Preserve the existing closed owner-title and ANSI libtest transcript
+      // grammars when Cargo observations move out of the executable entrypoint.
+      'no-control-regex': 'off',
+    },
+  },
 ];

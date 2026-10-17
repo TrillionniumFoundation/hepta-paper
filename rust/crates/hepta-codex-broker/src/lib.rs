@@ -1,0 +1,157 @@
+//! Local admission, durable state, and bounded service lifecycle for Codex brokers.
+//!
+//! This crate authenticates a peer and short-lived request capability before
+//! reserving a crash-stable operation. The service slice adds role-specific
+//! listeners, bounded backpressure, response framing, public-key rotation,
+//! fake-process journal linkage, signed prepared-result acknowledgement, and
+//! journal recovery/backup APIs. It still does not hold provider credentials,
+//! grant provider authority itself, write the campaign database, or grant release and
+//! submission authority.
+
+#![forbid(unsafe_code)]
+
+#[cfg(not(target_os = "linux"))]
+compile_error!("hepta-codex-broker V1 requires Linux SO_PEERCRED semantics");
+
+mod acknowledgement;
+mod admission;
+mod capability;
+mod client;
+mod codex_dispatch;
+mod commit_acknowledgement;
+mod cost_settlement;
+mod delivery;
+mod dispatch_backup;
+mod dispatch_containment;
+mod fake_execution;
+mod frame;
+mod journal;
+mod listener;
+mod output_schema;
+mod peer;
+mod prepared_result;
+mod product;
+mod product_daemon;
+mod response;
+mod server;
+mod service;
+mod telemetry;
+mod trust_bundle;
+pub mod trust_bundle_file;
+mod trust_source;
+
+pub use acknowledgement::{
+    PreparedResultAcknowledgementError, PreparedResultAcknowledgementPolicyV1,
+    PreparedResultAcknowledgementTrustStoreV1, PreparedResultAcknowledgementV1,
+    VerifiedPreparedResultAcknowledgementV1, apply_prepared_result_acknowledgement,
+    prepared_result_acknowledgement_signing_bytes,
+    verify_persisted_prepared_result_acknowledgement, verify_prepared_result_acknowledgement,
+};
+pub use admission::{
+    AdmissionError, AdmissionPolicyV1, AuthenticatedBrokerRequestV1, BrokerRolePolicyV1,
+    admit_unix_stream,
+};
+pub use capability::{
+    CapabilityPolicyV1, CapabilityTrustStoreV1, CapabilityVerificationError, VerifiedCapabilityV1,
+    capability_signing_bytes, verify_request_capability,
+};
+pub use codex_dispatch::{
+    CodexDispatchAuthorityV1, CodexDispatchAuthorizationPointV1, CodexDispatchError,
+    CodexDispatchPlanV1, CodexDispatchResultV1, run_reserved_codex_operation,
+};
+pub use commit_acknowledgement::{
+    CommitBindingDatabaseScopeV2, CommitBindingResolverV2, CommitBoundAcknowledgementError,
+    CommitBoundAcknowledgementPolicyV2, CommitBoundAcknowledgementTrustStoreV2,
+    CommitBoundPreparedResultAcknowledgementV2, PreparedResultAcknowledgementSubjectV2,
+    PreparedResultCommitBindingV2, SqliteCommitBindingResolverV2,
+    VerifiedCommitBoundAcknowledgementV2, apply_commit_bound_acknowledgement_v2,
+    commit_bound_acknowledgement_hash_v2, commit_bound_acknowledgement_signing_bytes_v2,
+    verify_commit_bound_acknowledgement_subject_v2,
+    verify_persisted_commit_bound_acknowledgement_v2,
+};
+pub use cost_settlement::{
+    ProviderCostSettlementError, ProviderCostSettlementPolicyV1,
+    ProviderCostSettlementTrustStoreV1, ProviderCostSettlementV1, VerifiedProviderCostSettlementV1,
+    provider_cost_settlement_signing_bytes, verify_provider_cost_settlement,
+};
+pub use dispatch_backup::{
+    CodexDispatchBackupBundleReceiptV1, CodexDispatchBackupEntryV1, CodexDispatchBackupManifestV1,
+    create_quiesced_codex_dispatch_backup, restore_quiesced_codex_dispatch_backup,
+};
+pub use dispatch_containment::recover_codex_dispatch_containment;
+pub use fake_execution::{
+    FakeBrokerExecutionError, FakeBrokerExecutionPlanV1, FakeBrokerPreparedResultV1,
+    FakeExecutionEvidenceV1, FakeExecutionFaultV1, FakeExecutionTimelineV1,
+    run_reserved_fake_operation,
+};
+pub use frame::{
+    BrokerFrameError, BrokerFramePolicyV1, DecodedCommitAcknowledgementFrameV2,
+    DecodedRequestFrameV1, read_commit_bound_acknowledgement_frame, read_request_frame,
+    write_commit_bound_acknowledgement_frame, write_request_frame, write_result_query_frame,
+};
+pub use journal::{
+    BrokerBackupPolicyV1, BrokerBackupReceiptV1, BrokerJournalError, BrokerJournalPolicyV1,
+    BrokerJournalStoreV1, BrokerProcessLaunchV1, BrokerProcessReconciliationV1,
+    BrokerRecoveryCandidateV1, FaultInjectionPointV1, ProcessReconciliationDispositionV1,
+    ProcessReleaseStateV1, ReservationOutcomeV1, create_broker_backup, list_recovery_candidates,
+    load_persisted_request, restore_broker_backup,
+};
+pub use listener::{
+    BrokerListenerAccessModeV1, BrokerListenerError, BrokerListenerPolicyV1,
+    BrokerListenerQualificationV1, BrokerListenerV1, BrokerSocketIdentityV1,
+};
+pub use peer::{
+    PeerAuthorizationError, PeerIdentityV1, PeerPolicyV1, PeerPrincipalV1, inspect_peer_identity,
+};
+pub use prepared_result::{
+    BrokerPreparedResultReceiptV1, finalize_codex_prepared_result, read_codex_prepared_output,
+};
+pub use product::{
+    ProductCodexDispatcherConfigurationV1, ProductCodexDispatcherV1, ProductCodexError,
+    ProductCodexOperationPublisherV1, ProductCodexOperationPurposeV1, ProductCodexOperationV1,
+    ProductOperationSourceIdentityV1, inspect_product_codex_operation_prompt_v1,
+    product_codex_prompt_hash_v1, publish_product_codex_operation_v1,
+    recover_product_codex_prompt_hash_v1,
+};
+pub use product_daemon::{
+    LoadedProductCodexBrokerConfigurationV1, ProductBundleAuthorityKeyV1,
+    ProductCgroupConfigurationV1, ProductCodexBrokerConfigurationIdentityV1,
+    ProductCodexBrokerConfigurationV1, ProductCodexBrokerDaemonError,
+    ProductCommitAcknowledgementConfigurationV2, ProductCommitBindingSourceV2,
+    ProductJournalConfigurationV1, ProductListenerConfigurationV1,
+    ProductProcessLimitsConfigurationV1, ProductRuntimeConfigurationV1,
+    ProductServerConfigurationV1, compose_product_codex_broker,
+    load_product_codex_broker_configuration, run_product_codex_broker,
+};
+pub use response::{
+    BrokerMachineCodeV1, BrokerResponseError, BrokerResponseFramePolicyV1, BrokerResponseKindV1,
+    BrokerResponseV1, read_response_frame, write_response_frame,
+};
+pub use server::{
+    BrokerClockV1, BrokerOperationDispatcherV1, BrokerServerError, BrokerServerPolicyV1,
+    BrokerServerRunSummaryV1, BrokerServerV1, SystemBrokerClockV1,
+};
+pub use service::{BrokerReservationV1, BrokerStateError, admit_and_reserve_unix_stream};
+pub use telemetry::{BrokerTelemetrySnapshotV1, BrokerTelemetryV1};
+pub use trust_bundle::{
+    AcceptedCapabilityTrustCheckpointV1, CapabilityBundleAuthorityV1, CapabilityKeyRevocationV1,
+    CapabilityTrustBundleManagerV1, CapabilityTrustBundleV1, CapabilityTrustKeyV1,
+    SignedCapabilityTrustBundleV1, TrustBundleDisableReasonV1, TrustBundleError,
+    VerifiedCapabilityTrustBundleV1, trust_bundle_signing_bytes, verify_capability_trust_bundle,
+};
+pub use trust_source::{
+    CapabilityTrustBundleSourceIdentityV1, CapabilityTrustBundleSourceInstallError,
+    CapabilityTrustBundleSourcePolicyV1, LoadedSignedCapabilityTrustBundleV1,
+    TrustBundleSourceError, install_signed_capability_trust_bundle_from_source,
+    load_signed_capability_trust_bundle,
+};
+
+pub use delivery::{
+    BrokerPreparedDeliveryV1, load_codex_prepared_delivery, read_prepared_delivery_frame,
+    write_prepared_delivery_frame,
+};
+
+pub use client::{
+    BrokerResultClientError, acknowledge_committed_result_v2, dispatch_signed_operation,
+    query_prepared_result,
+};

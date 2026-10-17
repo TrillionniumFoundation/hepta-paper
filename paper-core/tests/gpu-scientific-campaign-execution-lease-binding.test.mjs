@@ -2,9 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  runProcessIsolatedPdePoisson2dIndependentCpuOracle,
-} from '../../paper-adapters/research-verify/process-isolated-pde-poisson-2d-independent-cpu-oracle.mjs';
-import {
   buildGpuScientificCampaignAttemptAuthority,
   buildGpuScientificCampaignExecutionResult,
   verifyGpuScientificCampaignExecutionResult,
@@ -26,6 +23,16 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   createGpuScientificCampaignReleaseFixture,
 } from './support/gpu-scientific-campaign-release-fixture.mjs';
+import {
+  createPdePoisson2dCpuOracleFixtureRunner,
+} from './support/pde-poisson-2d-cpu-oracle-fixture-runner.mjs';
+import {
+  importProcessIsolatedPdePoisson2dIndependentCpuOracleForTest,
+  withPdePoisson2dCpuOracleSandboxRunnerForTest,
+} from './support/process-isolated-pde-poisson-2d-independent-cpu-oracle-test-seam.mjs';
+
+const processIsolatedPdeCpuOracleModule =
+  await importProcessIsolatedPdePoisson2dIndependentCpuOracleForTest();
 
 const H = (label) => hashRecord(
   'GpuScientificCampaignExecutionLeaseBindingTest',
@@ -99,7 +106,7 @@ function deepLearningReceiptWithAcquisition(receipt, overrides) {
   return rebuilt;
 }
 
-function pdeScientificReceiptWithAcquisition(receipt, overrides) {
+function pdeScientificReceiptWithAcquisition(receipt, overrides, runtimeRoot) {
   const originalGpuReceipt = receipt.gpuReceipt;
   const originalManifest = originalGpuReceipt.artifactManifest;
   const workerReceipt = workerReceiptWithAcquisition(
@@ -123,12 +130,16 @@ function pdeScientificReceiptWithAcquisition(receipt, overrides) {
     gpuReceipt,
   );
   const cpuOracleAssurance =
-    runProcessIsolatedPdePoisson2dIndependentCpuOracle({
-      artifactRoot: gpuReceipt.outputDirectory,
-      artifactManifest,
-      producerSpecification: gpuReceipt.producerSpecification,
-      absoluteDeadlineEpochMs: gpuReceipt.absoluteDeadlineEpochMs,
-    });
+    withPdePoisson2dCpuOracleSandboxRunnerForTest(
+      createPdePoisson2dCpuOracleFixtureRunner({ runtimeRoot }),
+      () => processIsolatedPdeCpuOracleModule
+        .runProcessIsolatedPdePoisson2dIndependentCpuOracle({
+          artifactRoot: gpuReceipt.outputDirectory,
+          artifactManifest,
+          producerSpecification: gpuReceipt.producerSpecification,
+          absoluteDeadlineEpochMs: gpuReceipt.absoluteDeadlineEpochMs,
+        }),
+    );
   const rebuilt = structuredClone(receipt);
   rebuilt.gpuReceipt = gpuReceipt;
   rebuilt.cpuOracleAssurance = cpuOracleAssurance;
@@ -177,6 +188,10 @@ test('GPU campaign result rejects individually valid task receipts outside one a
   const { executionPlan: plan, node, executionResult: result } = gpu;
   const pdeReceipt = result.taskResults[0].receipt;
   const deepLearningReceipt = result.taskResults[1].receipt;
+  assert.equal(
+    pdeReceipt.cpuOracleAssurance.runtimeAttestation.executableTarget,
+    '/usr/bin/node',
+  );
   const pdeAcquisition = pdeReceipt.gpuReceipt.artifactManifest
     .osSandboxWorkerReceipt.gpuSelectorExecutionLeaseBinding
     .gpuSelectorExecutionLeaseReceipt;
@@ -272,6 +287,7 @@ test('GPU campaign result rejects individually valid task receipts outside one a
     const alteredPdeReceipt = pdeScientificReceiptWithAcquisition(
       pdeReceipt,
       { ownerAuthorityHash },
+      fixture.runtimeRoot,
     );
     const alteredDeepLearningReceipt = deepLearningReceiptWithAcquisition(
       deepLearningReceipt,

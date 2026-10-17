@@ -5,6 +5,9 @@ import {
   PDE_POISSON_2D_CPU_ORACLE_RUNTIME_IMAGE,
   verifyPdePoisson2dCpuOracleResourceBudget,
 } from '../../paper-domain/research/process-isolated-pde-poisson-2d-independent-cpu-oracle-contract.mjs';
+import {
+  PDE_POISSON_2D_CPU_ORACLE_EXECUTABLE_TARGET,
+} from '../../paper-domain/research/pde-poisson-2d-cpu-oracle-runtime-attestation.mjs';
 import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 
 const MAXIMUM_REQUEST_BYTES = 4 * 1024 * 1024;
@@ -22,7 +25,7 @@ export function createPdePoisson2dCpuOracleSandboxRunner(
     throw new TypeError('pde_poisson_2d_cpu_oracle_resource_budget_invalid');
   }
   return createOsSandboxedWorkerRunner({
-    allowedExecutables: [process.execPath],
+    allowedExecutables: [PDE_POISSON_2D_CPU_ORACLE_EXECUTABLE_TARGET],
     allowedRoots: [repositoryRoot],
     dockerImage: PDE_POISSON_2D_CPU_ORACLE_DOCKER_IMAGE,
     maximumTimeoutMs: resourceBudget.timeoutMs,

@@ -1,0 +1,1117 @@
+# Local workflow execution and recovery
+
+This is the current engineering handoff for `hepta-paper-service::workflow` and
+`hepta-local-workflow`. It implements sequential/topologically ordered local and
+shadow orchestration, not complete Node campaign parity or a production daemon.
+No module, work item, qualification or activation is promoted by this document.
+
+## Entry points and actual call chain
+
+`initialize_local_workflow_v1` validates a closed `LocalWorkflowV1`, creates a NEW
+private directory and the existing local-only campaign SQLite database, binds its
+control stream, and fsyncs the immutable definition. It returns a definition digest.
+`operate_local_workflow_v1` revalidates that externally retained digest, takes a
+nonblocking cooperative lock, reads a consistent campaign snapshot, replays the
+control log, verifies every saved step plan and actual CAS byte, and only then
+admits a command. State and budget come from SQLite, not a workflow cursor file.
+
+For a new step the call chain is:
+
+```text
+prior committed result -> hash-verified CAS bytes -> explicit JSON-pointer binding
+-> NativeJobV1 decode and capability validation -> current snapshot and candidate
+-> fsynced immutable step configuration -> run_service_v1
+-> registry / policy / planner / allocator / ServiceExecutorV1
+-> native kernel OR exact executable/code-bound local process OR bound broker backend
+-> prepared results -> independent content verifier -> SQLite commit sequencer
+-> read-only chain recomputation -> optional exact-subject routing gate
+```
+
+This is actual output chaining. A field from a preceding result is never replaced
+by a pre-authored pretend result. The bundled example runs empirical aggregation,
+propositional checking and linear solving; embeds their actual bytes in a
+manuscript; reviews those exact manuscript bytes; builds a bundle containing the
+actual outputs; and prepares a local submission record. The example does not run
+models, discover science, execute general experiments or submit externally.
+
+## Closed wire contracts
+
+`LocalWorkflowV1` contains `version:1`, `template:ServiceRunV1` and `steps` (1–128).
+The template has an empty frontier, revision one, the initial state hash, exact
+canonical registry JSON, policies, capacity, budget and a local writer lease.
+All authority booleans remain false. Each `WorkflowStepV1` carries an ID, module,
+capability, complete resource vector, cost, job template, 0–32 bindings and an
+optional gate. Rust derives reject unknown fields on every typed boundary.
+The complete definition, record and input are at most 16 MiB. Individual inputs
+also remain subject to the smaller native/process worker limits.
+
+Each binding specifies `fromStep`, canonical-artifact `artifactIndex`,
+`targetPointer`, and `encoding` (`utf8`, `json`, `digest`). Only prior steps may be
+referenced; duplicate/overlapping targets, invalid JSON-pointer escapes, absent
+locations and modification of the native job discriminator are rejected. Targets
+are under `/job/`, `/input/`, or `/artifacts/`. All substituted input is decoded
+again as `NativeJobV1`; the admitted native capability must match the typed job.
+
+A gate requires one JSON artifact, an `acceptedPointer` boolean, and a
+`subjectHashPointer` equal to the selected prior artifact. False blocks every
+later step, including packaging. Missing fields, wrong types or another subject
+are integrity errors. A true routing boolean is not authenticated scientific
+review, independent principal evidence, release permission or submission consent.
+
+Resources are conservatively summed across the entire immutable definition;
+checked arithmetic and the initial capacity/budget bound prevent composition of
+individually valid steps into an over-budget workflow. Memory sums are deliberately
+conservative, not measured peaks. Native/process accounting uses admitted bounds,
+not OS metering. Broker charges use the single signed settlement contract below;
+an admitted reservation is never substituted for an actual provider charge. Native,
+process and prepared-only backends require zero provider calls; the explicitly
+selected broker execution backend requires exactly one. External actions and
+central-writer requests remain forbidden in this local surface.
+
+## Command examples
+
+The step definitions consumed by the Rust tests are in
+[`examples/local-workflow-steps.v1.json`](examples/local-workflow-steps.v1.json).
+The template must bind the actual local native implementation digest or an exact
+trusted-process executable/configuration; the test builder demonstrates both.
+
+```sh
+cargo build --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
+hepta-local-workflow init /absolute/definition.json
+hepta-local-workflow status /absolute/new-state sha256:<returned-definition-digest>
+hepta-local-workflow advance /absolute/new-state sha256:<digest> 3 1100
+hepta-local-workflow pause /absolute/new-state sha256:<digest> 3 1200
+hepta-local-workflow resume /absolute/new-state sha256:<digest> 4 1300
+hepta-local-workflow advance /absolute/new-state sha256:<digest> 7 1400
+```
+
+The example clock and revision values are disposable test values, not production
+configuration. Real callers read the current revision and use the live-clock owner within the
+admitted local lease. An explicit timestamp is a deterministic local drill, not
+a monotonic host clock or a trusted-time attestation. `advance` uses an ABSOLUTE target
+step count: retrying target 3 never means execute three additional steps. Pause,
+resume and cancel bind the expected campaign revision; repeated identical state
+transitions are idempotent only at the immediately resulting revision. Cancelled
+and completed campaigns cannot reopen. Status works after lease expiry without
+acquiring a writer; SQLite may coordinate existing WAL readers, so this is not an
+immutable-file inspection guarantee. CLI errors never echo confidential input.
+
+## Persistence, failures and reconciliation
+
+`workflow.json` and `step-NNNN.json` are immutable recovery inputs, mode 0600 in a
+canonical mode-0700 root. The root must be absent on initialization. Initialization
+failure retains an orphan instead of adopting an existing database or deleting
+unknown state. The lock is nonblocking and bound to a regular private inode.
+This is cooperative same-principal integrity, NOT hostile same-UID isolation.
+
+A step configuration is fsynced before the service's durable dispatch intent.
+A crash before invocation may replay that same plan. A native/process prepared result can resume
+through the existing byte-verified cache. An uncommitted broker result additionally
+requires current query-only admission of its original request and exact receipt;
+its cache is not an authorization grant. A committed result advances only through
+the original SQLite log, without re-execution or a second debit. Started work with
+no complete prepared result remains ambiguous and cannot automatically retry.
+Saved plan mutation, CAS corruption, missing objects, unknown journal entries,
+changed definition, stale revisions and clock rollback fail closed. Read-only
+status never repairs missing artifacts. Cancel may stop later dispatch but does
+not erase ambiguity or refund uncertain work.
+
+Pause/cancel are BETWEEN-STEP operations: concurrent commands return busy while an
+advance is running. The ordinary lifecycle API does not promise immediate in-flight cancellation;
+the autonomous CLI signal path below interrupts its currently supervised process group.
+The core sequencer now rejects paused/cancelled/completed campaigns at begin_run,
+before any new executor dispatch; late SQL rejection alone is insufficient.
+A rejected review cannot be resumed into a passing review by toggling lifecycle.
+Appending steps, adding a structural revision round, renewing an unexpired local
+lease or increasing budget now requires the explicit, event-bound amendment API
+in [WORKFLOW_AMENDMENT_HANDOFF.md](WORKFLOW_AMENDMENT_HANDOFF.md). Lifecycle toggles
+alone never alter the definition or clear a rejection.
+
+## Verification and scope of evidence
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane -p hepta-campaign-writer
+```
+
+The workflow suite executes all seven exact document examples, native and actual
+Rust subprocess chains, real SQLite/CAS recovery, process death after COMMIT,
+non-reexecution of an ambiguous failed subprocess, pause/resume/cancel, absolute
+retry, stale revision/clock/lease rejection, tampered saved plans, corrupt/missing
+objects, incorrect review subjects, negative gates, CLI boundaries and lock/path
+rejection. Public control-log replay returns ordinary historical receipts; it
+never creates a production verified-result capability or writer grant.
+
+## Node migration mapping and remaining work
+
+The closest existing Node surface is `operator campaign`, but only local progress,
+status, pause/resume/cancel semantics are source candidates here. The CLI syntax,
+active schema, role evaluation, runtime scheduling and
+external effects are not claimed equivalent. No per-command parity row is promoted.
+The original 57 command routes and all argument-dependent modes remain the audit
+inventory, not seven local-kernel jobs.
+
+The signed request producer, ordinary author/reviewer/revision chain, measured
+settlement and commit-bound ACK contracts are defined below, not separate future
+implementations. Their local IPC tests are not independent live role qualification.
+The canonical [57-route ledger](../migration/NODE_RUST_GAP_CLOSURE.md) owns the
+remaining argument/effect gaps. Installed key custody, real runtime/scientific
+qualification, writer transfer, rollback and Node retirement remain open.
+
+
+## Explicit amendments and structural revision rounds
+
+The current local extension/renewal/budget and structural repair APIs are specified
+in [WORKFLOW_AMENDMENT_HANDOFF.md](WORKFLOW_AMENDMENT_HANDOFF.md). They retain the
+original immutable definition and all committed results. They do not provide live
+model author/reviewer integration, in-flight cancellation, production resource
+metering or automatic business equivalence.
+
+
+## Local operational read commands
+
+These commands project the existing local-only database and verified CAS history;
+they do not introduce another campaign registry, writer or log database:
+
+```sh
+hepta-local-workflow list LIST_REQUEST
+hepta-local-workflow events STATE HASH EVENTS_REQUEST
+hepta-local-workflow logs STATE HASH OFFSET LIMIT
+hepta-local-workflow slo STATE HASH
+```
+
+`list_local_workflows_v1` accepts version 1 and 1–128 explicit `{stateDirectory,
+definitionHash}` references. Roots must be distinct canonical private directories.
+A missing, busy, aliased, corrupted or stale entry rejects the entire response.
+Entries retain request order, omit host paths and writer tokens, and are separately
+consistent; `atomicAcrossWorkflows=false`. There is no host-wide discovery.
+
+`inspect_local_workflow_v1` verifies the original definition, amendments, saved
+plans, receipts and actual CAS bytes under the existing cooperative workflow lock.
+It does not acquire a writer lease. Inspection remains available after lease
+expiry. It never recreates missing artifacts or performs lifecycle recovery.
+
+`hepta-local-workflow cancel-node STATE HASH STEP_ID REVISION [NOW]` is the
+bounded compatibility path for the incumbent node-cancel command. The local
+topology is strictly sequential: a committed step is already terminal and
+replays as an unchanged no-op; an uncommitted step owns the complete remaining
+suffix, so cancellation terminally fences the workflow. Unknown steps, stale
+revisions and later execution fail closed. A pending/prepared attempt is
+preserved for normal reconciliation rather than deleted or refunded. This is
+not a claim of arbitrary DAG cancellation or production worker teardown.
+
+| Command | Input | Output and boundary |
+|---|---|---|
+| `events` | Closed JSON `{action:"events", cursor:null, limit:2}`; limit 1–256. Supply the returned `nextCursor` for another page. | Hash-only SQLite event metadata. Cursor binds campaign, last delivered global sequence/hash and frozen snapshot sequence/hash. Events appended later stay outside that page series. Altered/deleted anchors or a corrupt chain fail closed. Filtering a campaign can leave global sequence gaps. Full-chain verification is capped at 100000 events, not a production retention strategy. |
+| `logs` | Absolute zero-based committed-step offset 0–128 and limit 1–256. Offset beyond current committed history fails. | Actual result/committed-state/artifact hashes and charges; `nextOffset` is null at end. No raw worker stdout, prompts, manuscript text or Node log-filter equivalence. |
+| `slo` | Exact active definition hash; no extra arguments. | Verified progress, spent/remaining budget, pending plan, structural gate and amendment counts. `productionSloQualified=false`: no invented uptime, latency percentile or production error-budget claim. |
+
+The closed [inspection request schema](schemas/local-workflow-inspection-request-v1.schema.json),
+[response schema](schemas/local-workflow-inspection-response-v1.schema.json),
+[list request schema](schemas/local-workflow-list-request-v1.schema.json), and
+[executable requests](examples/local-inspection-requests.v1.json) are part of this
+version. JSON uses snake_case action/kind values and camelCase object fields.
+Commands read at most 16 MiB of request bytes and reject unknown fields, links at
+the request leaf, invalid limits and mismatched query kinds. Filesystem, busy,
+definition and history errors use the existing redacted `WorkflowError` classes;
+CLI rejection emits no partial JSON or user-supplied diagnostic text.
+
+SQLite can coordinate existing WAL readers; read-only does not mean immutable
+sidecar bytes. Same-UID arbitrary writers remain within the existing trusted
+local boundary. These projections are not authenticated event provenance,
+production monitoring or independently accepted Node parity.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-campaign-writer local_event_
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+node --test paper-core/tests/module-work-state-projection.test.mjs
+```
+
+The workflow tests import the exact documented requests, execute real kernels
+and SQLite operations, validate real responses against the committed schemas,
+and invoke the actual CLI binary. Storage tests include cursor filtering,
+corruption, sequence relabeling, marker denial and unsafe paths. No activation,
+cutover, full parity or Node-retirement state is advanced by these tests.
+
+## Exact scientific programs and named output bindings
+
+The [scientific runtime handoff](SCIENTIFIC_RUNTIME_HANDOFF.md) adds actual trusted
+local tool execution through the existing process-worker boundary. An optional
+`artifactName` selects a named file from a closed, content-verified scientific
+manifest; `artifactIndex` must then be zero. The resolver checks the entire named
+output set against the prior committed result and actual CAS bytes. Missing or
+changed bytes stop downstream dispatch, not the historical experiment's replay.
+Omitting the optional field preserves serialization of existing definitions.
+
+The source supports Python/R empirical and numerical programs, Lean compilation
+and one-to-three-pass pdfLaTeX compilation; runtime support is not independent
+scientific acceptance. Python and tool-equipped LaTeX scenarios are executed by
+the new tests; R/Lean are not claimed as runtime-qualified. None of this supplies
+live model author/reviewer integration, a hostile-code sandbox, a second writer,
+production deployment or complete Node command parity.
+
+## Scoped maintenance and recovery
+
+See the [maintenance/recovery contract](../../rust/crates/hepta-paper-service/MAINTENANCE.md)
+for immutable event/projection replay, exact original-path backup restoration and
+native-only GC quarantine. Ordinary workflow `cancel` remains a between-step
+lifecycle command; this source tree does not implement in-flight `cancel-node`.
+Pending starts and unclassified attempt residue block semantic recovery and GC;
+they cannot become completed work or permission for an automatic retry. Partial
+local source mappings are not accepted full Node operator semantics.
+
+
+## Autonomous research command composition
+
+The normal registry entry is `hepta-paper-rust operator autonomous-research -- --paper-id ID --runtime-root ABSOLUTE_PATH --action converge`. It validates the incumbent option grammar before routing supported inputs to the existing business owner; known unsupported Node modes still refuse and remain partial. The flat `autonomous-research` entry retains the same native business owner. Invalid OS argument encodings refuse cleanly before runtime or authority IO.
+
+The ordinary business entry accepts `--paper-id`, an optional `--campaign-id`,
+`--runtime-root` and a lifecycle `--action`. It reads the private, versioned
+`autonomous-research-request.v1.json` under that runtime root. The request supplies
+the objective, independent author/reviewer role endpoints and resource/cost
+limits, review rubric, revision instructions/round bound, total budget/wall bound
+and optional expected research profile. It supplies no workflow, frontier,
+completion or accepted-review claim. `autonomous_research::campaign` derives the
+existing workflow/policy/registry/frontier and reuses its service/CAS/sequencer.
+A rejected independent review causes a bounded ordinary amendment and another
+author/reviewer pair; accepted review closes the campaign. Every role result
+still needs actual signed cost settlement and commit-bound ACK.
+
+First-use `--objective`, `--revision-rounds`, `--max-cost-usd`,
+`--max-wall-ms` and `--max-agent-calls` select the effective business request. Cost/wall inputs use the
+incumbent Number-string owner and local golden ceilings (100 USD and 7200000
+milliseconds), then narrow the valid configured request ceilings. The durable
+owner represents whole microUSD and milliseconds. Cost conversion admits only
+an exact inverse Number round trip, including 123/249 microUSD binary tails;
+fractional units explicitly refuse, and invalid/nonfinite/negative numbers do
+not become permits. The original request must remain valid before narrowing.
+Prepare does not persist a campaign; a zero or insufficient effective dispatch
+budget fails the existing provider/whole-workflow admission.
+
+The immutable initial CAS subject binds the effective request and original
+configuration hash separately. Reopening verifies the existing owner/history
+and retained CAS bytes, so callers need not repeat first-use overrides. A
+repeated budget whose normalized value matches the first effective request is
+accepted; a different effective budget, changed configuration, missing/corrupt
+initial request or expanded ceiling refuses. Equivalent Number spellings do not
+silently amend a budget. Status/replay preserve committed results; unknown
+provider results query the original issued request with no second dispatch.
+
+The actual ordinary Node CLI normalizes omitted/local-run mode to
+`golden-bootstrap` before selecting budgets. Agent calls default to 48, narrow
+finite values above 512 to 512, then narrow the configured version1 request's
+optional `maxAgentCalls` ceiling. A larger configured ceiling never raises the
+omitted-flag default. `production-run` has a separate default of 64 and no 512 ceiling; that mode
+still lacks native production authority and is not claimed by this local route.
+Whole agent calls use the existing Number-string owner; fractional values below
+512 remain an explicit protocol gap, zero cannot admit a broker dispatch.
+
+The first CAS request and `LocalWorkflowV1.providerCallBudget` bind the same
+version1 ceiling. Existing workflow locking and authenticated committed history
+count one call for each BrokerExecute step; the current frozen pending plan
+retains its slot through unavailable/unknown outcomes, TERM/KILL and cancellation.
+Query and commit-bound ACK retries revisit that slot without another reservation.
+Admission checks the cumulative ceiling before creating the next plan or payload;
+review-repair amendments keep the same limit and already committed prefix. This
+is distinct from snapshot resource limits, which describe selected-plan capacity.
+Old requests/workflows omit the optional fields and keep their original bytes and
+typed hashes; reopening does not silently install or expand a new ceiling.
+The conservative pre-external frozen-plan reservation is not general parity with
+Node's proven pre-external refund/requeue or arbitrary multi-attempt accounting.
+The ordinary source tests drive actual launch/converge, signed settlement,
+commit-bound ACK and held-child TERM/KILL recovery through the existing owners.
+Their bounded local protocol peers are not independently authenticated installed
+provider accounts. Remaining Node budget/resource modes, independent route
+acceptance and target-host/provider qualification remain partial.
+
+Each role may carry an installed `operationPublisher` policy. The core authority
+publishes the actual protected input, prompt, output schema, original signed
+request and finally the bound descriptor in the role's operation directory.
+Publication is private, identity checked and no-clobber. Recovery retains original
+bytes/hashes and does not adopt rotated live prompt inputs or reissue execution.
+Each new file is written to a private stage, synced and made immutable before an
+atomic no-replace rename. A pre-dispatch retry may discard only its owner-locked,
+single-link regular stage; symlink, hardlink, foreign or unexpected-mode stages
+refuse. Published files keep their original inode and bytes. Old torn final files
+remain refused for inspection. The descriptor still appears last, and no stage
+can authorize a broker operation. Actual child-process kills cover all four file
+kinds before writing, after stage sync and after publication; this is source
+recovery evidence and grants no target-host or live provider acceptance.
+The reviewer mutation policy is read-only; author/reviewer workspace/policy hashes
+remain distinct. A qualified research profile requires both installed publishers
+and independently admitted principals. These business inputs and cross-UID
+fixtures grant no scientific, installed, release or submission acceptance.
+
+The separately supported explicit workflow mode accepts an `--workflow-file ABSOLUTE_JSON_PATH` in `local-run` mode. The file is
+a closed `LocalWorkflowV1`, not another plan, ledger or provider authorization.
+`--campaign-id` must match its template; a supplied `--paper-id` must also match
+`autonomous-research:<paper-id>`. Files are bounded to 16 MiB, private, current-UID,
+single-link, canonical and stable across the read. Unknown typed fields fail.
+
+A definition may carry one versioned `researchProfile`. That record is only a
+persisted identity constraint: it contains the exact V3 subject, opaque closure
+hash, trust generation, exclusive expiry and qualified runtime identity. It also
+contains explicit `automaticActivation`, `productionActivation`,
+`releaseAuthority` and `submissionAuthority` fields, all of which must be false.
+The canonical V3 receipt emits `researchWorkflowProfile`, a directly reusable
+**canary-only** object with exactly that closed shape. This removes the bootstrap
+cycle: first run `hepta-qualification-closure`, copy only that object into the
+workflow definition, and retain the same request for the advancing invocation.
+The receipt object is diagnostic identity, not authority, and it cannot mint the
+`established` stage.
+
+For `launch` or `converge`, a profile-bound definition requires
+`--research-qualification-request ABSOLUTE_JSON_PATH`. The command calls the
+canonical qualification-closure owner, verifies the five independently signed
+V3 packages or the four signed V4 safety packages, and compares the fully verified opaque value with the persisted
+profile before the replay-ledger transaction. A mismatch consumes no nonce and
+advances no trust or verifier-clock state. Receipt JSON is never deserialized
+into authority; every new dispatch receives and rechecks the opaque Rust value.
+
+The ordinary workflow runner refuses to advance a profile-bound definition.
+Only `operate_research_local_workflow_with_clock_and_cancellation_v1` can supply
+the exact opaque value to the existing owner and wrap each newly dispatched
+service wave in the restricted policy. Read-only status and revision-bound
+pause/resume/cancel remain available through the original owner without turning
+the persisted profile into authority, including after qualification expiry while
+the separate writer lease remains live. These lifecycle operations neither debit
+execution budget nor create attempts; exact cancellation replay is idempotent and
+cannot reopen the terminal campaign. Exact committed replay performs no new
+service dispatch. Missing, wrong-scope, stale, revoked or mismatched
+qualification requests fail before workflow initialization or another effect.
+
+`--action prepare` validates and hashes the definition without opening or
+creating campaign state. `launch` initializes only an absent state root through
+`initialize_local_workflow_v1`, then uses `operate_local_workflow_with_clock_and_cancellation_v1`; an existing
+root must have the exact retained definition and valid owner history. Partial
+initialization and ambiguous dispatch are preserved, never cleaned into success.
+`launch` and `converge` accept `--through-steps N`, an absolute endpoint (default:
+all steps), so response-loss retries cannot append extra steps or charges.
+`status` reads through the same owner without a writer, including after expiry.
+
+`pause`, `resume`, and `cancel` require `--expected-revision N` from the latest
+owner status. Stale revisions and reopening a cancelled campaign fail. This is
+between-step cancellation, not interruption of an already running provider.
+Mutations sample actual system time at entry and through the same workflow and
+service owner. `ControlPlaneV1::run_with_clock` repeats snapshot/lease admission
+before every dependency wave and finalization, and passes the same live
+admission callback to the executor before each individual request handoff within
+a wave. The service retains its existing directory lock for the entire wave;
+a refused later handoff preserves earlier prepared bytes and all reservations.
+The time check alone is not atomic process-start authority or in-flight termination. The existing SQLite sequencer
+passes the host clock into the result transaction: samples after `BEGIN IMMEDIATE`
+and immediately before `COMMIT` reject expiry, backward time and clock failure.
+Lifecycle writes apply the same transaction checks and capture their response
+before commit, with no fallible post-commit reread. A failed final check rolls
+back the whole result batch or lifecycle event; after dispatch the runtime retains
+its inspection guard and charges. Already committed workflow steps and durable
+prepared caches survive a later expiry; an expired restart cannot relaunch work.
+
+The original supplied-time APIs remain deterministic compatibility/library
+entrypoints. They are not live-clock substitutes for the CLI. The clock-only compatibility path does
+not renew leases, kill in-flight workers, provide a continuously running timer,
+prove an independent trusted wall clock, or authorize production. Expiry after
+the final precommit sample or ambiguity in the COMMIT I/O itself is not made
+impossible by a timestamp check.
+Inspection entrypoints cannot mutate even when called directly with forged
+options. Production, golden-bootstrap and full-readiness requests fail before
+state creation. Omitting `--workflow-file` preserves the previous diagnostic.
+
+The report's `ready` means only that this bounded local operation succeeded;
+`readinessScope=local_workflow_operation_only` and `fullResearchReady=false`.
+Scientific acceptance, production activation and Node retirement remain false.
+For an advancing definition containing Process, BrokerExecute or BrokerPrepared
+workers, provider/external/network outcomes are conservatively null (unobserved)
+and `externalActionMayHaveStarted=true`. A missing ACK, signal or broker response
+cannot prove that no effect occurred. Prepared-only queries can recover an ACK;
+this bound does not claim they dispatched a provider. Likewise, an IPC-free
+committed replay is not reported as a newly observed execution. These fields
+never authorize retry, refund or retirement: the original durable owner decides
+query-only recovery, exact ACK delivery and non-reexecution. Read-only status and
+pre-dispatch admission refusal do not imply that historical work was effect-free.
+An execution error retains the original recovery inputs and requires inspection.
+No private request content or raw worker diagnostics is printed by this wrapper.
+
+Run from the repository root:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test autonomous_research_route --test durable_service
+```
+
+`tests/local_workflow/autonomous_entrypoint.rs` invokes the actual command and
+reuses the existing workflow fixtures. It checks seven-step durable progress,
+absolute-endpoint retries, shared status with `hepta-local-workflow`, budget
+conservation, stale-revision rejection, pause/resume/terminal cancel, request
+substitution, private/oversize/symlink refusal, profile-bound refusal before
+state creation, actual pinned Rust workers and a crashing child that is not
+relaunched by repeated fresh CLI processes. These
+are local composition tests, not live author/reviewer scientific evaluation,
+independent command acceptance, installed host qualification or Node cutover.
+
+### Exact-source execution evidence
+
+The existing `production-composition-source` bundle in
+`docs/system/evidence/rust-functional-source-closure-v1.json` now binds the
+autonomous CLI adapter, its local entry, the existing workflow owner and the
+registered `autonomous_entrypoint::` and broker recovery selectors. The existing exact-head and
+prospective-merge jobs execute those tests, including the real Rust child worker
+and crash/no-relaunch case. A zero exit code, discovery-only run, ignored test or
+zero matching tests is not accepted as executed evidence. The verifier requires
+the exact successful libtest selector and nonempty successful test totals; Node
+owner tests likewise require nonempty TAP execution without skips or todos.
+These transcript checks complement exact source/discovery binding; they are not
+independent producer authentication or scientific acceptance. No new workflow,
+scheduler, state owner, migration inventory or production authority is created.
+
+### Live-clock regression execution
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-control-plane --lib tests::runtime_clock::
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow clock::
+```
+
+Controlled clocks exercise actual SQLite/CAS/owner paths without sleeps: expiry
+or rollback between dependency waves; expiry after final preparation; a failing
+precommit clock after both result rows were staged; lifecycle rollback; a
+clock-free status read; preservation of a prior workflow commit and prepared
+bytes after the next step expires. The existing autonomous-entrypoint tests run
+the CLI with its real system clock and real Rust children. These are source
+regressions, not full research-role parity or target-host acceptance.
+
+
+The tool-equipped migration lane also exercises the actual autonomous CLI with
+an R scientific program through the existing `hepta-scientific-worker`, durable
+workflow and SQLite/CAS owners. `scientific_workflow` runs with `--include-ignored`:
+separate CLI processes prepare, partially launch, inspect, converge and replay
+without a second scientific execution or budget debit. The named real R result
+feeds the existing manuscript and bundle kernels. See the
+[installed scientific-tool lane](SCIENTIFIC_RUNTIME_HANDOFF.md#mandatory-installed-tool-migration-lane)
+for exact source/tool observations and retained raw outputs. This local program
+case does not implement model-driven research or grant production authority.
+
+## Autonomous CLI process interruption
+
+`hepta-paper-rust autonomous-research` installs SIGINT/SIGTERM handlers only in
+its command process before opening a mutating workflow. The handlers set one
+sticky atomic flag; library calls never install signal handlers or alter signal
+masks. `execute_autonomous_research_with_cancellation_v1` carries that flag
+through the current workflow, service, executor and Codex-runtime process owner.
+The existing fixed-time and live-clock APIs remain compatibility wrappers around
+that same implementation. No second writer, scheduler, result journal or daemon
+is introduced.
+
+A flag observed before dispatch prevents a new start. A running process is
+interrupted through `run_bounded_process_with_cancellation`: the existing
+bounded TERM/KILL escalation, child reaping and process-group cleanup still apply.
+The same token is checked before and after time observations at admission and
+SQLite precommit boundaries. A token is not an atomic check-and-COMMIT protocol:
+a signal racing a completed commit does not erase committed data, and a result
+already durably committed remains discoverable from normal status/replay.
+
+The report adds `interruptionRequested` and sets `cancellationScope` to
+`signal_process_group_and_commit_boundaries`. An interrupted execution returns
+a bounded non-success report and retains the original pending plan, dispatch
+intent and prepared bytes. Complete prepared results can be integrated by a
+subsequent explicit invocation without repeating execution or budget debit.
+Started work without complete prepared output stays ambiguous and cannot be
+restarted automatically. The signal itself does not write a Cancelled lifecycle.
+A later explicit revision-bound `cancel` can close future admission but must
+retain `pendingStep=true` and cannot settle or refund uncertain effects.
+
+This is supervision of declared trusted-local processes, not a hostile-code
+sandbox or proof that a descendant which escaped the group has terminated.
+Native in-process kernels are bounded but not preempted mid-calculation. Worker
+network/provider effects remain unobserved; a dead process is not a remote
+terminal receipt. Automatic renewal, remote cancellation and production authority
+are not supplied.
+
+Executable coverage in `tests/local_workflow/interruption.rs` uses the actual
+Rust autonomous CLI and a small explicitly declared Python worker with its real
+child process. It tests SIGINT and SIGTERM, both process deaths, no second step,
+retained pending execution and no relaunch after CLI restart, revision-bound
+cancellation without clearing residue, pre-dispatch refusal and prepared-result
+replay preserving earlier committed steps. This is not a live model fixture.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --test local_workflow
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --lib
+```
+
+## Broker-prepared result consumption
+
+The existing service and local workflow now accept `WorkerBindingV1::BrokerPrepared`
+(`kind: broker_prepared`, `source: BrokerPreparedSourceV1`) with a matching
+`NativeJobV1::BrokerPrepared` (`kind: broker_prepared`, `input: BrokerPreparedInputV1`).
+The implementation is `rust/crates/hepta-paper-service/src/broker_prepared.rs`.
+Its registry execution is `InProcess`, with the hash returned by
+`broker_prepared_implementation_hash_v1(&source)`, not the native-kernel hash.
+There is no subprocess or provider dispatch in this backend.
+
+The source closes the absolute broker socket, its expected UID/GID, canonical
+request directory and its owner UID/GID, role, runtime identity and 1–30000 ms
+query deadline. The input closes version 1, task kind, prompt-envelope hash,
+workspace and mutation-policy hashes, output-schema hash and the desired input
+manifest. That manifest is bounded to 1 MiB of Serde JSON; its SHA-256 must match
+the original broker request. Previous workflow artifacts can enter it through
+ordinary `/input/inputManifest/...` bindings. Roles are Author/Repairer for
+CAP-AUTHOR, Reviewer for CAP-REVIEW and FormalReviewer for CAP-FORMAL.
+
+The selected request owner publishes the original canonical signed request as
+`hex(SHA256(local_attempt_id_utf8)).json` in the configured request directory.
+`broker_prepared_request_filename_v1` supplies the exact filename. The operation
+ID and attempt ID must both equal the actual selected local attempt; campaign,
+step, planning revision and writer generation must match the existing service.
+Request files must be single-link regular files, mode 0400 or 0440. Original
+file descriptors and directory identity are retained through the query.
+Publishing a request after plan selection avoids putting an attempt-dependent
+signature into the very payload from which that attempt is derived.
+
+The client checks the socket object and kernel peer before sending the existing
+read-only result-query frame. Connection backlog pressure fails immediately;
+subsequent I/O uses the shared monotonic transport deadline described below. The
+broker retains signature/currentness checks and never turns this query into a
+reservation or execution. Request, directory and socket identities are checked
+again after the reply. Interrupted queries cannot be accepted locally and never
+become execution permission.
+
+Returned output is verified by the existing broker decoder, stored as one CAS
+artifact, independently read by the service verifier, then committed by the
+existing SQLite sequencer. The original broker receipt and token observation
+remain in private CAS evidence. A source without an explicit billing authority
+continues to charge the admitted candidate upper bound and labels it conservative.
+A source with `costSettlement` must instead capture a current independently signed
+provider settlement, bind it to the exact request, prepared-receipt hash and token
+usage, and pass its actual micro-USD value to the same prepared result and SQLite
+budget transaction. Settlement freshness uses the already-selected service
+admission/commit clock; it does not open a second wall-clock trust path. Request
+cost and token hints may not exceed admission. Reopening a committed result
+neither queries again nor charges again.
+
+An uncommitted `.prepared` file is different. At restart the original SQLite
+sequencer verifies its durable log and exposes an opaque read-only result index;
+only an exact result already in that index may replay without IPC. Otherwise the
+consumer reopens the original pinned request, asks the current broker through
+query-only admission, and compares the complete original evidence and output.
+A withdrawn request, current refusal, changed receipt or changed output cannot
+fall back to cache. Failure retains the exact prepared bytes and start identity;
+a subsequent valid query can commit once without provider re-execution. Query
+currentness is the existing broker's admission boundary, not an atomic distributed
+revocation-and-SQL-COMMIT protocol or a lifetime authorization grant.
+
+A provider result prepared before a failed commit is still unsettled at the
+campaign writer even when it carries a valid billing receipt. The existing
+recovery lock refuses a different incoming plan until the exact prior result and
+actual cost are durably committed. Dependency waves within the same
+already-admitted atomic plan may continue under its existing reservation; a wave
+boundary is not a new plan. The lock does not release budget merely because paired
+`.started`/`.prepared` files exist. Original-plan query recovery remains available.
+No missing or rejected billing receipt is interpreted as a refund or permission
+to re-execute.
+
+Only an exact incoming broker-query identity may revisit its own unresolved
+`.started` record. Other unresolved native/process attempts still fence admission.
+A missing, expired or unprepared result never causes automatic model execution.
+Partial local record/CAS writes still follow the existing inspection-required
+rules; this addition does not claim arbitrary torn-write repair.
+
+The prepared-only form remains a local result consumer, not a model planner,
+provider launcher, billing signer, scientific acceptance or production writer.
+The execute form may use the separately configured hepta-core request signer
+described below, but that signer grants neither product-operation admission nor
+provider credentials: the role broker still verifies the signed request, its own
+qualified operation descriptor and its own credential/runtime identity before
+release. When `commitAcknowledgement` is configured, the existing service sends
+only the post-commit V2 acknowledgement described below; it never mints that
+external signature or replaces the sequencer. The production API continues to
+refuse this backend. Real installed role, billing, acknowledgement and deployment
+principals and live author/reviewer canaries remain separate qualification work.
+Consumer tests use labelled protocol/signing fixtures plus real Unix sockets,
+CAS, SQLite and the ordinary CLI; broker lifecycle tests separately cover signed
+admission, canonical commit resolution and journal transition/restart behavior.
+
+Run `cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service
+--test broker_prepared_consumer` for this consumer regression target.
+
+The [checked-in input example](examples/broker-prepared-input.v1.json) is consumed
+by the executable consumer tests. Its digest strings bind named local fixture
+inputs, not real credentials or accepted scientific evidence. It is only the
+job's `input` body, not a complete service configuration or signed request.
+
+## Hepta-core request-capability issuance
+
+`BrokerRequestSignerSourceV1` is an optional owner on `BrokerExecute`. Its
+configuration contains only an absolute PKCS#8 key path, expected key owner and
+public key, signer identifier, model selector and closed time/output/event/token
+ceilings. Private key bytes are never serialized into workflow JSON, CAS evidence
+or broker frames. The key file is opened no-follow, single-link, owner-only and
+bounded; metadata is compared before and after the read, decoded bytes are held
+in zeroizing storage, and the derived public key must equal the configured key.
+The service principal may hold this campaign request-capability key, but it still
+holds no Codex/provider credential, operation descriptor authority, billing key,
+ACK key, release key or submission authority.
+
+Only a fresh `ExecuteOnce` attempt may invoke this owner. It constructs the
+request from the already selected immutable execution: operation/attempt/plan,
+campaign/node/revision/lease, role/task, runtime and model identities, every
+prompt/input/workspace/schema/mutation hash, provider-call count, cost cap, token
+hint and writer-lease-bounded deadline. Network is fixed to none, approval to
+never and the sandbox follows the closed author/repairer versus reviewer role.
+The capability binds the actual kernel peer UID/GID and is locally verified with
+the same broker contract before publication.
+
+Publication holds the existing request-directory flock and uses descriptor-
+relative `openat`, owner/mode/link checks, file and directory fsync, and
+`renameat2(RENAME_NOREPLACE)`. A conflicting or aliased pending file fails closed;
+a valid final file is subsequently reopened by the existing captured-request
+owner. The signer runs before any broker connection and before `.started`
+persistence. After `.started` exists, recovery is query-only and never remints a
+missing request, even when the private key still exists. A committed result
+replays after both the key and broker disappear.
+
+`request_signing.rs` exercises ordinary `hepta-paper-rust run` issuance, actual
+Ed25519 verification at the kernel-authenticated fixture peer, durable commit and
+offline replay; lost-response query-only recovery without the key; writable,
+mismatched or differently signed requests; pending symlink refusal; and refusal
+to remint after durable intent. The complete author -> reviewer -> revised author -> replacement reviewer
+ordinary autonomous workflow uses this same owner for all four signed requests,
+then independently settles cost, commits SQLite and obtains a V2 commit-bound ACK
+for each result. Fixture keys and peers do not establish independent installed
+principal custody or a live provider canary.
+
+## Signed provider-cost settlement
+
+`ProviderCostSettlementV1` is the single machine contract for measured broker
+cost. The billing authority signs domain-separated bytes containing the exact
+operation/request/prepared-receipt identities, campaign/node/attempt, writer generation, campaign revision, settlement and
+authority-domain identifiers, trust-store generation, complete optional
+`TokenUsage`, actual micro-USD charge, issue time and signer key. Verification
+requires the prepared receipt's own hash to validate, exact token equality, a
+charge no greater than the signed request cap, a current bounded time window and
+a non-weak current Ed25519 key. The configured trust store fixes one expected
+authority-domain identifier; a valid key cannot silently sign for another billing
+domain. An older trust generation, unknown/revoked key, future/expired receipt,
+over-cap charge, changed usage or any subject substitution fails closed.
+
+The configured billing-authority settlement directory is canonical, no-follow
+and not writable by group/other. Files are single-link mode 0400/0440 and named
+`hex(SHA256(attempt_id_utf8)).cost.json`. The service holds only public keys; no
+billing private key enters a workflow or worker configuration. These source
+ownership checks do not prove a distinct installed principal or independent key
+custody; those remain target-host qualification requirements. File, directory
+and request identities are rechecked before the measured charge enters the
+prepared-result evidence. If dispatch has already become uncertain and the
+settlement is missing, recovery remains the original HEPTAQX1 query and cannot
+send another execution. A different later valid settlement cannot rewrite an
+existing uncommitted prepared cache; a durable commit remains replayable after
+the broker and settlement file disappear.
+
+`cost_settlement.rs` in the broker crate covers signature, generation, expiry,
+usage, cap and substitution failures. The service consumer submodule of the same
+name drives the ordinary `run` entry through broker transport, private CAS and
+SQLite: a signed cost of 6 under an admitted cap of 10 leaves budget 94, is stored
+in both result JSON and the control log, and replays without another debit. It
+also covers delayed settlement/query-only recovery, signed over-cap refusal and
+post-preparation settlement replacement, and a future settlement under the
+service clock followed by query-only recovery when that same clock advances.
+Fixture keys and peers are not a live provider billing principal or target-host
+acceptance.
+
+## Commit-bound prepared-result acknowledgement
+
+`CommitBoundPreparedResultAcknowledgementV2` is the single V2 machine contract
+for closing a broker operation after campaign commit. The acknowledgement signs
+the exact original operation, request and prepared-receipt identities, campaign,
+node, attempt, revision and lease generation together with the complete durable
+`CommitReceiptV1` identity and the settled `actualCostMicrousd`. Its authority
+domain, trust-store generation, current bounded time and Ed25519 key are also
+bound. The call-local `newlyCommitted` replay bit is deliberately excluded; it
+cannot change the durable transition identity.
+
+The normal service crosses the existing SQLite sequencer transaction first. Only
+then does it capture the authority-owned mode-0400/0440 acknowledgement file,
+compare every signed field with the actual prepared result and returned commit
+receipt, and durably select the exact signed ACK before sending the canonical
+`HEPTAAX2` frame to the original kernel-authenticated role broker. Failure before commit sends no acknowledgement. Missing authority,
+invalid bytes or an uncertain reply returns `PostCommitAcknowledgement` while
+retaining the successful commit. The local-workflow owner does not treat that
+committed prefix as ACK completion: on `advance` it reopens each frozen step plan,
+reconstructs the exact target from retained CAS evidence and durable receipt, and
+retries the identical acknowledgement before gate handling or later-step
+admission. This path never calls the provider or debits cost again. A private
+durable marker is written only after a bound broker response, allowing later
+offline replay without claiming that an unobserved reply succeeded.
+
+The existing ACK owner stores `<result-hash>.intent.json` in its private
+`commit-acknowledgements-v2` directory before transport. Every retry reopens the
+current authority-owned receipt and rechecks signature, trust generation, expiry,
+subject and commit, then requires the exact selected signed bytes. A new valid
+signature or timestamp cannot replace an uncertain ACK. Missing authority input
+remains blocked: the local intent is not a replay authorization. Only the bound
+successful broker response permits `<result-hash>.json` confirmation. Old valid
+V2 confirmations without an intent companion remain historical replay inputs;
+a present conflicting or corrupt companion is never ignored.
+
+Unconfirmed ACK delivery reuses the service/workflow's selected clock, including
+its retained research-trust checks. Each target observes currentness at entry,
+after capturing the authority input, after durable intent publication, and after
+peer connection immediately before the ACK frame handoff. A prior commit or an
+earlier ACK's timestamp cannot authorize a later send. Expiry, clock failure,
+backward time, cancellation or authority-input replacement stops the handoff;
+the exact durable intent and original result/charge remain for recovery. The
+captured ACK file is checked again after the clock callback because that callback
+can perform trust I/O. Every retry re-verifies the same selected signed fact.
+
+A bound successful broker reply is still recorded as a confirmation without a
+new post-reply clock check: subsequent expiry does not undo an already accepted
+historical fact. This does not grant an atomic clock-to-send or hostile-same-UID
+guarantee; the broker retains its own signed-subject and persisted-commit checks.
+No wire version, recovery journal, writer lease or authority scope is changed.
+
+Both records use descriptor-relative exclusive staging, file fsync, no-replace
+rename, and directory/state fsync. A crash before rename leaves an unselected
+pending inode; retry uses a fresh stage and preserves the old bytes. A crash after
+rename reopens and synchronizes the exact final record. Truncated legacy final
+records and dangling links fail closed; this path never repairs, unlinks or adopts
+them. Parent/temporary inode replacement rejects publication and leaves foreign
+entries untouched. These are cooperative local-owner guarantees, not hostile
+same-UID filesystem isolation or permission to migrate the installed Node writer.
+Pending-file retention/cleanup and physical power-loss qualification remain
+separate maintenance and target-host concerns.
+
+The ordinary CLI regression kills its own ACK-sending child after the exact frame
+is observed, then restarts through the normal entry and resends only that ACK,
+with no provider dispatch or second debit. Storage-owner regressions exercise real
+SIGKILL at ten intent/confirmation publication checkpoints, retained partial bytes,
+conflicting selection, aliases and inode replacement. Neither a stored intent nor
+a test fixture claims installed signer custody, release or submission authority.
+
+The broker does not trust the acknowledgement's commit fields merely because its
+signature is valid. `SqliteCommitBindingResolverV2` opens the configured canonical
+campaign-writer database read-only, checks owner/mode/link/schema and the explicit
+`local_only` or `activated_rust_writer` scope, then uses
+`replay_control_log_v1` to recompute the entire sequencer receipt chain. The exact
+attempt's resolved plan, sequence, result, verifier, verification receipt,
+committed state and cost must equal the signed body before the existing
+`ResultPrepared -> Acknowledged` transition can commit. Local state cannot be
+presented as an activated writer, and a re-signed substituted commit is rejected.
+This is a read of the existing owner, not a second commit ledger or a source-text
+shape check.
+
+Installed product configuration must therefore provide both public ACK trust and
+`commitBindingSource` with an absolute database path, expected owner, bounded
+SQLite policy and explicit scope. Absence is fail-closed. When measured billing
+and commit acknowledgement are both configured, the service also rejects a
+shared authority domain, shared immutable-receipt directory or overlapping
+public signing key. This enforces distinct logical authorities in source; the
+fixtures may still share one Unix account, so distinct installed principals and
+key custody remain target-host qualification requirements. File access for a
+separately installed broker principal remains a target-host permission and
+revocation qualification requirement; source code does not weaken the campaign
+database's mode to make the test pass.
+
+The service `commit_acknowledgement` regressions drive actual execution, signed
+cost settlement, CAS, durable SQLite commit, ACK loss/restart, expired and
+revoked-generation refusal, substitution rejection and offline replay through
+the ordinary entry. The revision regression
+commits and acknowledges author, reviewer, revised-author and replacement-reviewer
+steps. Broker lifecycle tests cover response loss and terminal idempotence with
+real signed admission and journal persistence. Fixture keys and peers are not
+installed independent principals or external-authority acceptance.
+
+## Explicit signed broker execution and recovery
+
+`WorkerBindingV1::BrokerExecute` and `NativeJobV1::BrokerExecute` use wire kind
+`broker_execute`. They reuse the source/input types and exact signed-request
+ownership rules above, but the registry must bind
+`broker_execution_implementation_hash_v1`, never the prepared-only hash. A step
+reserves exactly one `provider_calls` unit; the local workflow still forbids
+external actions and central-writer turns. Native and prepared-only backends
+retain their zero-provider-call contract. The request may be pre-published by an
+external authority only when `requestSigner` is absent, or generated by the
+optional hepta-core owner above. When that owner is configured, an already
+published request must verify under the same configured public key and exact
+attempt/plan/role/cost/lease bindings; another otherwise broker-trusted signer
+cannot bypass the selected owner. In every case the real broker, not service JSON,
+verifies the current capability and separately qualified product operation before
+a provider can start.
+
+On a fresh attempt, the optional signer first publishes the exact immutable
+request. The service then captures and validates it, connects the selected
+endpoint and authenticates its kernel peer before writing any dispatch intent. A
+missing, malformed or mismatched request, missing/stale socket or denied peer
+leaves no `.started` record and may be retried with the same immutable operation.
+Only after these local checks does it fsync the existing `.started` record,
+revalidate the held request and cancellation, and send one execution frame. No error after intent persistence deletes that record
+or authorizes a second execution. `dispatch_signed_operation` requires the
+expected kernel peer and exact operation/request response binding. Reservation,
+running or rejected state is not a prepared result. On a prepared response it
+opens another connection, requests the bytes using the original read-only query,
+and verifies the same prepared receipt before the existing CAS/verifier/SQLite
+path can accept it. Request-file and socket identities stay pinned; elapsed
+request capture, execution response and result query share a 1–30000 ms budget.
+The normal `run` and stdin `serve` entrypoints choose the live host clock for this
+backend, reusing post-lock, per-dispatch and commit checks. Serialized old time
+cannot make an expired writer lease current.
+
+Any restart or error after `.started` exists selects query-only recovery. It
+never resends the execution frame, even when a request was not delivered or an
+initial busy reply arrived. Missing/unprepared results remain unresolved until
+an explicit owning reconciliation; no guessed failure releases the identity.
+Other unresolved native/process/broker attempts still fence new admission. The
+backend identity participates in the existing attempt hash, so changing a worker
+kind cannot convert an ambiguous effect into a fresh query or another execution.
+A completed local commit replays without IPC or another debit. An uncommitted
+prepared cache must instead pass the current query-only checks above.
+
+Both broker backends use `with_interruptible_transport` for execution responses
+and result queries. One monotonic deadline covers the complete exchange,
+including partial frames, rather than restarting on each read. A scoped watcher
+checks the existing sticky cancellation token at intervals of at most 10 ms and
+shuts down only this invocation's Unix transport on interruption or deadline.
+The watcher is joined before returning; completed exchanges leave no task that
+could close a later use of the socket. Scheduling latency is host-dependent, not
+a hard real-time guarantee. A final interruption check refuses a raced success.
+
+The ordinary autonomous CLI already forwards SIGINT/SIGTERM through this token;
+it can now leave a blocked broker wait without waiting for the socket timeout.
+The durable `.started` record survives. A new process queries the original
+operation, commits the recovered bytes through the existing verifier/sequencer,
+and replays without IPC or another debit. Closing IPC is not a remote cancel ACK,
+proof of provider termination, settled failure, or permission to refund/reissue.
+The observed provider usage is retained. Accounting consumes a verified measured
+charge only when the source names the signed billing authority above; otherwise
+it explicitly retains the admitted upper bound. The optional request-capability
+key is the only local signing material in this path; billing and acknowledgement
+signatures remain external, and no scientific quality, release/submission or
+installed production acceptance is synthesized. A configured ACK is post-commit
+and independently resolved as specified above. Both broker backends remain
+refused by the existing full production-writer API.
+
+The `broker_prepared_consumer` target exercises both ordinary CLI/workflow
+backends, first execution, query-only recovery after lost response, malformed
+response identity, reservation-only refusal, stale CLI clock and unrelated
+ambiguity. It also exercises cancellation of execution/query waits through the
+normal workflow and SIGINT/SIGTERM through the actual autonomous CLI, followed
+by independent-process query-only recovery, durable commit and replay. Unit
+tests cover an interrupted partial frame, watcher lifetime and cancellation
+racing a successful response. Its protocol peer is explicitly a fixture. The broker's
+`service_lifecycle` target separately exercises the new typed client against the
+actual signed admission, SQLite journal, supervised fixture process and restart.
+The `cache_admission` submodule drives real service preparation followed by a
+failing precommit clock, then exercises withdrawal, current refusal, exact
+receipt/output preservation, query-only recovery, cross-plan provider fencing and
+offline durable replay. `cost_settlement` separately binds the actual charge and
+proves the existing sequencer debits and replays that value.
+`commit_acknowledgement` then binds the same committed result to the broker
+terminal state and covers lost responses and substitution. `request_signing`
+checks the fresh-only hepta-core issuer and filesystem boundary. These are source
+tests, not live model, billing or ACK canaries.
+
+
+The process-crash fixtures strip debug sections only from their private copied
+Rust executable before binding its hash and read/execute-only mode. The service's
+256 MiB executable bound and all actual crash, pending-intent and non-reexecution
+assertions remain enforced. Shared Cargo executables are never modified. The
+`plan_waves` broker regression separately uses the actual ordinary CLI to commit
+two provider dependency waves in one atomic plan and replay both without IPC.
+This is a labelled local protocol fixture, not independent live research review.
+
+## Attempt-record count admission
+
+The existing dispatch-directory lock now protects capacity preflight for the
+complete incoming execution batch, before its first worker or broker connection.
+`worker_recovery.rs::require_record_capacity` first scans and validates only the
+immutable record names, then counts those records plus both missing records for
+each distinct new attempt. A cached replay consumes no new slot; an
+already-started query-only recovery requires only its missing prepared slot.
+Only a capacity-admissible directory proceeds to full record and evidence-object
+validation, followed by a second name-set check under the same flock. The
+existing hard record bound is not raised, and admission does not delete
+historical evidence or turn an ambiguous provider attempt into a refund/retry.
+
+`capacity_admission.rs` runs the ordinary `hepta-paper-rust run` entry against a
+full, structurally valid inert history and proves no broker connection or new
+start record. At the exact last-pair boundary, actual broker-protocol output goes
+through CAS and SQLite, then the now-full journal replays the committed result
+offline. The inert history is a capacity fixture, not fabricated scientific or
+billing acceptance. Unit cases separately cover multiple incoming attempts,
+duplicate identities, cached results and a query's final prepared slot.
+
+This closes record-count admission for one execution batch, not unlimited
+retention or whole-plan cross-wave storage reservation. The existing aggregate
+byte/read limits, safe compaction, long-running retention and installed recovery
+qualification remain separate constraints. No capacity failure grants provider
+termination, actual cost settlement, production activation or Node retirement.
+
+## Restricted research service profile
+
+`run_research_service_v1` and
+`operate_research_local_workflow_with_clock_and_cancellation_v1` are
+non-serializable compositions around the existing workflow, service, CAS,
+dispatcher and SQLite sequencer. The caller must provide the opaque
+`VerifiedResearchQualificationRequestV3`; receipt JSON, profile strings and
+booleans cannot construct or replace that value. The normal autonomous CLI obtains
+it only from the canonical authority-file verifier/replay owner above. The pure
+`VerifiedResearchQualificationV3` snapshot remains signature evidence, not a live
+execution input; extracting `qualification()` or `into_parts()` cannot satisfy
+these public execution APIs. This is enforced by Rust types and a compile-fail
+contract, not a new ready flag. The exact
+repository/commit/tree subject, opaque closure identity, trust generation,
+exclusive expiry and qualified Codex runtime identity are cross-bound before a
+new service dispatch. Every BrokerExecute/BrokerPrepared source additionally
+matches its exact role UID/GID from the signed canary payload; a shared runtime
+hash cannot substitute an author principal for a reviewer or an unqualified
+role. The ordinary CLI checks these principals before initial workflow creation;
+the service repeats the check before its execution clock, campaign database,
+request issuance and broker I/O. Qualification currentness is checked before filesystem
+mutation and again on every existing service clock observation through dispatch
+and commit. The accepted request retains the original trust-file descriptor and
+ancestor directory descriptors. Linux directory identities use `O_PATH`, so an
+otherwise valid search-only ancestor does not acquire a new directory-read
+permission requirement. Each new service boundary rechecks their exact
+identities, permissions and bounded trust bytes; no authority filename is opened
+or closed while the existing SQLite owner is live. Removed/replaced/symlinked or
+hardlinked trust, changed trust contents, expiry, read failure or clock rollback
+closes that request lifetime. Clones share the invalidation latch; restoring an
+old file or clock cannot reopen a failed handle. A fresh invocation must use the
+original file/signature/replay admission again, not revive a cached receipt.
+The qualified clock returns the new time sampled after the last trust-file I/O,
+so the writer lease and precommit owner do not use an earlier timestamp. The
+normal CLI also checks the retained request before initial workflow creation.
+Signed payloads remain immutable verified evidence and are not repeatedly read
+as an additional evidence pipeline. The public cancellation form forwards the same sticky cooperative
+token; a pre-cancelled run creates no campaign database. A time-window or
+cancellation failure therefore follows the same prepared-result and
+inspection/recovery rules rather than authorizing a fresh effect or claiming
+provider termination.
+
+The version-neutral research request verifier accepts only restricted V3 or V4.
+V4 requires the existing four signed host-cgroup, host-storage, key-owner and
+Codex-role packages, including storage fault recovery and its 10,000-operation,
+72-hour qualification. It omits writer-transfer/cutover evidence and grants no
+release, submission or production activation. Existing `_v3` entrypoints still
+require V3; the retained opaque Rust type name does not let callers construct
+V4 authority from receipt JSON. The signed factory tests exercise V4 receipt
+schema, trust, expiry and replay. The native workflow regression
+`research::tests::principal_binding::restricted_v4_workflow_recovers_native_state_without_writer_transfer`
+uses the existing controlled authority to verify persistent prefix recovery and
+effect-free exact replay with an absent transfer fact; it does not certify an
+installed host or external authority custody.
+
+The profile admits only `TargetHost` research modules in the selected canary or
+established research stage. Registered or selected release verification,
+submission, migration/cutover, external-effect, central-writer module, Process
+worker and legacy Node adapter paths fail closed. Native workers retain their
+existing conservative accounting. Qualified broker prepared/execute workers must
+name both the signed read-only cost-settlement source and commit-acknowledgement
+source above; an execute worker must additionally name the hepta-core request
+signer. A matching runtime identity without the required owner is rejected, and
+the request, billing and ACK public keys/directories may not alias. Prepared-only
+recovery does not gain request-signing authority. Both forms reuse the existing
+implementation hashes, request binding, CAS verification and single sequencer.
+An established receipt is authoritative only for its private research state; its
+canonical body keeps `productionActivation`, `releaseAuthority`,
+`submissionAuthority` and automatic activation false.
+
+This is a source composition, not installed acceptance. It does not make a test
+qualification externally real, bind the currently running executable to a host
+package, provision independent author/reviewer, billing or acknowledgement
+credentials, or implement external trust-store distribution and durable global
+revocation observation. The retained-source guard detects local trusted-file
+changes at existing admission/dispatch/commit observations; it is not an atomic
+revocation-versus-effect transaction, a background watcher, or immediate native
+kernel/provider termination. Cross-restart rejection still requires current
+trusted-source delivery and the existing durable generation/replay owner. The source
+can verify and persist an externally signed actual invoice and send a commit-bound
+ACK whose commit fact is independently resolved; real installed billing/ACK
+principals and their revocation/availability evidence remain outside the test
+fixture. The full production API continues to require the
+distinct V1/V2 closure and cannot accept the V3 research type.
+
+## Versioned broker manuscript repair
+
+The existing amendment owner now admits the bounded broker manuscript revision
+contract described in [the amendment handoff](WORKFLOW_AMENDMENT_HANDOFF.md#broker-manuscript-revision-contract).
+The ordinary autonomous entry binds the rejected assessment and previous
+manuscript into a fresh author/revise input, then requires the unchanged reviewer
+contract over the revised bytes. It preserves rejection, committed history,
+query-only uncertain recovery and the existing resource ceilings. Its broker
+sources may use the hepta-core request signer, measured settlement and
+commit-bound ACK contracts. This closes repository-local request issuance for the
+normal path, but not independent installed role/billing/ACK canaries, live
+revocation/availability evidence or installed research/retirement acceptance.
+
+## Held ordinary paper inventory
+
+`native_inventory::discover_native_inventory_v1` returns a
+`NativeInventoryObservationV1` containing the actual inventory `scan` and the
+held filesystem/database observations. Its caller retains this owner and calls
+`verify_unchanged` before and after building or queuing a batch. The observation
+reuses `runtime_source_cas::SourceObservation` for selected files, directory
+entries and retained missing edges, and the ordinary read-only store's fixed
+paper/ledger/campaign/venue projection. It does not accept caller-authored task
+or state summaries. SQLite cell coercion metadata is kept separately from the
+unchanged JSON projection, preserving original BLOB/number string conversion.
+
+The inventory rebuilds original PaperTask/state/artifact identity and hashes,
+source/main-TeX selection, quality and submission intent, loose/proposal drafts,
+filtering and YAML fallback. Original SQL query errors reject the complete scan;
+a successful empty query can select the original YAML fallback. Selected aliases,
+hardlinks and files outside the held workspace remain refused. An unselected
+symlink returned by a directory enumeration is not followed. Held observations
+detect changes at rechecks; they do not provide a filesystem transaction or a
+lease against another writer.
+
+The native v1 safety profile retains the fixed SQL projection's existing limits,
+256 KiB registry documents, 16 MiB documents/report, 16,384 enumerated entries,
+64 directory levels and 1 GiB aggregate source reads. Archive reads additionally
+use a 256 MiB inventory limit. JSON scalar conversion refuses unpaired UTF-16 and
+nonfinite values that the original Node path can represent. These explicit
+native differences remain partial compatibility. Cancellation and the supplied
+deadline are checked during the existing observation operations and subsequent
+rechecks; blocking kernel I/O is not preempted by those cooperative checks.
+
+The four inventory regression owners execute the original Node inventory on
+actual registered SQL/filesystem fixtures and compare complete values, including
+state/hash and SQL BLOB semantics. They also exercise actual replacement, missing
+edge creation, cancellation/retry and expiry. They are inventory API evidence,
+not ordinary batch CLI execution, author/reviewer canary, release/submission
+permission or installed cutover acceptance. The normal batch facade must retain
+the same observation through its existing plan/queue path, and each final head
+and prospective merge requires fresh composed verification.
+
+### Batch options and complete plan projectors
+
+`batch_cli::normalize_native_batch_cli_arguments_v1` accepts the ordinary batch
+argument vector, working directory and selected root/runtime defaults. It reuses
+the existing path resolver and implements the incumbent argument normalization
+within its explicit bounded domain. `batch_campaign::build_native_batch_campaign_command_v1`
+then builds the complete local or formal dependency graph, research input and
+command hashes from the held inventory. The graph is a plan; constructing it
+does not execute a paper or acquire release/submission permission. The ordinary
+frontend must keep the observation alive until its plan/queue consumer finishes.
+
+The executable developer example is the actual incumbent whole-value differential
+owner, rather than a hand-assembled workflow:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-paper-service --lib batch_campaign::tests::native_batch_command_and_complete_local_graph_match_actual_node_whole_values -- --exact --nocapture
+```
+
+The source registry and canonical route ledger bind the option, complete graph,
+refusal and inventory owners. The normal caller and full research adapter remain
+unaccepted until their ordinary entry and recovery paths execute successfully.
+
+The fixed ordinary runtime proposal profile additionally admits
+`database.parent()/proposal-staging`, including the usual runtime outside the
+asset root. It retains a second instance of the same SourceObservation over
+that namespace and its `proposals` source tree. The record must identify an
+actual source directory beneath that fixed proposal tree. Unknown external
+staging directories are refused. Logical report paths use the asset root;
+those `../runtime/...` identities never replace the held-relative path used for
+an actual open. The shared fixed reservation checks captured read sizes before allocation/streaming and enumeration counts before retaining each entry; it keeps the original 1 GiB and 16,384 entry ceilings across both observers. Both observations,
+missing edges and the database are rechecked together through cancellation and
+the supplied deadline. The runtime regression owner uses actual Node complete
+values for missing staging and a real external proposal, then exercises first
+missing-edge creation, runtime alias, selected-file replacement and fresh retry.

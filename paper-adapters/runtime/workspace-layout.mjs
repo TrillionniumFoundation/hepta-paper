@@ -77,12 +77,10 @@ function pathsOverlap(left, right) {
 
 export function defaultPaperAssetRoot() {
   if (process.env.HEPTA_PAPER_ASSET_ROOT) return path.resolve(process.env.HEPTA_PAPER_ASSET_ROOT);
-  const standalone = sibling('hepta-paper-assets');
-  if (fs.existsSync(standalone)) return standalone;
   const legacyParent = path.dirname(HEPTA_WORKSPACE_ROOT);
   return path.basename(legacyParent) === 'paper_factory'
     ? legacyParent
-    : path.join(HEPTA_WORKSPACE_ROOT, 'assets');
+    : sibling('hepta-paper-assets');
 }
 
 export function defaultPaperRuntimeRoot() {

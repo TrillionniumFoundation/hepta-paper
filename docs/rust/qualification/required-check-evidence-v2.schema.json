@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trillionnium.foundation/schemas/hepta-paper/required-check-evidence-v2.schema.json",
+  "title": "Producer-authenticated required source-check evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "status",
+    "repository",
+    "source",
+    "pullRequest",
+    "requiredContexts",
+    "observedChecks",
+    "snapshotIdentity",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "HeptaRequiredCheckEvidenceV2"},
+    "status": {"const": "complete_success_snapshot"},
+    "repository": {"const": "TrillionniumFoundation/hepta-paper"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree", "requiredChecksSha256", "producerManifestSha256"],
+      "properties": {
+        "commit": {"$ref": "#/$defs/gitSha"},
+        "tree": {"$ref": "#/$defs/gitSha"},
+        "requiredChecksSha256": {"$ref": "#/$defs/digest"},
+        "producerManifestSha256": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "baseRef", "headBranch"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "baseRef": {"type": "string", "minLength": 1, "maxLength": 256},
+        "headBranch": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "requiredContexts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 256}
+    },
+    "observedChecks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/observedCheck"}
+    },
+    "snapshotIdentity": {"$ref": "#/$defs/digest"},
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productionAuthorized", "externalAuthorityClaimed"],
+      "properties": {
+        "productionAuthorized": {"const": false},
+        "externalAuthorityClaimed": {"const": false}
+      }
+    }
+  },
+  "$defs": {
+    "gitSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "nullableDateTime": {"type": ["string", "null"], "format": "date-time"},
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "name", "status", "conclusion"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "name": {"type": "string", "minLength": 1, "maxLength": 512},
+        "status": {"enum": ["completed", "in_progress", "queued", "pending"]},
+        "conclusion": {"type": ["string", "null"], "enum": ["success", "skipped", "neutral", null]}
+      }
+    },
+    "observedCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "context",
+        "workflowId",
+        "workflowPath",
+        "workflowGitBlobSha",
+        "workflowSha256",
+        "event",
+        "runId",
+        "runAttempt",
+        "runNumber",
+        "checkSuiteId",
+        "jobId",
+        "jobName",
+        "headSha",
+        "headBranch",
+        "baseRef",
+        "pullRequestNumber",
+        "status",
+        "conclusion",
+        "startedAt",
+        "completedAt",
+        "detailsUrl",
+        "steps"
+      ],
+      "properties": {
+        "context": {"type": "string", "minLength": 1, "maxLength": 256},
+        "workflowId": {"type": "integer", "minimum": 1},
+        "workflowPath": {"type": "string", "pattern": "^\\.github/workflows/[^/]+\\.ya?ml$"},
+        "workflowGitBlobSha": {"$ref": "#/$defs/gitSha"},
+        "workflowSha256": {"$ref": "#/$defs/digest"},
+        "event": {"const": "pull_request"},
+        "runId": {"type": "integer", "minimum": 1},
+        "runAttempt": {"type": "integer", "minimum": 1},
+        "runNumber": {"type": "integer", "minimum": 1},
+        "checkSuiteId": {"type": "integer", "minimum": 1},
+        "jobId": {"type": "integer", "minimum": 1},
+        "jobName": {"type": "string", "minLength": 1, "maxLength": 256},
+        "headSha": {"$ref": "#/$defs/gitSha"},
+        "headBranch": {"type": "string", "minLength": 1, "maxLength": 256},
+        "baseRef": {"type": "string", "minLength": 1, "maxLength": 256},
+        "pullRequestNumber": {"type": "integer", "minimum": 1},
+        "status": {"const": "completed"},
+        "conclusion": {"const": "success"},
+        "startedAt": {"$ref": "#/$defs/nullableDateTime"},
+        "completedAt": {"$ref": "#/$defs/nullableDateTime"},
+        "detailsUrl": {"type": "string", "pattern": "^https://github\\.com/TrillionniumFoundation/hepta-paper/actions/runs/[0-9]+/job/[0-9]+$"},
+        "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}}
+      }
+    }
+  }
+}

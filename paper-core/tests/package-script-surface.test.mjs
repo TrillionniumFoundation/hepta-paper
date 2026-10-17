@@ -340,6 +340,18 @@ test('unified formal operational runner fails non-zero instead of accepting skip
   }
 });
 
+test('capability verification runs once in aggregate CI and test commands', () => {
+  for (const name of ['ci:inner', 'test:inner']) {
+    const command = scripts[name];
+    assert.equal((command.match(/paper:capability-conformance/g) || []).length, 0, name);
+    assert.equal((command.match(/migration:capability-matrix-v3/g) || []).length, 1, name);
+  }
+  assert.match(
+    scripts['migration:capability-matrix-v3'],
+    /node migration\/bin\/verify-capabilities\.mjs && node migration\/tests\/capability-matrix-v3\.mjs --release-profile/,
+  );
+});
+
 test('test:inner expands to a deduplicated test-file DAG', () => {
   const counts = new Map();
   const visiting = [];
@@ -439,9 +451,9 @@ test('one declarative registry owns supported routes and npm command classificat
     retiredAliases: [],
     blocked: [],
   });
-  // Keep the personal operational aliases explicit so an accidental
-  // script-surface expansion still fails this contract.
-  assert.equal(Object.keys(scripts).length, 120);
+  // Keep the personal and private-archive operational aliases explicit so an
+  // unregistered script-surface expansion still fails this exact contract.
+  assert.equal(Object.keys(scripts).length, 121);
   assert.deepEqual(heptaPaperCiCommandMatrix().nightly.map((entry) => entry.id), [
     'full-portable',
     'formal-cache',

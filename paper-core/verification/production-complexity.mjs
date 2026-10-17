@@ -121,6 +121,14 @@ export const PRODUCTION_COMPLEXITY_PAYLOAD_EXCLUSIONS = Object.freeze([
     id: 'versioned-journal-profile-dataset',
     path: 'paper-domain/journal/data/journal-profiles.v1.data.mjs',
   }),
+  Object.freeze({
+    id: 'versioned-installed-online-marker-schema',
+    path: 'store/schema/autonomous-research-online-mutation-marker.v1.json',
+  }),
+  Object.freeze({
+    id: 'versioned-production-help-usage-data',
+    path: 'paper-core/config/paper-production-usage.v1.json',
+  }),
 ]);
 
 export const PRODUCTION_COMPLEXITY_PATH_CEILING_OVERRIDES = Object.freeze({
@@ -460,6 +468,17 @@ export function inspectProductionComplexity({
       : [];
     const exclusion = exclusionFor(relative, payloadExclusions);
     if (exclusion) {
+      if (relative.endsWith('.json')) {
+        try {
+          JSON.parse(fs.readFileSync(absolute, 'utf8'));
+        } catch (error) {
+          violations.push(Object.freeze({
+            blocker: 'production_complexity_payload_json_invalid',
+            path: relative,
+            message: error?.message || String(error),
+          }));
+        }
+      }
       rows.push(Object.freeze({
         path: relative,
         layer: null,

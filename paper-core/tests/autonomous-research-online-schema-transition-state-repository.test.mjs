@@ -28,6 +28,7 @@ test('online schema transition state repository rejects unsafe or invalid contro
   context.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
   const paths = autonomousResearchOnlineSchemaTransitionControlPaths(runtimeRoot);
   fs.writeFileSync(paths.activeStatePath, '{}', { mode: 0o666 });
+  fs.chmodSync(paths.activeStatePath, 0o666);
   assert.throws(
     () => readAutonomousResearchOnlineSchemaTransitionJson(paths.activeStatePath),
     /autonomous_research_online_schema_transition_control_file_unsafe/,

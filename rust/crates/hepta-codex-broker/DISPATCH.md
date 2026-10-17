@@ -1,0 +1,419 @@
+# Qualified Codex dispatch
+
+`run_reserved_codex_operation` is the executable broker boundary. It takes an
+operation ID already reserved by authenticated Unix admission. It reloads and
+hash-checks the immutable canonical request from the broker journal. The network
+request does not supply arbitrary executable, argument, environment, or shell
+surfaces.
+
+The caller supplies an exact inspected runtime, role, prepared workspace and
+control files, restricted environments, limits, gate policy, containment policy,
+clock, cancellation flag, and a `CodexDispatchAuthorityV1` implementation. That
+implementation must validate the deployment's independently accepted external
+qualification, current attempt/lease, immutable input/workspace and mutation
+bindings, distinct role principal/home, and budget. It runs before spawn, before
+release, and before output acceptance. There is no default permissive authority.
+The public entry also rejects fixture schema authority, fixture gate authority,
+process-group-only containment, and fixture cgroups, regardless of callback result.
+
+A broker process executes under its configured role UID; this API does not change
+UID or share an author credential home with a reviewer. Production executable
+ownership must differ from the execution principal. The runtime's executable,
+config, home and credential metadata are inspected before and after execution.
+The official noninteractive Codex argv and prompt are constructed by
+`build_codex_invocation`; its prompt hash must equal the signed request hash.
+
+## Lifecycle and failures
+
+1. Validate request/runtime/role/prompt, preflight schema, deadline and authority.
+2. Commit `RequestBound`, create a bounded operation cgroup, and fsync its recovery
+   record in the private gate state directory.
+3. Spawn the stopped pre-exec gate (armed with parent-death SIGKILL and an exact
+   parent-PID check), attach its PID to the cgroup, durably link the
+   exact process identity, recheck bindings and authority, and commit release
+   authorization before continuing the gate.
+4. Supervise actual target execution with bounded input/output, an execution
+   timeout tightened against the remaining absolute deadline, and cooperative
+   cancellation. Terminate descendants and prove group and cgroup cleanup.
+5. Reinspect runtime/schema/output control identities. Read exact output file
+   descriptors, hash the actual bytes, and fsync immutable stdout/output evidence
+   before advancing deterministic result processing.
+6. Decode complete JSONL, require a successful terminal turn, parse the actual
+   final JSON, and validate its bound schema. Dispatch itself ends at
+   `SchemaValidated`.
+7. `finalize_codex_prepared_result` reopens the exact persisted request, the
+   pre-release workspace inventory and the exclusive execution evidence. It
+   recomputes the current descriptor-bound workspace inventory, validates the
+   mutation manifest against the request-bound policy, and cross-checks the
+   event-stream, final-output and schema-validation hashes against the broker
+   journal. Only then does it advance `WorkspaceSnapshotted` ->
+   `MutationValidated` -> `ResultPrepared` and publish the immutable prepared
+   receipt.
+
+A cancelled or ambiguous released execution is never automatically replayed.
+A repeated operation ID is refused by dispatch and remains queryable in the
+journal. The finalizer never launches Codex and never grants `Acknowledged`,
+campaign-write, release or submission authority. Those remain separate consumer
+and commit boundaries.
+
+The broker retains three bounded, owner-only sidecars per completed prepared
+operation:
+
+- `codex-result-<operation>.before.json` binds the pre-release workspace identity,
+  mutation policy and complete initial inventory;
+- `codex-result-<operation>.json` binds request/runtime/argv identities and the
+  actual captured stream/output bytes;
+- `codex-result-<operation>.prepared.json` binds the recomputed mutation manifest,
+  prepared workspace result, journal evidence and exact output identity.
+
+All three are created exclusively and never overwritten. Re-entry after a crash
+accepts only byte-identical sidecars and transition evidence. A self-consistent
+replacement output or event stream is still rejected when it differs from the
+journal. `read_codex_prepared_output` returns bytes only after the prepared
+receipt and execution-evidence identities are recomputed. A prepared receipt is
+provider/workspace evidence; it is not campaign-write authority.
+
+## Consumer-visible results and acknowledgement recovery
+
+The normal authenticated `BrokerServerV1` request now returns the existing V1
+`Prepared` response when the durable journal is `ResultPrepared`, including
+its exact prepared-receipt digest. `Acknowledged` includes both original
+prepared and acknowledgement digests. The response is derived from a freshly
+loaded, validated journal, not the dispatch callback's return value. Other
+states retain `Reserved`/`Existing` with their actual state and no fabricated
+prepared identity. Reservation/existing telemetry still counts admission, not
+provider completion. No new wire fields or response version are introduced.
+
+The same signed request can query its original result while its existing
+capability is valid. It never dispatches an existing operation again. Conflicting
+request bodies still fail journal admission. Losing a response or restarting the
+listener does not reset the operation, and a preflight failure is not a prepared
+result. The legacy execution response transports identities only; it does not
+become a writer capability, scientific verdict or campaign-commit receipt.
+
+### Explicit read-only prepared-output query
+
+The same role-specific broker endpoint now accepts `HEPTAQX1`: the existing
+16-byte request framing with a distinct read-only magic and the exact original
+canonical signed `CodexExecutionRequestV1` payload. `HEPTACX1` execution framing
+and `HEPTARX1` response encoding are unchanged. Execution-only admission APIs
+reject query frames. This route never reserves an operation or nonce, invokes
+the dispatcher, renews a capability, acknowledges a result, or writes a campaign.
+An unknown operation returns `operation_not_found`; an existing non-prepared
+operation returns `state_conflict`. A different validly signed request for the
+same operation is a conflict, not a replacement.
+
+`ProductCodexDispatcherV1::prepared_delivery` loads the original committed
+`ResultPrepared`/`Acknowledged` journal, canonical prepared receipt and actual
+output sidecar. It checks the prepared-transition digest, full persisted request,
+role/runtime/schema/workspace/attempt/revision/lease bindings and actual output
+bytes. Missing or changed sidecars fail closed, without re-executing the model
+or reconstructing a supposedly successful result. The existing dispatch shared
+lock excludes cooperating backup/recovery. This observation does not reclaim
+credentials or grant another operation's workspace permissions.
+
+On success an ordinary `Prepared` or `Acknowledged` response precedes one
+`HEPTAPX1` frame: 8-byte magic, big-endian u64 receipt length, big-endian u64 output
+length, canonical receipt JSON, then raw provider-output bytes. Each length is
+positive and at most 64 MiB; output must also fit the original signed request
+limit. The consumer rejects oversized lengths before allocation, noncanonical
+receipt bytes, any expected-receipt/request mismatch and corrupted/truncated
+output. `BrokerPreparedDeliveryV1` exposes read-only getters and is a content
+result, not a signed scientific or campaign-write grant.
+
+Use `query_prepared_result` with an already connected Unix socket, an explicit
+expected broker peer policy, the original signed request and a 1–30000 ms
+cumulative I/O timeout. The caller owns bounded connection establishment. Kernel
+peer checks precede sending the request. The server rechecks current trust,
+request expiry and nondecreasing clock after loading the sidecars and before
+every bounded output chunk. Writes share one elapsed-time budget; progress does
+not restart it. Failure after a partial response closes the connection without
+another response or ACK. Bytes already sent cannot be recalled by later
+revocation; the API returns a result only after verifying the entire frame.
+
+Lost replies are recovered by an explicit identical query under still-current
+capability authority, including after listener restart or acknowledgement.
+The query intentionally does not add an expired-request bypass. Long-running
+operations needing fresh recovery authority and full writer-issued
+author/reviewer inputs remain separate product integration work. The ordinary
+service supplies durable consumer/CAS commit, explicit signed-request execution,
+measured cost and post-commit acknowledgement; see its
+[workflow contract](../../../docs/modules/LOCAL_WORKFLOW_HANDOFF.md#explicit-signed-broker-execution-and-recovery).
+No live model or full Node parity is claimed.
+
+## Campaign-commit-bound acknowledgement
+
+`HEPTAAX2` is a separate framed message from execution and result query. Its
+canonical JSON body is `CommitBoundPreparedResultAcknowledgementV2`: authority
+domain and trust generation, exact original operation/request/prepared receipt,
+campaign/node/attempt/revision/lease generation, the complete durable sequencer
+commit identity, settled micro-USD cost, acknowledgement time, signer key and
+Ed25519 signature. The call-local `newlyCommitted` replay observation is not in
+the signed body.
+
+A valid signature is necessary but not sufficient. Before writing the broker
+journal terminal transition, `SqliteCommitBindingResolverV2` opens the configured
+canonical campaign-writer database read-only with `SQLITE_OPEN_NOFOLLOW`, checks
+the expected owner/mode/link and exact schema, enforces the configured
+`local_only` or `activated_rust_writer` scope, validates the event chain and
+replays the full control stream through `replay_control_log_v1`. The exact
+attempt must resolve to one plan, sequence, result, verifier, verification
+receipt, committed state and actual cost identical to the signed body. A local
+writer marker is rejected under activated-writer scope; a validly re-signed
+substitution therefore cannot manufacture a production commit.
+
+Only after that independent observation does the existing journal perform the
+`ResultPrepared -> Acknowledged` transition. An already acknowledged operation
+is idempotent only when the original signed-body digest and terminal timestamp
+match. Lost responses replay the same immutable acknowledgement and never
+redispatch the provider or debit campaign budget again. The owning local workflow
+reconstructs this retry from its frozen plan, retained CAS evidence and durable
+sequencer receipt before accepting a review gate or starting the next step.
+Commit-resolution or SQLite uncertainty remains `journal_unavailable`; it is not
+converted into success. The resolver is not another writer or ledger.
+
+Installed product configuration enables this path only by providing both public
+ACK trust and a closed `commitBindingSource` with absolute database path,
+expected owner, bounded SQLite policy and explicit scope. Omitting the block is
+fail-closed. Granting a separately installed broker principal read access to the
+campaign database, rotating/revoking the ACK key and proving availability are
+target-host qualification work; source composition does not weaken file modes.
+
+The `codex_dispatch::tests::delivery` cases use real Unix sockets, Ed25519
+admission, SQLite, original sidecars and credential-free supervised processes.
+They execute the actual client/server path, wrong-subject/signature rejection,
+no-reservation/no-dispatch behavior, expiry during reading, corrupted/truncated
+bytes, acknowledgement replay and lost-response restart. These fixture runtimes
+are not authenticated live-model evidence. The stale-listener tests explicitly
+stop listening while retaining a duplicate descriptor, so concurrent fork/exec
+cannot replace the intended stale-socket assertion with a transient live socket.
+Production live-predecessor rejection is unchanged.
+
+```sh
+cargo test --locked -p hepta-codex-broker --lib codex_dispatch::tests::delivery
+cargo test --locked -p hepta-codex-broker --lib listener::tests
+```
+
+`verify_persisted_prepared_result_acknowledgement` still reloads the actual
+request and journal and applies the original signature, key and age policy.
+It also accepts an already acknowledged operation only when every subject field,
+the original signed-body digest and terminal timestamp match. Applying this
+verified duplicate returns the original terminal journal without another write.
+A different validly signed acknowledgement for the same operation is a conflict.
+Expired/future acknowledgements remain rejected; historical observation is not
+permission to renew or reissue an acknowledgement with changed fields.
+
+Two writers which verified the same prepared state may race. A definite
+`ResultPrepared`-to-`Acknowledged` CAS conflict is resolved by reading back and
+checking the exact committed acknowledgement. Other database/persistence errors
+remain errors, including a commit whose outcome is unknown; they are not
+converted to success and cannot authorize provider re-execution.
+
+The `service_lifecycle` target includes actual signed socket admission, real
+SQLite state, the bounded credential-free process/gate fixture, dropped replies,
+listener restart, acknowledgement reopen, conflicting signed inputs and rollback
+at both journal fault points. Build the pre-exec gate before running this target:
+
+```sh
+cargo build --manifest-path rust/Cargo.toml --locked -p hepta-codex-runtime --bins
+cargo test --manifest-path rust/Cargo.toml --locked -p hepta-codex-broker --test service_lifecycle
+```
+
+These are source recovery/transport regressions, not live model or installed
+cross-principal qualification. The full 57-route acceptance denominator, actual
+production writer transfer and Node retirement do not change.
+
+## Restart containment
+
+The [cgroup ownership contract](../hepta-cgroup-containment/HANDOFF.md) specifies
+retained hierarchy/operation descriptors, actual cgroup2 filesystem checks,
+control-file bounds, terminal failure behavior, and the remaining cooperative
+namespace requirement for creation and final directory removal. The broker
+records identities from the actual retained owner and supplies the recorded
+root identity to recovery before interpreting an operation as absent.
+
+`recover_codex_dispatch_containment` must run before generic process
+reconciliation and listener readiness. It validates the private record's exact
+journal request binding and the cgroup root/operation device and inode plus the
+operation directory change timestamp. It kills
+and removes only the bound cgroup; a replaced directory blocks recovery instead
+of adopting untrusted PIDs. Cleanup is idempotent when the bound directory is
+already absent. The process journal then applies its existing conservative
+release/ambiguity recovery rules.
+
+`create_quiesced_codex_dispatch_backup` obtains an exclusive lock against all
+qualified dispatches and local finalization, refuses active journaled processes,
+unreconciled containment records and launch envelopes, copies the SQLite journal
+and all durable result sidecars, and verifies the source journal and sidecar
+identities did not change. A completed Codex operation with missing execution
+evidence cannot be backed up; a prepared operation also requires its exact
+pre-release inventory and prepared receipt sidecars.
+The final `manifest.json` pins every copied file's bytes/hash and the logical
+journal fingerprint. An interrupted directory without that manifest is incomplete.
+
+`restore_quiesced_codex_dispatch_backup` requires the independently retained
+manifest hash and a fresh destination. It checks database and sidecar hashes,
+request bindings, the restored journal fingerprint and absence of active process
+state. The output contains `journal.sqlite` and `state/`. It does not restore or
+adopt cgroups, process IDs, provider credentials, runtime authority or listener
+readiness. Every receipt states `requiresRequalification: true`; source target
+bindings and ambiguous operations remain subject to the normal external checks.
+
+The older journal-only `create_broker_backup` now rejects active process records,
+`RequestBound` dispatches, and all provider-action history (including ambiguous
+recovery), which must use the complete bundle path. Its checks run on both the source and the captured snapshot. Bundle
+creation uses a private journal-copy path only while exclusive dispatch quiescence
+and sidecar checks are held. Recovery takes the same exclusive lock, so it cannot
+kill a concurrently executing operation.
+
+`BrokerServerV1::with_dispatcher` installs the product
+`ProductCodexDispatcherV1`. It consumes one canonical, authority-owned
+`ProductCodexOperationV1` per operation and binds role/task,
+campaign/node/attempt, lease/revision, validity, prompt and input-manifest
+files, actual initial workspace inventory, schema, mutation policy,
+network/approval posture and cost/output/event limits. The operation-authority
+UID must differ from the broker UID; the directory device/inode is retained for the dispatcher lifetime, so replacement is not adopted. Descriptor, prompt and input-manifest bytes
+are checked before provider release and at every live authority revalidation;
+the descriptor digest enters the prepared receipt. Its `recover_before_ready`
+composes containment recovery and completes only deterministic local prepared
+states without provider re-execution. Without this adapter the server continues
+to provide admission/reservation only.
+
+## Server worker ownership
+
+After workers start, journal-open, thread-spawn, accept and socket-configuration
+failures use a common cleanup path. Worker errors and unwinding set the shared
+shutdown flag before the accept loop joins them, so a long-running server does
+not keep accepting requests after its workers fail. The accept owner retains no
+queue receiver. Cleanup closes the sender, joins every successfully spawned
+worker, attempts listener shutdown, and then returns the first observed error;
+subsequent worker failures are counted in telemetry. Listener cleanup remains
+subject to its existing path-identity checks.
+
+Reaching the configured connection limit closes the queue and drains accepted
+work without setting cancellation. A normally completed worker likewise does
+not cancel another worker's dispatch. Failure or caller shutdown provides the
+existing cancellation flag to dispatch adapters. Joining threads cannot impose
+a deadline on an arbitrary adapter that ignores cancellation; adapters must own
+their execution bounds. Cleanup does not roll back a dispatched provider action,
+reconcile an ambiguous operation, or authorize automatic replay. Process abort
+and termination still require the durable restart recovery contract.
+
+Thread creation uses a fallible builder. The additive public error variant
+`BrokerServerError::WorkerSpawn(std::io::ErrorKind)` requires downstream
+exhaustive matches to be updated; protocol and journal formats are unchanged.
+Real Unix integration tests exercise failure below the connection cap,
+cancellation and completion of a second active worker, and normal-cap draining.
+A deterministic two-thread test exercises the actual join helper with a failed
+first worker and an explicitly released second worker. The dispatch adapter in
+these lifecycle tests is only a controlled completion fixture, not Codex
+execution or host/provider qualification.
+
+## Journal schema identity and bounded admission
+
+`BrokerJournalStoreV1::open` checks the actual stored schema on its read-only
+preflight connection before creating a writer connection or applying persistent
+pragmas or querying caller-controlled metadata tables/views. Interrupted
+initialization uses the same literal-prefix rule and refuses a foreign schema
+without consuming the initialization marker. The closed object inventory and five STRICT tables are necessary but
+insufficient: each table and trigger now also matches `type`, `name`, `tbl_name`
+and the complete stored SQL definition produced by the compiled `SCHEMA_SQL` in
+a fresh in-memory SQLite database. No source SQL is executed to construct that
+reference. At most 20 rows are read, with 256-byte fields and a 64 KiB SQL limit
+per definition. The literal reserved `sqlite_` prefix is excluded; a name such as
+`sqliteXforeign` is an extra object and is refused.
+
+This exact comparison preserves the SQLite normalization of the existing compiled
+schema and rejects changed trigger bodies, CHECK constraints, foreign keys,
+column definitions and differently formatted replacement definitions. It does
+not silently migrate, repair, adopt, or restamp an existing database. The same
+check runs through explicit integrity validation and the existing backup/restore
+contract consumers. `BrokerJournalError::SchemaDefinitionMismatch` is a new
+public error variant; downstream exhaustive matches must handle it. The error
+contains no untrusted SQL or database content. Current schema and wire versions
+are unchanged. A check is an observation at that boundary, not continuous
+protection against a separately authorized writer changing the database later.
+
+The socket admission reader uses one monotonic elapsed-time budget across the
+complete frame header and body; successful partial reads do not reset it. The
+actual server samples its clock and trust state after the complete frame is read.
+After SQLite `BEGIN IMMEDIATE` acquires the journal write transaction, it samples
+the clock again, requires no backwards movement relative to that request's first
+sample, checks the current manager state and startup bundle hash, and repeats
+Ed25519 capability/peer/deadline verification with the current trust snapshot.
+This occurs before either returning an existing operation or inserting rows.
+Failure drops the untouched transaction; new rows use the post-lock timestamp.
+Explicit-time library APIs retain their caller-supplied-time contract. These
+observations are not an atomic transaction spanning the trust manager, clock,
+SQLite commit, subsequent dispatcher or external provider.
+
+Verified bundles retain the signature-bound role-key validity and revocation
+schedule, including future keys. Every manager snapshot selects keys at its
+supplied timestamp; a key is absent at its exact valid-until or revocation time,
+and future keys become available only at valid-from. A gap with no active role
+key returns `NoActiveRoleKey`; it does not discard a signed future key. Initial
+verification still requires an active role key. The existing bundle expiry,
+disable, rejected-refresh and chain rules remain in force. Signing bytes, hashes,
+wire versions and public method signatures are unchanged. A returned plain trust
+store is a completed snapshot, not a live authority; callers of explicit-time
+APIs still own current clock/snapshot sampling. This is in-memory enforcement of
+an authenticated schedule, not durable revocation state across restarts or
+proof of host/provider ownership. No installed or production authority is granted.
+
+Focused source regressions replace every one of the 14 actual append-only
+triggers, weaken an actual table constraint, alter a trigger's target table,
+exercise oversized definitions and reserved-prefix lookalikes, and reopen an
+unchanged journal with real persisted history. The read-only refusal tests
+compare the actual source bytes and require no new sidecars or initialization
+marker. Real socket and signed-request tests cover the admission time boundary;
+these local tests remain distinct from independent host/provider qualification.
+The post-lock regressions use a separately owned process holding an actual SQLite
+write transaction, actual Unix requests and signatures, and the system clock;
+expired capabilities, disabled/replaced bundles and scheduled signer expiry or
+revocation cannot create operation/nonce rows after waiting. Deterministic
+signature tests additionally cover exact key boundaries, future activation,
+role separation, retained-schedule immutability and no-active-key gaps.
+
+## Output schema contract
+
+The bounded local schema validator supports boolean schemas, object/array/string/
+number/integer/null/boolean types (including type arrays), `properties`, `required`,
+`additionalProperties`, `items`, `const`, `enum`, `allOf`, `anyOf`, `oneOf`, length/
+item/property bounds, numeric bounds and `uniqueItems`. It accepts draft-07 and
+2020-12 dialect labels for this shared subset. Unsupported keywords, references,
+regexes and unknown dialects fail preflight. Nested schema and output evaluation
+have fixed depth/work budgets; large mixed integer/fraction comparisons beyond
+exact float range are rejected. No unsupported assertion is silently ignored.
+Captured complete JSONL is capped by the configured tail capacity (at most the
+runtime's 1 MiB hard bound); exceeding that limit fails the execution.
+
+## Verification
+
+Build the workspace `hepta-codex-preexec-gate` binary first. Unit tests execute a
+credential-free deterministic local CLI through the same gate path, validate
+actual output and durable journal transitions, reject fixture production/role/
+prompt/schema drift, verify runtime-config drift becomes ambiguous, cancel an
+already released process, and recover exact fixture cgroup identities. Prepared
+result tests inject interruptions after workspace snapshot, mutation validation
+and receipt publication; each restart advances every state exactly once without
+provider re-execution. Adversarial tests rewrite output and JSONL bytes together
+with their own matching hashes and require journal-bound rejection. The fixture
+execution entry and allowing authority exist only under unit-test control; these
+tests do not constitute live-provider or production-host qualification.
+
+## Process exit during procfs recovery observation
+
+A process can exit and be reaped after a `/proc` entry or task file is opened.
+The retained task-file read then returns `ESRCH`, not necessarily `ENOENT`;
+Rust's `ErrorKind` alone may describe it as `Uncategorized`. The runtime now
+classifies only task-scoped `ENOENT`/`ESRCH` as disappearance. Other I/O errors
+retain their existing failure behavior, and existing permission policy is not
+broadened by this change.
+
+The existing orphan/group scan still verifies the original boot, session,
+group, UID and start identity before signaling or declaring cleanup complete.
+Disappearance never proves a provider action did not occur: a durably authorized
+operation still reconciles to the original ambiguous disposition. The regression
+holds a real proc-stat descriptor across an owned child's termination/reap, and
+the broker test retains the stopped-gate/no-target-execution assertion. This is
+a recovery fix, not permission to retry an external effect.

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CanonicalWorkloadV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "workloadId",
+    "version",
+    "generatorHash",
+    "fixedSeeds",
+    "inputHashes",
+    "resourceTopology",
+    "failureSchedule",
+    "measurementWindow",
+    "requiredMetrics",
+    "zeroToleranceCounters",
+    "allowedEvidenceTier"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "const": "CanonicalWorkloadV1"
+    },
+    "workloadId": {
+      "type": "string",
+      "pattern": "^PERF-WL-[0-9]{3}$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generatorHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "fixedSeeds": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      }
+    },
+    "inputHashes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "resourceTopology": {
+      "type": "object"
+    },
+    "failureSchedule": {
+      "type": "array"
+    },
+    "measurementWindow": {
+      "type": "object"
+    },
+    "requiredMetrics": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "zeroToleranceCounters": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "allowedEvidenceTier": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "createdAt": "2026-09-22T04:18:47.091986+00:00",
+  "bundle": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github-3/outputs/hepta-consolidation-20260922/all-refs-before.bundle",
+  "bytes": 110275368,
+  "sha256": "1b1cda676082057e892531d8c467de59568fb322a23d158003db30fb93591d61",
+  "workingCopies": [
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github-3/work/ci-checkpoint",
+      "head": "51e2eb708c9c0f9613118478ef5b9d8710c7be69",
+      "fileCount": 4,
+      "archiveSha256": "c2dc9d94c12f05277e5b205338b373b86faf503ba44a25dd2e53af5f5a33a948"
+    },
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github-3/work/finalization-slice",
+      "head": "ca012e694a0c514aa657374961833900a0875f4f",
+      "fileCount": 9,
+      "archiveSha256": "cc374910406ef86cce88ef924fcc9c6da962243cfb204d964edbb92a1edbccb8"
+    },
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github-3/work/startup-rebased",
+      "head": "3ec5fdf8f568842ce499c7b91c6a6bb33b7b721a",
+      "fileCount": 0,
+      "archiveSha256": "1e99153e6b19a5e7169b26ecdb2547fdb0d66c14da3e6a512a7de9e9e3d4e956"
+    },
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github-3/work/startup-repair",
+      "head": "5a874512313bb99da3a0f9157c4da2303f364054",
+      "fileCount": 0,
+      "archiveSha256": "1e99153e6b19a5e7169b26ecdb2547fdb0d66c14da3e6a512a7de9e9e3d4e956"
+    },
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github/work/latest",
+      "head": "fa52364166e5fb308ae9795e11e2556de9f82f38",
+      "fileCount": 62,
+      "archiveSha256": "656bbfe5b76f1f90ad0f47f3fa79cb3d05a0448e9c215f034b02575f3bc7d58d"
+    },
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github/work/main",
+      "head": "7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2",
+      "fileCount": 0,
+      "archiveSha256": "1e99153e6b19a5e7169b26ecdb2547fdb0d66c14da3e6a512a7de9e9e3d4e956"
+    },
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github/work/startup-aggregate",
+      "head": "6e5d3e6a481cb34bf85961182a46e8744391524d",
+      "fileCount": 10,
+      "archiveSha256": "e3db2edf52566889ae7a8959a3a9612c99b04d3a02b2d1ae56e63a3d5e2b0be6"
+    },
+    {
+      "path": "/home/qian-qi/Documents/Codex/2026-09-16/trillionniumfoundation-https-github-com-trillionniumfoundation-github/work/workspace-status",
+      "head": "b6362d1e0b4b9d6182aaed6cef022741a595f5c1",
+      "fileCount": 9,
+      "archiveSha256": "1ad1904f9d3fa95d4d9b8f798f40ea955858f1ec333276bc27253e82baa43e67"
+    }
+  ]
+}

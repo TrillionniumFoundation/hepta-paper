@@ -763,11 +763,14 @@ test('status detects a pinned object shard replaced during hashing', (t) => {
   const token = manifest.entries[0].objectHash.slice('sha256:'.length);
   const shard = path.join(casRoot, 'objects', token.slice(0, 2));
   const relocatedShard = path.join(root, 'drifted-object-shard');
+  const selectedObject = fs.lstatSync(path.join(shard, `${token}.tar.gz`), { bigint: true });
   const originalReadSync = fs.readSync;
   let replaced = false;
   fs.readSync = function replaceShardAfterFirstRead(...arguments_) {
     const bytesRead = originalReadSync.apply(this, arguments_);
-    if (!replaced && bytesRead > 0) {
+    const opened = fs.fstatSync(arguments_[0], { bigint: true });
+    if (!replaced && bytesRead > 0 && opened.dev === selectedObject.dev
+      && opened.ino === selectedObject.ino) {
       replaced = true;
       fs.renameSync(shard, relocatedShard);
       fs.mkdirSync(shard);

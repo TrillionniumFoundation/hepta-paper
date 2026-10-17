@@ -1,3 +1,4 @@
+import { hostBatchFixtureBudget, hostBatchFixtureWorkspace } from './support/host-batch-budget-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -1277,10 +1278,9 @@ test('repository-owned challenges and hidden oracles bind candidate arm response
 });
 
 test('host sandbox executes exactly three arm batches or reports the unavailable isolation backend', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-system-benchmark-real-batch-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const output = path.join(root, 'output');
-  fs.mkdirSync(output);
+  const ownedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-system-benchmark-real-batch-'));
+  t.after(() => fs.rmSync(ownedRoot, { recursive: true, force: true }));
+  const { sourceRoot: root, outputDirectory: output } = hostBatchFixtureWorkspace(ownedRoot);
   fs.writeFileSync(path.join(root, 'main.tex'), 'fixture\n');
   const adapterSource = (arm) => `// ${arm} arm batch fixture\nimport fs from 'node:fs';\nconst count=Number(process.env.HEPTA_BENCHMARK_CHALLENGE_PART_COUNT);\nconst batch=JSON.parse(Array.from({length:count},(_,i)=>process.env['HEPTA_BENCHMARK_CHALLENGE_JSON_PART_'+(i+1)]).join(''));\nconst cells=batch.cells.map(({cellId,challenge})=>({cellId,systemBenchmarkCellChallengeHash:challenge.systemBenchmarkCellChallengeHash,responses:challenge.cases.map(item=>{let prediction=0;if(batch.arm==='treatment')prediction=item.input.primary+(0.35*item.input.secondary)>=0?1:0;else if(batch.arm==='ablation')prediction=item.input.secondary>=0?1:0;else prediction=item.referenceResponse;return {caseId:item.caseId,[challenge.responseField]:prediction};})}));\nfs.writeFileSync('observation.json',JSON.stringify({version:1,kind:'CampaignBenchmarkArmBatchResponses',systemBenchmarkArmBatchChallengeHash:batch.systemBenchmarkArmBatchChallengeHash,cells})+'\\n');\n`;
   fs.writeFileSync(path.join(root, 'run.mjs'), 'void 0;\n');
@@ -1308,6 +1308,7 @@ test('host sandbox executes exactly three arm batches or reports the unavailable
     sourceRoot: root,
     outputDirectory: output,
     env: { HEPTA_EXPERIMENT_ATTEMPT_ID: 'real-host-batch-attempt' },
+    ...hostBatchFixtureBudget(Date.now()),
     sourceLineageHash: hashBytes(fs.readFileSync(path.join(root, 'main.tex'))),
     benchmarkSelector: selector,
     }),

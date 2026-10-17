@@ -116,8 +116,8 @@ function group(
 }
 
 const GROUPS = Object.freeze([
-  group('native-store', 'paper-adapters/persistence/sqlite-store.mjs', [
-    'openDatabase',
+  group('native-store', 'paper-adapters/persistence/sqlite-store-runtime.mjs', [
+    'openSqliteDatabase',
   ], 'schema-or-genesis-ddl'),
   group('native-store', 'paper-adapters/persistence/store-provider.mjs', [
     'applyStoreMigrations', 'createDefaultPaperStore', 'openExistingWritablePaperStore',

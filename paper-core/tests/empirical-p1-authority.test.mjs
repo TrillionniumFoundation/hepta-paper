@@ -212,7 +212,7 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
     });
   };
   const spoofed = directCell(false, 'spoofed');
-  assert.equal(spoofed.status, 'os_sandbox_worker_failed');
+  assert.equal(spoofed.status, 'os_sandbox_worker_failed', JSON.stringify(spoofed.blockers));
   assert.ok(spoofed.blockers.includes('worker_dataset_access_supervisor_trace_unavailable'));
   const supervised = directCell(true, 'supervised');
   assert.equal(supervised.status, 'os_sandbox_worker_passed', JSON.stringify(supervised.blockers));

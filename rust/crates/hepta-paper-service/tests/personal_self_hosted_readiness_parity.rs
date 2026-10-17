@@ -273,8 +273,7 @@ fn personal_readiness_executes_without_a_node_runtime() {
             "Rust readiness exit: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let report: Value =
-            serde_json::from_slice(&output.stdout).expect("native readiness JSON");
+        let report: Value = serde_json::from_slice(&output.stdout).expect("native readiness JSON");
         assert_eq!(report["personalSelfHostedProductionReady"], false);
         assert_eq!(report["externalActionsPerformed"], false);
         assert!(!marker.exists(), "Rust readiness invoked a Node runtime");

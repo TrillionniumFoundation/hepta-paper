@@ -210,11 +210,15 @@ pub(crate) fn valid_capability_id(value: &str) -> bool {
 }
 
 pub(crate) fn valid_owner(value: &str) -> bool {
-    value.starts_with("TEAM-")
-        && value.len() <= 96
-        && value
+    let identity = value.strip_prefix('@').unwrap_or(value);
+    value.len() <= 96
+        && identity
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && identity
             .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'-')
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 pub(crate) fn valid_semver(value: &str) -> bool {

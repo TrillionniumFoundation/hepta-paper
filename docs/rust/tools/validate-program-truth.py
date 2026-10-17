@@ -534,15 +534,23 @@ def main() -> int:
             fail(f"revalidation workflow does not observe producer: {workflow_name}")
 
     candidate = obj(truth.get("qualificationCandidate"), "qualificationCandidate")
-    expected_candidate = {
-        "branch": "codex/native-product-recovery-20260924",
-        "integrationBranch": "codex/full-rust-replacement-progress-20260916",
-        "pullRequest": 142,
-        "binding": "exact_head_workflow_evidence",
-        "evidenceTier": "source",
-        "productionAuthority": False,
-    }
-    if candidate != expected_candidate:
+    # The current PR is data, not a second hard-coded policy in this validator.
+    # Validate its structure and the canonical pointers without pinning workers
+    # forever to a historical branch or requiring a new validator for each PR.
+    if set(candidate) != {
+        "branch", "integrationBranch", "pullRequest", "binding",
+        "evidenceTier", "productionAuthority",
+    }:
+        fail("qualification candidate or integration-base role drift")
+    for role in ("branch", "integrationBranch"):
+        name = candidate.get(role)
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", name)
+                or ".." in name or "//" in name or name.endswith(("/", ".", ".lock"))):
+            fail(f"invalid qualification candidate {role}")
+    if (candidate["branch"] == candidate["integrationBranch"]
+            or type(candidate["pullRequest"]) is not int or candidate["pullRequest"] < 1
+            or candidate["binding"] != "exact_head_workflow_evidence"
+            or candidate["evidenceTier"] != "source"):
         fail("qualification candidate or integration-base role drift")
     if "commit" in candidate or "tree" in candidate or candidate.get("productionAuthority") is not False:
         fail("qualification candidate is self-staling or activating")

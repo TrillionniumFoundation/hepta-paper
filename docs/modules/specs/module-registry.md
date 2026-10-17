@@ -28,6 +28,16 @@ The sections below define this module's implementation-specific boundaries.
 
 Register versioned capability implementations, ownership, authority ceilings, dependencies, qualification requirements, and rollout metadata.
 
+The primary, secondary, and reviewer fields are maintainer metadata. One maintainer
+may truthfully occupy all three roles; neither a `TEAM-` prefix nor three distinct
+people is required. Rust manifest identities accept an optional leading `@`, an
+ASCII alphanumeric first character, and subsequent ASCII letters, digits, `.`,
+`_`, or `-`, with a maximum total length of 96 bytes including `@`. Examples are
+`@ProfHepta`, `local-owner`, and the existing `TEAM-KERNEL` label. The compatibility
+field name `independentReviewer` does not establish an independent runtime
+principal or key holder. Contract conformance reports check
+`owner_identity_tokens_valid`; they do not count distinct maintainers.
+
 It does not mutate campaign state, issue external effects, or self-promote evidence. A source implementation, fixture, model narrative, repository administrator statement, or this document is never sufficient production authority.
 
 ## Inputs and outputs
@@ -73,15 +83,21 @@ Declared class: `deterministic`. The same canonical input, module version, confi
 
 ## Failure, recovery, and idempotency
 
-Reject unknown capabilities, owners, paths, work items, cyclic dependencies, overlapping writer/external authority, incompatible protocol ranges, stale qualification, or rollout states that violate mutual exclusion.
+Reject unknown capabilities, malformed maintainer metadata, invalid paths or work items, cyclic dependencies, overlapping writer/external authority, incompatible protocol ranges, stale qualification, or rollout states that violate mutual exclusion.
 
 ## Security and privacy
 
-A manifest declares requested authority but cannot grant it. Writer/external-effect implementations use mutual-exclusion groups and cross-team review.
+A manifest declares requested authority but cannot grant it. Writer/external-effect implementations use mutual-exclusion groups and explicit runtime authority grants. Maintainer metadata does not replace execution identities, broker principals, or the independently pinned registry policy.
 
 ## Compatibility and migration
 
 Registry changes are classified as metadata, compatible addition, rollout, protocol/state/resource, authority, ownership, or retirement changes.
+
+Changing only maintainer labels is a metadata change. It does not require
+cross-team review, target-host requalification, or activation shutdown. The
+canonical conformance report is refreshed because its manifest hash includes
+those labels. Capability, execution, protocol/state, and authority changes keep
+their applicable validation even when maintainer labels change in the same edit.
 
 ## SLO, capacity, and observability
 

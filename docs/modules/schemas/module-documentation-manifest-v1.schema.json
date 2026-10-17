@@ -81,9 +81,10 @@
       "type": "array",
       "minItems": 3,
       "maxItems": 3,
-      "uniqueItems": true,
       "items": {
-        "pattern": "^TEAM-[A-Z]+$"
+        "type": "string",
+        "maxLength": 96,
+        "pattern": "^@?[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])"
       }
     },
     "dependencyModuleIds": {

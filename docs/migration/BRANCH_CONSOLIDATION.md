@@ -1,22 +1,21 @@
-# Two persistent source trees
+# Current Rust source and retained Node baseline
 
-The repository retains two long-lived integration/baseline branches; temporary
-review heads may coexist while their exact differences are resolved:
+The current source roles are:
 
 - `main`: original Node baseline at `7176fdad2d5fd8ae42b6e0b89c78783f938d8bc2`.
-- `codex/full-rust-replacement-progress-20260916`: the consolidated Rust rewrite.
+- `codex/full-rust-production`: the current Rust delivery candidate, PR #149.
+- `codex/full-rust-replacement-progress-20260916`: retained earlier Rust integration history.
 
 This is source and repository organization. It does not enable a Rust writer,
-qualify a provider, accept parity, or retire Node. Existing exact-subject CI and
-independent evidence requirements remain in force. New local compatibility
+qualify a provider, accept parity, or retire an installed Node service. Applicable
+source, runtime and recovery checks remain in force. New local compatibility
 contracts preserve earlier public data formats without replacing current
 operational owners or silently redirecting command routes.
 
 ## Current candidate and callable entrypoints
 
-The sole current continuation is [PR #142](https://github.com/TrillionniumFoundation/hepta-paper/pull/142),
-`codex/native-product-recovery-20260924`, targeting
-`codex/full-rust-replacement-progress-20260916`. The #139/#141 source and the
+The current continuation is [PR #149](https://github.com/TrillionniumFoundation/hepta-paper/pull/149),
+`codex/full-rust-production`, targeting `main`. The #139/#141/#142 source and the
 comparisons below are historical inputs, not competing completion candidates.
 Read the current PR head/base and exact workflow subject before integration;
 never copy a predecessor's green checks into the current candidate's status.
@@ -34,25 +33,26 @@ migration selection. Its evidence is compilation evidence, not executed tests,
 provider qualification, production activation or Node retirement. Existing
 runtime, recovery, source-evidence and strict-lint checks remain required.
 
-## Signed delivery and current-source verification
+## Delivery and current-source verification
 
-Delivery continues on the same #142 head, not a new full-Rust branch. Preserve
+Delivery continues on the same #149 head. Preserve
 all worktree changes before fetching; query the actual PR head/base and live
 protection rather than treating a historical SHA or this document as current.
 
 ```sh
 git fetch origin
-gh pr view 142 --repo TrillionniumFoundation/hepta-paper --json headRefName,headRefOid,baseRefName,baseRefOid,state
-gh api repos/TrillionniumFoundation/hepta-paper/branches/codex%2Ffull-rust-replacement-progress-20260916/protection
+gh pr view 149 --repo TrillionniumFoundation/hepta-paper --json headRefName,headRefOid,baseRefName,baseRefOid,state
+gh api repos/TrillionniumFoundation/hepta-paper/branches/main/protection
 ```
 
-The delivery operation must bind the exact expected predecessor. GitHub's signed
-`createCommitOnBranch` path is suitable when its returned commit has a verified
-signature and its tree equals the locally reviewed tree. A failed/uncertain API
-response requires reading the actual ref before retrying; it never permits a
-force update, unsigned fallback or disabling required checks/signatures. Local
-uncommitted changes and reference-only forks must not be reset to achieve a
-nominally clean submission.
+The delivery operation must bind the exact expected predecessor and preserve
+the locally reviewed tree through the authenticated GitHub connection. A
+failed/uncertain API response requires reading the actual ref before retrying;
+it never permits overwriting a concurrent update or fabricating a successful
+check. Separate signing identities and reconstruction of historical commits
+are not private-project prerequisites. Observe the repository's actual enforced
+rules and report any concrete server rejection. Local uncommitted changes and
+reference-only forks must not be reset to achieve a nominally clean submission.
 
 Every delivered head gets new exact-head and deterministic prospective-merge
 verification against the freshly fetched integration base. These are different
@@ -187,8 +187,9 @@ are rewritten to fit the integration.
 
 ## Continuing development
 
-Use the Rust branch as the single integration surface and keep Node `main`
-unchanged during this migration. Temporary reviewed work should converge back
+Use PR #149 as the delivery surface. Integrate reviewed source into `main` after
+its applicable checks pass; installed service/data cutover is a separate actual
+operation. Temporary reviewed work should converge back
 and its temporary refs should be retired with recovery evidence. Never use a
 mirror push for this repository. Current-candidate pointers and manual workflow
 defaults select the retained Rust branch; immutable old receipt subjects keep
@@ -211,7 +212,8 @@ or check result transfers to this integration commit.
 
 On 2026-09-23 the review lane was #139,
 `codex/full-rust-final-closure-20260923`, targeting the retained Rust integration
-branch. PR #142 now continues that source. `main` remains the Node baseline.
+branch. PR #142 subsequently continued that source; PR #149 is the current
+delivery candidate. `main` remains the Node baseline until source integration.
 This historical routing decision does not qualify a later candidate.
 
 PR #137 head `aa1749db011af350a1245a12ea168b82ce169e35` is an ancestor of

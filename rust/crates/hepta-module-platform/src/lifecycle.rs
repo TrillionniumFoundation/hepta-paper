@@ -409,6 +409,16 @@ pub fn classify_registry_change_v1(
     if previous_manifest.module_id != next_manifest.module_id {
         return Err(ModulePlatformError::LifecycleInvalid);
     }
+    // Maintainer labels are informational. Compare executable and contract
+    // content independently, while still refreshing reports bound to the full
+    // manifest hash after a metadata edit.
+    let mut previous_content = previous_manifest.clone();
+    previous_content.primary_owner = next_manifest.primary_owner.clone();
+    previous_content.secondary_owner = next_manifest.secondary_owner.clone();
+    previous_content.independent_reviewer = next_manifest.independent_reviewer.clone();
+    let mut previous_profile_content = previous_profile.clone();
+    previous_profile_content.manifest_hash = next_profile.manifest_hash.clone();
+    let owner_metadata_changed = previous_content != *previous_manifest;
     let change_class = if matches!(
         next_profile.rollout_channel,
         RolloutChannelV1::Retiring | RolloutChannelV1::Retired
@@ -418,11 +428,7 @@ pub fn classify_registry_change_v1(
         || previous_profile.side_effect_classes != next_profile.side_effect_classes
     {
         RegistryChangeClassV1::AuthorityOrSideEffect
-    } else if previous_manifest.capability_ids != next_manifest.capability_ids
-        || previous_manifest.primary_owner != next_manifest.primary_owner
-        || previous_manifest.secondary_owner != next_manifest.secondary_owner
-        || previous_manifest.independent_reviewer != next_manifest.independent_reviewer
-    {
+    } else if previous_manifest.capability_ids != next_manifest.capability_ids {
         RegistryChangeClassV1::CapabilityOwnership
     } else if previous_manifest.protocol_min != next_manifest.protocol_min
         || previous_manifest.protocol_max != next_manifest.protocol_max
@@ -441,7 +447,7 @@ pub fn classify_registry_change_v1(
         || previous_profile.maximum_queue_depth != next_profile.maximum_queue_depth
     {
         RegistryChangeClassV1::ResourceOrSlo
-    } else if previous_manifest != next_manifest || previous_profile != next_profile {
+    } else if previous_content != *next_manifest || previous_profile_content != *next_profile {
         RegistryChangeClassV1::CompatibleImplementation
     } else {
         RegistryChangeClassV1::MetadataOnly
@@ -458,7 +464,8 @@ pub fn classify_registry_change_v1(
         version: 1,
         change_class,
         requires_cross_team_review: high_risk,
-        requires_fresh_conformance: change_class != RegistryChangeClassV1::MetadataOnly,
+        requires_fresh_conformance: change_class != RegistryChangeClassV1::MetadataOnly
+            || owner_metadata_changed,
         requires_target_host_requalification: matches!(
             change_class,
             RegistryChangeClassV1::AuthorityOrSideEffect

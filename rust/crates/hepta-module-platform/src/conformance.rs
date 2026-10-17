@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActivationStateV1, AuthorityClassV1, MODULE_PROTOCOL_VERSION_V1, ModuleExecutionV1,
     ModuleKindV1, ModuleManifestV1, ModulePlatformError, ModuleRegistryArtifactV1,
-    QualificationTierV1, hash::canonical_hash,
+    QualificationTierV1, hash::canonical_hash, types::valid_owner,
 };
 
 /// Deterministic module-conformance report.
@@ -159,9 +159,9 @@ pub fn module_contract_conformance_report_v1(
             ModuleExecutionV1::LegacyNodeAdapter { .. }
         )
     );
-    let owner_separation = manifest.primary_owner != manifest.secondary_owner
-        && manifest.primary_owner != manifest.independent_reviewer
-        && manifest.secondary_owner != manifest.independent_reviewer;
+    let owner_tokens_valid = valid_owner(&manifest.primary_owner)
+        && valid_owner(&manifest.secondary_owner)
+        && valid_owner(&manifest.independent_reviewer);
     let checks = BTreeMap::from([
         ("activation_profile_consistent".to_owned(), true),
         ("authority_side_effect_ceiling".to_owned(), true),
@@ -171,10 +171,7 @@ pub fn module_contract_conformance_report_v1(
             "execution_boundary_matches_kind".to_owned(),
             execution_ceiling_valid,
         ),
-        (
-            "owner_domains_pairwise_distinct".to_owned(),
-            owner_separation,
-        ),
+        ("owner_identity_tokens_valid".to_owned(), owner_tokens_valid),
         (
             "protocol_range_includes_v1".to_owned(),
             manifest.protocol_min <= MODULE_PROTOCOL_VERSION_V1

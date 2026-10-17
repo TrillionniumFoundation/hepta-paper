@@ -39,11 +39,11 @@ pub struct ModuleManifestV1 {
     pub capability_ids: Vec<String>,
     /// Exact module dependencies.
     pub dependencies: Vec<ModuleDependencyV1>,
-    /// Primary implementation owner.
+    /// Primary maintainer metadata; this does not identify an execution principal.
     pub primary_owner: String,
-    /// Secondary implementation owner.
+    /// Secondary maintainer metadata; the primary maintainer may fill this role.
     pub secondary_owner: String,
-    /// Independent reviewer identity/domain.
+    /// Reviewer metadata; the compatibility field name does not require another person.
     pub independent_reviewer: String,
     /// Exact rollback version, distinct from current.
     pub rollback_version: String,
@@ -394,9 +394,6 @@ fn validate_manifest(
         || !valid_owner(&manifest.primary_owner)
         || !valid_owner(&manifest.secondary_owner)
         || !valid_owner(&manifest.independent_reviewer)
-        || manifest.primary_owner == manifest.secondary_owner
-        || manifest.primary_owner == manifest.independent_reviewer
-        || manifest.secondary_owner == manifest.independent_reviewer
         || manifest.dependencies.len() > MAXIMUM_MODULES_V1
         || manifest.dependencies.iter().any(|dependency| {
             dependency.module_id == manifest.module_id

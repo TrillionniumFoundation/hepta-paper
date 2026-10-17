@@ -187,6 +187,137 @@ fn registry_artifact_and_conformance_are_deterministic() {
     assert_eq!(report.module_count, 1);
 }
 
+fn single_maintainer_manifest(owner: &str) -> ModuleManifestV1 {
+    let mut manifest = manifest(
+        "module.planner",
+        AuthorityClassV1::Pure,
+        ActivationStateV1::Authoritative,
+        &["CAP-SCH-PLAN"],
+        Vec::new(),
+    );
+    manifest.primary_owner = owner.to_owned();
+    manifest.secondary_owner = owner.to_owned();
+    manifest.independent_reviewer = owner.to_owned();
+    manifest
+}
+
+fn single_maintainer_policy() -> RegistryPolicyV1 {
+    RegistryPolicyV1 {
+        version: 1,
+        protocol_version: 1,
+        central_writer_module_id: "module.commit-sequencer".to_owned(),
+        grants: BTreeMap::from([(
+            "module.planner".to_owned(),
+            grant(
+                AuthorityClassV1::Pure,
+                ActivationStateV1::Authoritative,
+                &["CAP-SCH-PLAN"],
+            ),
+        )]),
+    }
+}
+
+#[test]
+fn registry_accepts_one_maintainer_for_all_metadata_roles() {
+    for owner in [
+        "TEAM-KERNEL".to_owned(),
+        "@ProfHepta".to_owned(),
+        "local-owner".to_owned(),
+        "local.owner_1".to_owned(),
+        "a".repeat(96),
+        format!("@{}", "a".repeat(95)),
+    ] {
+        let manifest = single_maintainer_manifest(&owner);
+        let mut registry = ModuleRegistryV1::new(single_maintainer_policy()).expect("policy");
+        registry.register(manifest.clone()).expect("one maintainer");
+        let artifact = registry.finish().expect("registry");
+        let decoded = ModuleRegistryArtifactV1::decode_json(
+            &artifact.to_canonical_json().expect("canonical registry"),
+            artifact.policy_hash(),
+        )
+        .expect("one maintainer survives canonical artifact validation");
+        assert_eq!(decoded, artifact);
+        assert_eq!(
+            decoded.module("module.planner").expect("module").manifest,
+            manifest
+        );
+
+        let report =
+            module_contract_conformance_report_v1(&manifest, &lifecycle_profile(&manifest))
+                .expect("source conformance report");
+        assert!(report.conformant, "owner {owner:?}");
+        assert!(report.checks["owner_identity_tokens_valid"]);
+        assert!(!report.grants_authority);
+    }
+}
+
+#[test]
+fn registry_rejects_malformed_owner_metadata_in_every_role() {
+    for invalid_owner in [
+        "".to_owned(),
+        "@".to_owned(),
+        "@@owner".to_owned(),
+        "-owner".to_owned(),
+        " owner".to_owned(),
+        "owner ".to_owned(),
+        "owner\nnext".to_owned(),
+        "owner\0next".to_owned(),
+        "owner/name".to_owned(),
+        "owner\\name".to_owned(),
+        "owner;next".to_owned(),
+        "$(owner)".to_owned(),
+        "owner@example".to_owned(),
+        "ownér".to_owned(),
+        "owner\u{202e}name".to_owned(),
+        "a".repeat(97),
+        format!("@{}", "a".repeat(96)),
+    ] {
+        for role in 0..3 {
+            let mut manifest = single_maintainer_manifest("@ProfHepta");
+            match role {
+                0 => manifest.primary_owner = invalid_owner.clone(),
+                1 => manifest.secondary_owner = invalid_owner.clone(),
+                _ => manifest.independent_reviewer = invalid_owner.clone(),
+            }
+            let mut registry = ModuleRegistryV1::new(single_maintainer_policy()).expect("policy");
+            assert_eq!(
+                registry.register(manifest.clone()),
+                Err(ModulePlatformError::ManifestInvalid),
+                "role {role}, owner {invalid_owner:?}",
+            );
+            let report =
+                module_contract_conformance_report_v1(&manifest, &lifecycle_profile(&manifest))
+                    .expect("source conformance report");
+            assert!(!report.conformant);
+            assert!(!report.checks["owner_identity_tokens_valid"]);
+        }
+    }
+}
+
+#[test]
+fn single_maintainer_metadata_does_not_grant_runtime_authority() {
+    let mut registry = ModuleRegistryV1::new(single_maintainer_policy()).expect("policy");
+    let mut hostile = single_maintainer_manifest("@ProfHepta");
+    hostile.module_kind = ModuleKindV1::TrustedInProcess;
+    hostile.requested_authority = AuthorityClassV1::PreparedResultOnly;
+    assert_eq!(
+        registry.register(hostile),
+        Err(ModulePlatformError::AuthorityEscalation)
+    );
+
+    let mut policy = single_maintainer_policy();
+    policy
+        .grants
+        .get_mut("module.planner")
+        .expect("grant")
+        .minimum_qualification = QualificationTierV1::TargetHost;
+    let mut registry = ModuleRegistryV1::new(policy).expect("policy");
+    assert_eq!(
+        registry.register(single_maintainer_manifest("@ProfHepta")),
+        Err(ModulePlatformError::QualificationInsufficient)
+    );
+}
+
 #[test]
 fn candidates_and_prepared_results_bind_exact_subjects() {
     let policy = RegistryPolicyV1 {
@@ -755,6 +886,79 @@ fn lifecycle_rejects_owner_or_side_effect_escalation_and_classifies_changes() {
     assert_eq!(decision.change_class, RegistryChangeClassV1::ResourceOrSlo);
     assert!(decision.requires_fresh_conformance);
     assert!(!decision.requires_cross_team_review);
+}
+
+#[test]
+fn maintainer_metadata_changes_do_not_require_staffing_or_host_requalification() {
+    let previous = single_maintainer_manifest("TEAM-KERNEL");
+    let previous_profile = lifecycle_profile(&previous);
+    let next = single_maintainer_manifest("@ProfHepta");
+    let next_profile = lifecycle_profile(&next);
+    let decision = classify_registry_change_v1(&previous, &previous_profile, &next, &next_profile)
+        .expect("metadata classification");
+    assert_eq!(decision.change_class, RegistryChangeClassV1::MetadataOnly);
+    assert!(!decision.requires_cross_team_review);
+    assert!(!decision.requires_target_host_requalification);
+    assert!(!decision.requires_activation_stop);
+    // A canonical report must bind the updated metadata, without rerunning a
+    // target-host experiment or inventing additional human reviewers.
+    assert!(decision.requires_fresh_conformance);
+
+    let mut changed = next.clone();
+    changed.capability_ids = vec!["CAP-OTHER".to_owned()];
+    let changed_profile = lifecycle_profile(&changed);
+    let decision =
+        classify_registry_change_v1(&previous, &previous_profile, &changed, &changed_profile)
+            .expect("capability classification");
+    assert_eq!(
+        decision.change_class,
+        RegistryChangeClassV1::CapabilityOwnership
+    );
+    assert!(decision.requires_cross_team_review);
+    assert!(decision.requires_fresh_conformance);
+
+    let mut changed = next.clone();
+    changed.module_kind = ModuleKindV1::TrustedInProcess;
+    changed.requested_authority = AuthorityClassV1::PreparedResultOnly;
+    let mut changed_profile = lifecycle_profile(&changed);
+    changed_profile.side_effect_classes = BTreeSet::from([SideEffectClassV1::PreparedResult]);
+    let decision =
+        classify_registry_change_v1(&previous, &previous_profile, &changed, &changed_profile)
+            .expect("authority classification");
+    assert_eq!(
+        decision.change_class,
+        RegistryChangeClassV1::AuthorityOrSideEffect
+    );
+    assert!(decision.requires_target_host_requalification);
+    assert!(decision.requires_activation_stop);
+
+    let mut changed = next.clone();
+    changed.execution = ModuleExecutionV1::InProcess {
+        implementation_hash: digest('b'),
+    };
+    let changed_profile = lifecycle_profile(&changed);
+    let decision =
+        classify_registry_change_v1(&previous, &previous_profile, &changed, &changed_profile)
+            .expect("implementation classification");
+    assert_eq!(
+        decision.change_class,
+        RegistryChangeClassV1::CompatibleImplementation
+    );
+    assert!(decision.requires_fresh_conformance);
+
+    let mut changed = next;
+    changed.protocol_max = 2;
+    let mut changed_profile = lifecycle_profile(&changed);
+    changed_profile.readable_protocol_max = 2;
+    let decision =
+        classify_registry_change_v1(&previous, &previous_profile, &changed, &changed_profile)
+            .expect("protocol classification");
+    assert_eq!(
+        decision.change_class,
+        RegistryChangeClassV1::ProtocolOrState
+    );
+    assert!(decision.requires_target_host_requalification);
+    assert!(decision.requires_activation_stop);
 }
 
 #[test]

@@ -96,9 +96,90 @@ function changeJson(root, relative, mutate) {
   fs.writeFileSync(file, `${JSON.stringify(replacement === undefined ? value : replacement)}\n`);
 }
 
+function ownerSchemaDocuments(owner, label) {
+  const registry = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/system/truth/modules.v1.json'), 'utf8'));
+  const record = registry.modules['module.commit-sequencer'];
+  record.owners = [owner, owner, owner];
+  registry.modules = { 'module.commit-sequencer': record };
+  registry.teams = [owner];
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/modules/manifests/commit-sequencer.v1.json'), 'utf8'));
+  manifest.ownerTeams = [owner, owner, owner];
+  return [
+    ['registry', 'docs/system/schemas/modules-v1.schema.json', registry],
+    ['manifest', 'docs/modules/schemas/module-documentation-manifest-v1.schema.json', manifest],
+  ].map(([kind, relative, instance]) => ({
+    name: `${label}:${kind}`,
+    schema: fs.readFileSync(path.join(ROOT, relative), 'utf8'),
+    instance: JSON.stringify(instance),
+  }));
+}
+
+function validateOwnerDocuments(documents) {
+  const result = spawnSync('python3', [path.join(ROOT, 'docs/rust/tools/strict_json_schema.py'), '--batch-stdin'], {
+    input: JSON.stringify(documents), encoding: 'utf8', timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.ok(result.status === 0 || result.status === 1, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+test('owner schemas accept a single registered maintainer in all three roles', () => {
+  const owners = ['TEAM-KERNEL', '@ProfHepta', 'local-owner', 'local.owner_1', 'a'.repeat(96), `@${'a'.repeat(95)}`];
+  const report = validateOwnerDocuments(owners.flatMap((owner, index) => ownerSchemaDocuments(owner, `valid-${index}`)));
+  assert.equal(report.ok, true, JSON.stringify(report.failures));
+});
+
+test('owner schemas reject malformed and oversized tokens including trailing line breaks', () => {
+  const owners = ['', '@', '@@owner', '-owner', ' owner', 'owner ', 'owner\n', 'owner\r',
+    'owner\u2028', 'owner\0', 'owner/name', 'owner\\name', 'owner@example', 'ownér',
+    'a'.repeat(97), `@${'a'.repeat(96)}`, null, 42];
+  const documents = owners.flatMap((owner, index) => ownerSchemaDocuments(owner, `invalid-${index}`));
+  const report = validateOwnerDocuments(documents);
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.failures.map(({ name }) => name), documents.map(({ name }) => name));
+});
+
+test('one maintainer preserves documentation parity and registered-owner references', () => {
+  const root = createFixture();
+  const owner = '@ProfHepta';
+  try {
+    changeJson(root, 'docs/system/truth/modules.v1.json', (value) => {
+      value.teams.push(owner);
+      value.modules['module.commit-sequencer'].owners = [owner, owner, owner];
+    });
+    changeJson(root, 'docs/modules/manifests/commit-sequencer.v1.json', (value) => {
+      value.ownerTeams = [owner, owner, owner];
+    });
+    const file = path.join(root, 'docs/modules/specs/commit-sequencer.md');
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(
+      /^(primaryOwnerTeam|secondaryOwnerTeam|independentReviewerTeam): .+$/gmu,
+      (_, role) => `${role}: ${owner}`,
+    ));
+    const accepted = validateModuleDocumentation({ root });
+    assert.equal(accepted.ok, true, accepted.failures.join('\n'));
+    changeJson(root, 'docs/system/truth/modules.v1.json', (value) => {
+      value.teams = value.teams.filter((team) => team !== owner);
+    });
+    const unregistered = validateModuleDocumentation({ root });
+    assert.equal(unregistered.ok, false);
+    assert.match(unregistered.failures.join('\n'), /unregistered owner @ProfHepta/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 const WRITER_MANIFEST = 'docs/modules/manifests/commit-sequencer.v1.json';
 const WRITER_SPEC = 'docs/modules/specs/commit-sequencer.md';
 const hostileCases = [
+  ['duplicate registry identities', (root) => changeJson(root, 'docs/system/truth/modules.v1.json', (value) => {
+    value.teams.push(value.teams[0]);
+  }), /schema/],
+  ['missing owner role slot', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.ownerTeams.pop();
+  }), /schema/],
+  ['extra owner role slot', (root) => changeJson(root, WRITER_MANIFEST, (value) => {
+    value.ownerTeams.push(value.ownerTeams[0]);
+  }), /schema/],
   ['null registry', (root) => changeJson(root, 'docs/system/truth/modules.v1.json', () => null), /schema/],
   ['null module entry', (root) => changeJson(root, 'docs/modules/module-documentation.v1.json', (value) => {
     value.modules['module.commit-sequencer'] = null;

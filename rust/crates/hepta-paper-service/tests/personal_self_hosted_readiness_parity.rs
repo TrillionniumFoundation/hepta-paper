@@ -223,3 +223,61 @@ fn safe_local_database_ledger_backup_and_restore_match_node() {
     );
     fs::remove_dir_all(runtime).expect("remove runtime fixture");
 }
+
+#[test]
+fn personal_readiness_executes_without_a_node_runtime() {
+    // The Node executable is a differential *test* oracle, never a runtime
+    // dependency or fallback for the private Rust production observer.
+    let runtime = runtime_fixture();
+    let bin = runtime.join("bin");
+    fs::create_dir(&bin).expect("create tripwire directory");
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o700)).expect("private tripwire");
+    let marker = runtime.join("node-executed");
+    let node = bin.join("node");
+    fs::write(
+        &node,
+        b"#!/bin/sh\nprintf 'invoked\\n' > \"$HEPTA_NODE_TRIPWIRE\"\nexit 93\n",
+    )
+    .expect("write Node tripwire");
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o700)).expect("executable tripwire");
+
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    for require_ready in [false, true] {
+        let root = repository_root();
+        let mut args = vec![
+            "personal-self-hosted-readiness",
+            "--root",
+            root.to_str().expect("repository UTF-8"),
+            "--runtime-root",
+            runtime.to_str().expect("runtime UTF-8"),
+            "--now",
+            NOW,
+        ];
+        if require_ready {
+            args.push("--require-ready");
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_hepta-paper-rust"))
+            .args(args)
+            .env("PATH", &path)
+            .env("HEPTA_TEST_NODE", &node)
+            .env("HEPTA_NODE_TRIPWIRE", &marker)
+            .output()
+            .expect("execute Rust readiness with poisoned Node");
+        assert_eq!(
+            output.status.code(),
+            Some(if require_ready { 2 } else { 0 }),
+            "Rust readiness exit: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value =
+            serde_json::from_slice(&output.stdout).expect("native readiness JSON");
+        assert_eq!(report["personalSelfHostedProductionReady"], false);
+        assert_eq!(report["externalActionsPerformed"], false);
+        assert!(!marker.exists(), "Rust readiness invoked a Node runtime");
+    }
+    fs::remove_dir_all(runtime).expect("remove private tripwire");
+}
